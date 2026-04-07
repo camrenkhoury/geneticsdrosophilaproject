@@ -1,4 +1,33 @@
-from gpiozero import OutputDevice, DigitalInputDevice
+try:
+    from gpiozero import OutputDevice, DigitalInputDevice
+    GPIO_AVAILABLE = True
+except ImportError:
+    GPIO_AVAILABLE = False
+    # Mock classes for simulation
+    class MockOutputDevice:
+        def __init__(self, pin):
+            self.pin = pin
+            self.state = False
+
+        def on(self):
+            self.state = True
+
+        def off(self):
+            self.state = False
+
+    class MockDigitalInputDevice:
+        def __init__(self, pin, pull_up=True):
+            self.pin = pin
+            self.pull_up = pull_up
+            self.state = False  # Assume not pressed
+
+        @property
+        def value(self):
+            return self.state
+
+    OutputDevice = MockOutputDevice
+    DigitalInputDevice = MockDigitalInputDevice
+
 from time import sleep
 import config
 
@@ -6,8 +35,8 @@ STEP = OutputDevice(config.STEP_PIN)
 DIR = OutputDevice(config.DIR_PIN)
 EN = OutputDevice(config.EN_PIN)
 
-Limit_Min = DigitalInputDevice(config.LIMIT_MIN_PIN, pull_up=True)
-Limit_Max = DigitalInputDevice(config.LIMIT_MAX_PIN, pull_up=True)
+Limit_Min = DigitalInputDevice(config.LIMIT_MIN_PIN)
+Limit_Max = DigitalInputDevice(config.LIMIT_MAX_PIN)
 
 # Position is in USABLE VACUUM COORDINATES ONLY
 # 0.0 = start of usable range
@@ -61,6 +90,13 @@ def move_relative(distance_mm, move_time=None):
     actual_distance = target_position - current_position_mm
     if actual_distance == 0:
         print("Move blocked by operational limits.")
+        return
+
+    if not GPIO_AVAILABLE:
+        # Simulation: just update position with delay
+        sleep(abs(actual_distance) * 0.01)  # Simulate time based on distance
+        current_position_mm = target_position
+        print(f"Simulated move to {current_position_mm:.2f} mm")
         return
 
     forward = actual_distance > 0
@@ -118,6 +154,13 @@ def home_to_zero(max_steps=50000):
     global current_position_mm
 
     print("Homing to zero...")
+    if not GPIO_AVAILABLE:
+        # Simulation: simulate homing
+        sleep(2)  # Simulate time
+        current_position_mm = 0.0
+        print("Homed (simulated). Usable position set to 0.0 mm.")
+        return
+
     enable_motor()
     set_direction(False)
 

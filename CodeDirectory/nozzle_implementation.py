@@ -1,5 +1,10 @@
-from motion import home_to_zero, move_to_absolute, get_current_position
-from gpiozero import PWMOutputDevice, OutputDevice
+from motion import home_to_zero, move_to_absolute, get_current_position, GPIO_AVAILABLE
+try:
+    from gpiozero import PWMOutputDevice, OutputDevice
+except ImportError:
+    # Mocks are handled in vacuum.py
+    pass
+from vacuum import vacuum_on, vacuum_off
 from assay import assay
 import config
 import time
@@ -10,13 +15,7 @@ import os
 # -----------------------------
 # VACUUM MOTOR SETUP
 # -----------------------------
-PWM_PIN = 13
-DIR_PIN = 25
-
-motor_pwm = PWMOutputDevice(PWM_PIN, frequency=1000)
-motor_dir = OutputDevice(DIR_PIN)
-
-motor_dir.on()
+# Vacuum setup is handled in vacuum.py
 
 
 def vacuum_on():
@@ -144,10 +143,123 @@ def get_next_pickup_position():
         print(f"Selected pickup position for this cycle: {selected:.2f} mm")
         return selected
 
-# -----------------------------
-# MAIN OPERATION
-# -----------------------------
-def run_operation():
+def get_next_pickup_position_non_interactive():
+    """
+    Load x positions from JSON without user interaction.
+    Assumes detection has been run and JSON is ready.
+    """
+    parsed = load_x_positions_from_json()
+
+    if parsed == "done":
+        return "done"
+
+    if len(parsed) == 0:
+        print("No valid X positions found in JSON.")
+        return "retry"  # Or handle differently
+
+    pickup_positions = sorted(
+        [clamp_operational(x) for x in parsed],
+        reverse=True
+    )
+
+    selected = pickup_positions[0]
+    print(f"Selected pickup position: {selected:.2f} mm")
+    return selected
+
+
+def run_operation_non_interactive():
+    """
+    Run the automated operation without user input.
+    Assumes channel detection JSON is ready.
+    """
+    print("\n=== STARTING GANTRY OPERATION (Non-Interactive) ===")
+
+    chamber_drop_s = 2.0
+    chamber_identify_s = 6.0
+    chamber_pickup_s = 2.0
+    tube_drop_s = 2.0
+
+    camera_photo_position = clamp_operational(config.CHANNEL_LOCATION_END + 15.0)
+
+    cycle_index = 0
+
+    try:
+        while True:
+            cycle_index += 1
+            tube_label = "Tube 1" if (cycle_index - 1) % 2 == 0 else "Tube 2"
+            tube_position = config.TUBE_1_CENTER if (cycle_index - 1) % 2 == 0 else config.TUBE_2_CENTER
+
+            print(f"\n--- Cycle {cycle_index} ---")
+
+            # Home first
+            print("Homing gantry...")
+            vacuum_off()
+            home_to_zero()
+            print(f"Homed. Software position: {get_current_position():.2f} mm")
+
+            # Move to offset/photo location
+            move_and_report("Channel Photo Position", camera_photo_position)
+
+            # Load x-coordinates from JSON (assume ready)
+            pickup_position = get_next_pickup_position_non_interactive()
+
+            if pickup_position == "done":
+                print("No more flies remaining. Ending operation.")
+                break
+            elif pickup_position == "retry":
+                print("No positions found. Waiting...")
+                time.sleep(5)  # Wait and retry
+                continue
+
+            # Move inward to chosen pickup point
+            move_and_report("Channel Pickup Position", pickup_position)
+
+            # Pick up fly
+            print("At pickup location: picking up fly...")
+            vacuum_on()
+            time.sleep(2)
+
+            # Move to chamber while holding
+            move_and_report("Chamber Center", config.CHAMBER_CENTER)
+
+            # Chamber sequence
+            print(f"At Chamber Center: dropping for {chamber_drop_s:.1f} s...")
+            vacuum_off()
+            time.sleep(chamber_drop_s)
+
+            print(f"Identification window for {chamber_identify_s:.1f} s...")
+            time.sleep(chamber_identify_s)
+
+            print(f"Picking fly back up for {chamber_pickup_s:.1f} s...")
+            vacuum_on()
+            time.sleep(chamber_pickup_s)
+
+            # Move to alternating tube
+            move_and_report(tube_label, tube_position)
+
+            # Drop into tube
+            print(f"At {tube_label}: dropping fly for {tube_drop_s:.1f} s...")
+            vacuum_off()
+            time.sleep(tube_drop_s)
+
+            # Return home before next image/check
+            print("Returning home and resetting with vacuum OFF...")
+            vacuum_off()
+            home_to_zero()
+            print(f"Reset complete. Software position: {get_current_position():.2f} mm")
+
+        print("\n=== OPERATION COMPLETE ===")
+        print(f"Final software position: {get_current_position():.2f} mm")
+
+    finally:
+        vacuum_off()
+
+    print("\n=== ASSAY STARTING SOON ===")
+    for i in range(10, 0, -1):
+        print(f"Starting in {i}...")
+        time.sleep(1)
+
+    assay()
     print("\n=== STARTING GANTRY OPERATION ===")
 
     chamber_drop_s = 2.0
@@ -232,6 +344,125 @@ def run_operation():
         time.sleep(1)
 
     assay()
+
+def get_next_pickup_position_non_interactive():
+    """
+    Load x positions from JSON without user interaction.
+    Assumes detection has been run and JSON is ready.
+    """
+    parsed = load_x_positions_from_json()
+
+    if parsed == "done":
+        return "done"
+
+    if len(parsed) == 0:
+        print("No valid X positions found in JSON.")
+        return "retry"  # Or handle differently
+
+    pickup_positions = sorted(
+        [clamp_operational(x) for x in parsed],
+        reverse=True
+    )
+
+    selected = pickup_positions[0]
+    print(f"Selected pickup position: {selected:.2f} mm")
+    return selected
+
+
+def run_operation_non_interactive():
+    """
+    Run the automated operation without user input.
+    Assumes channel detection JSON is ready.
+    """
+    print("\n=== STARTING GANTRY OPERATION (Non-Interactive) ===")
+
+    chamber_drop_s = 2.0
+    chamber_identify_s = 6.0
+    chamber_pickup_s = 2.0
+    tube_drop_s = 2.0
+
+    camera_photo_position = clamp_operational(config.CHANNEL_LOCATION_END + 15.0)
+
+    cycle_index = 0
+
+    try:
+        while True:
+            cycle_index += 1
+            tube_label = "Tube 1" if (cycle_index - 1) % 2 == 0 else "Tube 2"
+            tube_position = config.TUBE_1_CENTER if (cycle_index - 1) % 2 == 0 else config.TUBE_2_CENTER
+
+            print(f"\n--- Cycle {cycle_index} ---")
+
+            # Home first
+            print("Homing gantry...")
+            vacuum_off()
+            home_to_zero()
+            print(f"Homed. Software position: {get_current_position():.2f} mm")
+
+            # Move to offset/photo location
+            move_and_report("Channel Photo Position", camera_photo_position)
+
+            # Load x-coordinates from JSON (assume ready)
+            pickup_position = get_next_pickup_position_non_interactive()
+
+            if pickup_position == "done":
+                print("No more flies remaining. Ending operation.")
+                break
+            elif pickup_position == "retry":
+                print("No positions found. Waiting...")
+                time.sleep(5)  # Wait and retry
+                continue
+
+            # Move inward to chosen pickup point
+            move_and_report("Channel Pickup Position", pickup_position)
+
+            # Pick up fly
+            print("At pickup location: picking up fly...")
+            vacuum_on()
+            time.sleep(2)
+
+            # Move to chamber while holding
+            move_and_report("Chamber Center", config.CHAMBER_CENTER)
+
+            # Chamber sequence
+            print(f"At Chamber Center: dropping for {chamber_drop_s:.1f} s...")
+            vacuum_off()
+            time.sleep(chamber_drop_s)
+
+            print(f"Identification window for {chamber_identify_s:.1f} s...")
+            time.sleep(chamber_identify_s)
+
+            print(f"Picking fly back up for {chamber_pickup_s:.1f} s...")
+            vacuum_on()
+            time.sleep(chamber_pickup_s)
+
+            # Move to alternating tube
+            move_and_report(tube_label, tube_position)
+
+            # Drop into tube
+            print(f"At {tube_label}: dropping fly for {tube_drop_s:.1f} s...")
+            vacuum_off()
+            time.sleep(tube_drop_s)
+
+            # Return home before next image/check
+            print("Returning home and resetting with vacuum OFF...")
+            vacuum_off()
+            home_to_zero()
+            print(f"Reset complete. Software position: {get_current_position():.2f} mm")
+
+        print("\n=== OPERATION COMPLETE ===")
+        print(f"Final software position: {get_current_position():.2f} mm")
+
+    finally:
+        vacuum_off()
+
+    print("\n=== ASSAY STARTING SOON ===")
+    for i in range(10, 0, -1):
+        print(f"Starting in {i}...")
+        time.sleep(1)
+
+    assay()
+
 
 def main():
     print("=== Gantry Operation with JSON-based Channel Detection ===")
