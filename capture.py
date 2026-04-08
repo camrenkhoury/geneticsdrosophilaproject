@@ -19,8 +19,8 @@ from box_sdk_gen import (
 # ── Config ────────────────────────────────────────────────────────────────────
 CLIENT_ID       = 'k1hxdppdrmp3rm8vqcbb66wpf0ut3iyv'
 CLIENT_SECRET   = 'IJ4pOmk3t3wWyxL0wYSdoZoyAXGqfp15'
-TOKENS_FILE     = '/home/team8/box_tokens.json'
-SAVE_DIR        = '/home/team8/captures'
+TOKENS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'box_tokens.json')
+SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'captures')
 BOX_FOLDER_NAME = 'pi_captures'
 BOX_PARENT_FOLDER_ID = '366684356655'
 CAPTURE_KEY     = ' '   # Spacebar to capture
