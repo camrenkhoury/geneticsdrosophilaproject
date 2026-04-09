@@ -62,7 +62,7 @@ def load_x_positions_from_json():
       - "done" when no flies remain
       - [] for malformed/missing data that should retry
     """
-    json_path = os.path.expanduser("~/fin6/outputs/channel/last_channel_result.json")
+    json_path = os.path.expanduser("../fin6/outputs/channel/last_channel_result.json")
 
     try:
         with open(json_path, "r") as f:

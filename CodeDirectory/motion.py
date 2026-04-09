@@ -35,8 +35,8 @@ STEP = OutputDevice(config.STEP_PIN)
 DIR = OutputDevice(config.DIR_PIN)
 EN = OutputDevice(config.EN_PIN)
 
-Limit_Min = DigitalInputDevice(config.LIMIT_MIN_PIN, pull_up=True)
-Limit_Max = DigitalInputDevice(config.LIMIT_MAX_PIN, pull_up=True)
+Limit_Min = DigitalInputDevice(config.LIMIT_MIN_PIN)
+Limit_Max = DigitalInputDevice(config.LIMIT_MAX_PIN)
 
 # Position is in USABLE VACUUM COORDINATES ONLY
 # 0.0 = start of usable range
