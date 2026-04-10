@@ -175,13 +175,13 @@ def _count_flies(bgr_img, debug=False):
             fly_count += 1
             blob_counts.append((cnt, 1))
         else:
-            blob_mask = np.zeros((h, w), dtype=np.uint8)
-            cv2.drawContours(blob_mask, [cnt], -1, 255, thickness=cv2.FILLED)
-            n_watershed = _watershed_split(bgr_img, blob_mask)
-            n_area      = max(1, round(area / median_area))
-            n_flies     = min(n_watershed, n_area)
-            fly_count  += n_flies
-            blob_counts.append((cnt, n_flies))
+            # blob_mask = np.zeros((h, w), dtype=np.uint8)
+            # cv2.drawContours(blob_mask, [cnt], -1, 255, thickness=cv2.FILLED)
+            # n_watershed = _watershed_split(bgr_img, blob_mask)
+            # n_area      = max(1, round(area / median_area))
+            # n_flies     = min(n_watershed, n_area)
+            fly_count  += 2
+            blob_counts.append((cnt, 2))
 
     debug_img = None
     if debug:
