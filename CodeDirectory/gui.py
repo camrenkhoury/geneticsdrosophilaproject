@@ -162,11 +162,13 @@ class DrosophilaGUI:
         self.root = root
         mode = " (Simulation Mode)" if not GPIO_AVAILABLE else ""
         self.root.title(f"Drosophila Genetics Control Panel{mode}")
-        self.root.geometry("980x760")
-        self.root.minsize(880, 680)
+        self.root.geometry("1100x760")
+        self.root.minsize(960, 680)
+        self.root.state("zoomed")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        self.repo_root = Path(__file__).resolve().parent.parent
+        self.code_dir = Path(__file__).resolve().parent
+        self.repo_root = self.code_dir.parent
         self.ui_queue: queue.Queue = queue.Queue()
         self.stop_requested = threading.Event()
         self.worker_thread: threading.Thread | None = None
@@ -174,6 +176,8 @@ class DrosophilaGUI:
         self.current_task_cancellable = False
         self.preview_image = None
         self.operations_logo_image = None
+        self.window_icon_images = []
+        self.entry_fly_display_image = None
         self.entry_fly_frames = []
         self.entry_fly_job: str | None = None
         self.entry_fly_frame_index = 0
@@ -198,11 +202,51 @@ class DrosophilaGUI:
         self.manual_move_entry: ttk.Entry | None = None
 
         self.create_widgets()
+        self._set_window_icon()
         self.set_status("idle", "Ready")
         self.log_message(f"Channel output directory: {self.output_dir_var.get()}")
         self.update_position()
         self.update_channel_preview()
         self.process_queue()
+
+    def _resolve_asset_path(self, *candidate_names: str) -> Path | None:
+        search_roots = (
+            self.repo_root / "assets",
+            self.code_dir / "assets",
+        )
+        for asset_root in search_roots:
+            for candidate_name in candidate_names:
+                candidate_path = asset_root / candidate_name
+                if candidate_path.exists():
+                    return candidate_path
+        return None
+
+    def _set_window_icon(self) -> None:
+        icon_path = self._resolve_asset_path(
+            "drosophila.png",
+            "drosophilafly.png",
+            "drosphoila.png",
+        )
+        if icon_path is None:
+            return
+
+        try:
+            from PIL import Image, ImageTk
+
+            icon_source = Image.open(icon_path).convert("RGBA")
+            resample = getattr(Image, "Resampling", Image)
+            large_icon = ImageTk.PhotoImage(icon_source.resize((128, 128), resample.LANCZOS))
+            medium_icon = ImageTk.PhotoImage(icon_source.resize((64, 64), resample.LANCZOS))
+            small_icon = ImageTk.PhotoImage(icon_source.resize((32, 32), resample.LANCZOS))
+            self.window_icon_images = [large_icon, medium_icon, small_icon]
+            self.root.iconphoto(True, *self.window_icon_images)
+        except Exception:
+            try:
+                fallback_icon = tk.PhotoImage(file=str(icon_path))
+                self.window_icon_images = [fallback_icon]
+                self.root.iconphoto(True, fallback_icon)
+            except tk.TclError:
+                self.window_icon_images = []
 
     def create_widgets(self):
         style = ttk.Style()
@@ -219,7 +263,7 @@ class DrosophilaGUI:
         self.page_container.columnconfigure(0, weight=1)
         self.page_container.rowconfigure(0, weight=1)
 
-        self.entry_frame = tk.Frame(self.page_container, bg="#F4EFE6", padx=40, pady=40)
+        self.entry_frame = tk.Frame(self.page_container, bg="#FFFFFF", padx=40, pady=40)
         self.entry_frame.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
         self.entry_frame.columnconfigure(0, weight=1)
         self.entry_frame.rowconfigure(0, weight=1)
@@ -242,57 +286,60 @@ class DrosophilaGUI:
     def create_entry_page(self, parent):
         entry_card = tk.Frame(
             parent,
-            bg="#FFF9F1",
-            highlightbackground="#D8CFC2",
+            bg="#686766",
+            highlightbackground="#686766",
             highlightthickness=1,
             bd=0,
-            padx=36,
-            pady=36,
+            padx=61,
+            pady=61,
         )
         entry_card.grid(row=0, column=0)
         entry_card.columnconfigure(0, weight=0)
         entry_card.columnconfigure(1, weight=0)
 
-        left_panel = tk.Frame(entry_card, bg="#FFF9F1")
-        left_panel.grid(row=0, column=0, sticky=(tk.N, tk.W), padx=(0, 28))
+        left_panel = tk.Frame(entry_card, bg="#686766")
+        left_panel.grid(row=0, column=0, sticky=(tk.N, tk.W), padx=(0, 47))
 
         tk.Label(
             left_panel,
             text="Drosophila Genetics GUI",
-            bg="#FFF9F1",
-            fg="#2F2A24",
-            font=("Arial", 22, "bold"),
-        ).grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
+            bg="#686766",
+            fg="#F3F4F6",
+            font=("Arial", 38, "bold"),
+        ).grid(row=0, column=0, sticky=tk.W, pady=(0, 17))
 
         tk.Label(
             left_panel,
             text="Open the control panel when you are ready.",
-            bg="#FFF9F1",
-            fg="#5C5348",
-            font=("Arial", 11),
+            bg="#686766",
+            fg="#E5E7EA",
+            font=("Arial", 18),
             justify="left",
             anchor="w",
-        ).grid(row=1, column=0, sticky=tk.W, pady=(0, 22))
+        ).grid(row=1, column=0, sticky=tk.W, pady=(0, 38))
 
         enter_button = tk.Button(
             left_panel,
             text="Enter Control Panel",
-            bg="#9C27B0",
-            fg="white",
-            font=("Arial", 12, "bold"),
-            padx=18,
-            pady=10,
+            bg="#8E2D2B",
+            fg="#FFFFFF",
+            activebackground="#732220",
+            activeforeground="#FFFFFF",
+            font=("Arial", 21, "bold"),
+            padx=30,
+            pady=17,
             relief="raised",
+            bd=0,
             command=self.show_control_panel,
         )
         enter_button.grid(row=2, column=0, sticky=tk.W)
 
-        fly_panel = tk.Frame(entry_card, bg="#FFF9F1", padx=6, pady=4)
+        fly_panel = tk.Frame(entry_card, bg="#686766", padx=10, pady=7)
         fly_panel.grid(row=0, column=1, sticky=(tk.N, tk.E))
 
         self.entry_fly_label = tk.Label(
             fly_panel,
-            bg="#FFF9F1",
+            bg="#686766",
             bd=0,
             highlightthickness=0,
         )
@@ -301,10 +348,9 @@ class DrosophilaGUI:
     def show_entry_page(self):
         self.main_frame.grid_remove()
         self.entry_frame.grid()
-        self.root.after_idle(self.start_entry_animation)
+        self._display_entry_photo()
 
     def show_control_panel(self):
-        self.stop_entry_animation()
         self.entry_frame.grid_remove()
         self.main_frame.grid()
 
@@ -317,8 +363,13 @@ class DrosophilaGUI:
         except ImportError:
             return None
 
-        image_path = self.repo_root / "assets" / "drosophilafly.png"
-        if not image_path.exists():
+        image_path = self._resolve_asset_path(
+            "3DDrosophilaFrontView.png",
+            "drosophilafly.png",
+            "drosophila.png",
+            "drosphoila.png",
+        )
+        if image_path is None:
             return None
 
         try:
@@ -326,34 +377,105 @@ class DrosophilaGUI:
         except OSError:
             return None
 
-        width, height = image.size
-        samples = [
-            image.getpixel((0, 0)),
-            image.getpixel((width - 1, 0)),
-            image.getpixel((0, height - 1)),
-            image.getpixel((width - 1, height - 1)),
-        ]
-        bg_rgb = tuple(sum(sample[idx] for sample in samples) // len(samples) for idx in range(3))
-
         cleaned = image.copy()
-        pixels = cleaned.load()
-        threshold = 86
-        for x_pos in range(width):
-            for y_pos in range(height):
-                r_val, g_val, b_val, alpha = pixels[x_pos, y_pos]
-                color_distance = math.sqrt(
-                    ((r_val - bg_rgb[0]) ** 2) + ((g_val - bg_rgb[1]) ** 2) + ((b_val - bg_rgb[2]) ** 2)
-                )
-                if color_distance < threshold:
-                    fade = int(max(0, min(255, (color_distance / threshold) * 255)))
-                    pixels[x_pos, y_pos] = (r_val, g_val, b_val, fade)
 
-        bbox = cleaned.getbbox()
-        if bbox:
-            cleaned = cleaned.crop(bbox)
+        base_display_size = 304
+        longest_side = max(cleaned.size)
+        if longest_side > 0 and longest_side != base_display_size:
+            scale = base_display_size / longest_side
+            normalized_size = (
+                max(1, int(round(cleaned.width * scale))),
+                max(1, int(round(cleaned.height * scale))),
+            )
+            resample = getattr(Image, "Resampling", Image)
+            cleaned = cleaned.resize(normalized_size, resample.LANCZOS)
 
         self.entry_fly_source_image = cleaned
         return self.entry_fly_source_image
+
+    def _sample_entry_photo_border(self, image):
+        width, height = image.size
+        sample_positions = []
+
+        for fraction in (0.0, 0.22, 0.5, 0.78, 1.0):
+            sample_positions.append((round((width - 1) * fraction), 0))
+        for fraction in (0.12, 0.32, 0.5, 0.68, 0.88):
+            sample_positions.append((width - 1, round((height - 1) * fraction)))
+        for fraction in (1.0, 0.78, 0.5, 0.22, 0.0):
+            sample_positions.append((round((width - 1) * fraction), height - 1))
+        for fraction in (0.88, 0.68, 0.5, 0.32, 0.12):
+            sample_positions.append((0, round((height - 1) * fraction)))
+
+        return [(x_pos, y_pos, image.getpixel((x_pos, y_pos))) for x_pos, y_pos in sample_positions]
+
+    def _build_entry_photo_stage(self, source_image):
+        try:
+            from PIL import Image
+        except ImportError:
+            return source_image
+
+        margin_x = 51
+        margin_y = 44
+        stage_width = source_image.width + (margin_x * 2)
+        stage_height = source_image.height + (margin_y * 2)
+        stage_image = Image.new("RGBA", (stage_width, stage_height), (255, 255, 255, 255))
+        stage_pixels = stage_image.load()
+
+        border_samples = []
+        for sample_x, sample_y, rgba in self._sample_entry_photo_border(source_image):
+            border_samples.append((sample_x + margin_x, sample_y + margin_y, rgba))
+
+        fade_span = min(margin_x, margin_y)
+        for x_pos in range(stage_width):
+            for y_pos in range(stage_height):
+                accum_r = 0.0
+                accum_g = 0.0
+                accum_b = 0.0
+                weight_sum = 0.0
+                for sample_x, sample_y, rgba in border_samples:
+                    dx = x_pos - sample_x
+                    dy = y_pos - sample_y
+                    distance_sq = (dx * dx) + (dy * dy) + 1.0
+                    weight = 1.0 / (distance_sq ** 0.72)
+                    accum_r += rgba[0] * weight
+                    accum_g += rgba[1] * weight
+                    accum_b += rgba[2] * weight
+                    weight_sum += weight
+
+                base_r = accum_r / weight_sum
+                base_g = accum_g / weight_sum
+                base_b = accum_b / weight_sum
+
+                distance_to_outer_edge = min(x_pos, y_pos, stage_width - 1 - x_pos, stage_height - 1 - y_pos)
+                white_mix = max(0.0, 1.0 - min(distance_to_outer_edge / fade_span, 1.0))
+                final_r = int(round(base_r + ((255 - base_r) * white_mix)))
+                final_g = int(round(base_g + ((255 - base_g) * white_mix)))
+                final_b = int(round(base_b + ((255 - base_b) * white_mix)))
+                stage_pixels[x_pos, y_pos] = (final_r, final_g, final_b, 255)
+
+        stage_image.alpha_composite(source_image, (margin_x, margin_y))
+        return stage_image
+
+    def _display_entry_photo(self):
+        source_image = self._load_entry_fly_source_image()
+        if source_image is None:
+            self.entry_fly_display_image = None
+            self.entry_fly_label.config(image="", text="Fly preview unavailable")
+            return
+
+        try:
+            from PIL import Image, ImageTk
+        except ImportError:
+            self.entry_fly_display_image = None
+            self.entry_fly_label.config(image="", text="Fly preview unavailable")
+            return
+
+        image = self._build_entry_photo_stage(source_image)
+        max_bounds = (372, 372)
+        resample = getattr(Image, "Resampling", Image)
+        image.thumbnail(max_bounds, resample.LANCZOS)
+        self.entry_fly_display_image = ImageTk.PhotoImage(image)
+        self.entry_fly_label.config(image=self.entry_fly_display_image, text="", bg="#FFFFFF")
 
     def _build_entry_fly_frames(self):
         if self.entry_fly_frames:
@@ -364,7 +486,7 @@ class DrosophilaGUI:
             return []
 
         try:
-            from PIL import Image, ImageDraw, ImageEnhance, ImageOps, ImageTk
+            from PIL import Image, ImageDraw, ImageEnhance, ImageTk
         except ImportError:
             return []
 
@@ -375,7 +497,7 @@ class DrosophilaGUI:
 
         built_frames = []
         for frame_index in range(frame_count):
-            angle_y = (2.0 * math.pi * frame_index) / frame_count
+            orbit_angle = (2.0 * math.pi * frame_index) / frame_count
             image = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
             draw = ImageDraw.Draw(image, "RGBA")
 
@@ -386,25 +508,20 @@ class DrosophilaGUI:
             draw.arc((54, glow_center_y - 14, 186, glow_center_y + 14), start=18, end=162, fill=(146, 244, 255, 150), width=2)
 
             frame_image = source_image.copy()
-            turn_strength = math.cos(angle_y)
-            side_amount = abs(math.sin(angle_y))
-            width_scale = 1.0 - (0.42 * side_amount)
-            height_scale = 1.0 - (0.06 * side_amount)
-            rotation = 5.5 * math.sin(angle_y)
-            vertical_bob = 4.0 * math.sin(angle_y * 2.0)
-            x_shift = 10.0 * math.sin(angle_y)
-            brightness = 0.92 + (0.12 * max(turn_strength, 0.0))
-
-            if turn_strength < 0:
-                frame_image = ImageOps.mirror(frame_image)
+            x_shift = 14.0 * math.cos(orbit_angle)
+            vertical_bob = -10.0 * math.sin(orbit_angle)
+            depth_factor = (math.sin(orbit_angle) + 1.0) / 2.0
+            orbit_scale = 0.9 + (0.14 * depth_factor)
+            rotation = 5.0 * math.cos(orbit_angle)
+            brightness = 0.9 + (0.16 * depth_factor)
 
             if abs(brightness - 1.0) > 0.01:
                 frame_image = ImageEnhance.Brightness(frame_image).enhance(brightness)
 
             base_width, base_height = frame_image.size
             scaled_size = (
-                max(1, int(base_width * width_scale)),
-                max(1, int(base_height * height_scale)),
+                max(1, int(base_width * orbit_scale)),
+                max(1, int(base_height * orbit_scale)),
             )
             resample = getattr(Image, "Resampling", Image)
             frame_image = frame_image.resize(scaled_size, resample.LANCZOS)
@@ -819,7 +936,19 @@ class DrosophilaGUI:
         self.load_operations_logo()
 
     def load_operations_logo(self):
-        logo_path = self.repo_root / "assets" / "drosophilafly.png"
+        logo_path = self._resolve_asset_path(
+            "drosophilafly.png",
+            "drosophila.png",
+            "drosphoila.png",
+        )
+        if logo_path is None:
+            self.operations_logo_image = None
+            self.operations_logo_label.config(
+                image="",
+                text="Team fly logo unavailable",
+                bg="#F8E8F0",
+            )
+            return
         try:
             from PIL import Image, ImageTk
 

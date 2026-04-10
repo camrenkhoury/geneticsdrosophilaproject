@@ -155,7 +155,7 @@ def run_operation():
     chamber_pickup_s = 2.0
     tube_drop_s = 2.0
 
-    camera_photo_position = clamp_operational(config.CHANNEL_LOCATION_END + 15.0)
+    camera_photo_position = clamp_operational(config.CHANNEL_LOCATION_END + 43.0)
 
     cycle_index = 0
 

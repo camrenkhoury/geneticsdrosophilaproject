@@ -28,6 +28,16 @@ python3 gui.py
 
 On a computer (without Pi hardware), the GUI will automatically enter simulation mode. The mode is indicated in the status panel and title.
 
+## Simple Launchers
+
+If someone does not want to run Python commands manually:
+
+- Windows: double-click `Launch Drosophila GUI (Windows).lnk`
+- Windows fallback: double-click `launch_gui.bat`
+- Linux/Pi: double-click `Launch Drosophila GUI (Linux).desktop` or run `./launch_gui.sh`
+
+The launchers will use the local `.venv` first if it exists, then fall back to the system Python installation.
+
 ## Usage
 
 1. **Home the motor** before starting operations (simulated homing in simulation mode).
