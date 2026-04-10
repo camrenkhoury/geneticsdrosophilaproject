@@ -153,7 +153,7 @@ def _count_flies(bgr_img, debug=False):
     h, w     = bgr_img.shape[:2]
     img_area = h * w
     min_area = SINGLE_FLY_MIN_FRAC * img_area
-    max_area = 45000
+    max_area = 40000
 
     mask     = _subtract_background(bgr_img)
     mask     = _clean_mask(mask)
