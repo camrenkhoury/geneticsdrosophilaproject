@@ -69,7 +69,7 @@ ERODE_KERNEL_SIZE = 11
 ERODE_ITERATIONS  = 9
 
 # Watershed distance transform threshold — lower = more aggressive peak finding
-WATERSHED_DIST_THRESHOLD = 0.3
+WATERSHED_DIST_THRESHOLD = 0.2
 
 # Fly size bounds as a fraction of total image area
 SINGLE_FLY_MIN_FRAC = 0.001   # ignore blobs smaller than this (noise)
@@ -153,7 +153,7 @@ def _count_flies(bgr_img, debug=False):
     h, w     = bgr_img.shape[:2]
     img_area = h * w
     min_area = SINGLE_FLY_MIN_FRAC * img_area
-    max_area = SINGLE_FLY_MAX_FRAC * img_area
+    max_area = 45000
 
     mask     = _subtract_background(bgr_img)
     mask     = _clean_mask(mask)
