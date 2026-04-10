@@ -66,7 +66,7 @@ CLOSE_KERNEL_SIZE = 11   # fills gaps within a fly body (smaller = less merging)
 
 # Hard erosion to separate touching/close blobs before watershed
 ERODE_KERNEL_SIZE = 11
-ERODE_ITERATIONS  = 7
+ERODE_ITERATIONS  = 9
 
 # Watershed distance transform threshold — lower = more aggressive peak finding
 WATERSHED_DIST_THRESHOLD = 0.3
