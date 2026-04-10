@@ -35,8 +35,8 @@ except ImportError:
     YOLO = MockYOLO
 
 # ── Config ────────────────────────────────────────────────────────────────────
-CLASSIFIER_MODEL_PATH = os.path.expanduser('~/newone.pt')
-TEMP_IMAGE_DIR        = os.path.expanduser('~/tempClassImage')
+CLASSIFIER_MODEL_PATH = os.path.expanduser('~/geneticsdrosophiliaproject/best.pt')
+TEMP_IMAGE_DIR        = os.path.expanduser('~/geneticsdrosophiliaproject/CodeDirectory/tempClassImage')
 TEMP_IMAGE_PATH       = os.path.join(TEMP_IMAGE_DIR, 'temp.jpg')
 
 UNCERTAIN_THRESHOLD   = 0.70   # classifier confidence below this → UNCERTAIN
@@ -65,15 +65,15 @@ def _capture_image() -> bool:
         # Simulation: pretend capture succeeds
         print("Simulated image capture.")
         return True
-
+    os.makedirs(TEMP_IMAGE_DIR, exist_ok=True)
     result = subprocess.run([
         '/usr/bin/rpicam-still',
         '--output', TEMP_IMAGE_PATH,
-        '--zsl',
-        '--awbgains', '3.0,0.9',
         '--nopreview',
         '-n',
     ], capture_output=True, text=True)
+    print(f"returncode: {result.returncode}")
+    print(f"stderr: {result.stderr}")
     return result.returncode == 0
 
 
