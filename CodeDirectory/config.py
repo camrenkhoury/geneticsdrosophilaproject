@@ -24,6 +24,10 @@ GANTRY_MAX_MM = 431
 # Distance from gantry hard-limit reference to vacuum/nozzle center
 VACUUM_CENTER_OFFSET_MM = 35.0
 
+# Detection-based pickup correction for the current nozzle-center alignment.
+# Negative values move the pickup target slightly inward.
+PICKUP_POSITION_CORRECTION_MM = -2.0
+
 # Valid commanded nozzle-center range
 OPERATIONAL_MIN_POS_MM = GANTRY_MIN_MM + VACUUM_CENTER_OFFSET_MM
 OPERATIONAL_MAX_POS_MM = GANTRY_MAX_MM - VACUUM_CENTER_OFFSET_MM

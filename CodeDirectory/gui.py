@@ -1287,6 +1287,10 @@ class DrosophilaGUI:
     def _clamp_operational(self, position_mm: float) -> float:
         return max(0.0, min(position_mm, get_operational_max_mm()))
 
+    def _apply_pickup_correction(self, position_mm: float) -> float:
+        corrected_position = position_mm + config.PICKUP_POSITION_CORRECTION_MM
+        return self._clamp_operational(corrected_position)
+
     def _load_positions_from_json(self, path: Path):
         result = self._read_detection_result(path)
         if result is None:
@@ -1316,7 +1320,7 @@ class DrosophilaGUI:
             self.worker_log("Detection JSON contains no x_positions_mm entries.")
             return "done"
 
-        return sorted((self._clamp_operational(value) for value in positions), reverse=True)
+        return sorted((self._apply_pickup_correction(value) for value in positions), reverse=True)
 
     def _wait_for_detection_result(self, previous_mtime: float | None):
         first_wait = True

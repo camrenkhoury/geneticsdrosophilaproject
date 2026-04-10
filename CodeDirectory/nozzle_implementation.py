@@ -48,6 +48,11 @@ def clamp_operational(position_mm: float) -> float:
 
     return position_mm
 
+
+def apply_pickup_correction(position_mm: float) -> float:
+    corrected_position = position_mm + config.PICKUP_POSITION_CORRECTION_MM
+    return clamp_operational(corrected_position)
+
 def load_x_positions_from_json():
     """
     Loads x positions from:
@@ -130,10 +135,7 @@ def get_next_pickup_position():
             print("No valid X positions found in JSON. Re-run detection and then enter Y again.")
             continue
 
-        pickup_positions = sorted(
-            [clamp_operational(x) for x in parsed],
-            reverse=True
-        )
+        pickup_positions = sorted([apply_pickup_correction(x) for x in parsed], reverse=True)
 
         print("\nLoaded pickup candidates from JSON (largest to smallest):")
         for idx, pos in enumerate(pickup_positions, start=1):
@@ -157,10 +159,7 @@ def get_next_pickup_position_non_interactive():
         print("No valid X positions found in JSON.")
         return "retry"  # Or handle differently
 
-    pickup_positions = sorted(
-        [clamp_operational(x) for x in parsed],
-        reverse=True
-    )
+        pickup_positions = sorted([apply_pickup_correction(x) for x in parsed], reverse=True)
 
     selected = pickup_positions[0]
     print(f"Selected pickup position: {selected:.2f} mm")
@@ -359,10 +358,7 @@ def get_next_pickup_position_non_interactive():
         print("No valid X positions found in JSON.")
         return "retry"  # Or handle differently
 
-    pickup_positions = sorted(
-        [clamp_operational(x) for x in parsed],
-        reverse=True
-    )
+        pickup_positions = sorted([apply_pickup_correction(x) for x in parsed], reverse=True)
 
     selected = pickup_positions[0]
     print(f"Selected pickup position: {selected:.2f} mm")
