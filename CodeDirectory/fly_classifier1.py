@@ -58,7 +58,7 @@ HARD_ERROR_FLAGS = {
 # How different a pixel must be from the sampled corner colour to be
 # considered foreground. Raise if background is leaking, lower if fly
 # pixels are being eaten.
-BG_TOLERANCE = 50
+BG_TOLERANCE = 65
 
 # Morphology kernel sizes
 OPEN_KERNEL_SIZE  = 3    # removes tiny noise specks
