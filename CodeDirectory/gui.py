@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import queue
 import threading
 import time
@@ -58,27 +59,24 @@ class QueueWriter:
 
 
 class SliderSwitch(tk.Canvas):
-    """Simple on/off switch used for device control."""
+    """Modern on/off switch used for device control."""
 
     def __init__(
         self,
         parent,
         command=None,
         initial=False,
-        width=72,
-        height=32,
-        on_text="ON",
-        off_text="OFF",
+        width=78,
+        height=38,
         **kwargs,
     ):
-        super().__init__(parent, width=width, height=height, highlightthickness=0, **kwargs)
+        super().__init__(parent, width=width, height=height, highlightthickness=0, bd=0, **kwargs)
         self.command = command
         self.value = bool(initial)
         self.enabled = True
         self.width = width
         self.height = height
-        self.on_text = on_text
-        self.off_text = off_text
+        self.configure(cursor="hand2")
         self.bind("<Button-1>", self.toggle)
         self.draw()
 
@@ -103,42 +101,59 @@ class SliderSwitch(tk.Canvas):
         self.delete("all")
 
         if not self.enabled:
-            track_color = "#BDBDBD"
-            text_color = "#F5F5F5"
+            track_fill = "#D8E0E8"
+            track_outline = "#CCD5DE"
+            knob_fill = "#F4F7FA"
+            knob_outline = "#C4CDD7"
+        elif self.value:
+            track_fill = "#1F8A70"
+            track_outline = "#176A57"
+            knob_fill = "#FFFFFF"
+            knob_outline = "#D9E2EC"
         else:
-            track_color = "#4CAF50" if self.value else "#F44336"
-            text_color = "white"
+            track_fill = "#D4DCE5"
+            track_outline = "#B7C2CE"
+            knob_fill = "#FFFFFF"
+            knob_outline = "#C5CED8"
 
-        radius = self.height / 2
-        self.create_oval(0, 0, self.height, self.height, fill=track_color, outline=track_color)
+        inset = 2
+        radius = (self.height - (inset * 2)) / 2
+        left = inset
+        top = inset
+        right = self.width - inset
+        bottom = self.height - inset
+
+        self.create_oval(left, top, left + (radius * 2), bottom, fill=track_fill, outline=track_outline, width=1)
         self.create_oval(
-            self.width - self.height,
-            0,
-            self.width,
-            self.height,
-            fill=track_color,
-            outline=track_color,
+            right - (radius * 2),
+            top,
+            right,
+            bottom,
+            fill=track_fill,
+            outline=track_outline,
+            width=1,
         )
-        self.create_rectangle(radius, 0, self.width - radius, self.height, fill=track_color, outline=track_color)
+        self.create_rectangle(
+            left + radius,
+            top,
+            right - radius,
+            bottom,
+            fill=track_fill,
+            outline=track_outline,
+            width=1,
+        )
 
-        knob_x = self.width - self.height + 2 if self.value else 2
-        knob_fill = "white" if self.enabled else "#E0E0E0"
+        knob_padding = 4
+        knob_size = self.height - (knob_padding * 2)
+        knob_x = self.width - knob_size - knob_padding if self.value else knob_padding
         self.create_oval(
             knob_x,
-            2,
-            knob_x + self.height - 4,
-            self.height - 2,
+            knob_padding,
+            knob_x + knob_size,
+            knob_padding + knob_size,
             fill=knob_fill,
-            outline="#CCCCCC",
-        )
-
-        label = self.on_text if self.value else self.off_text
-        self.create_text(
-            self.width / 2,
-            self.height / 2,
-            text=label,
-            fill=text_color,
-            font=("Arial", 8, "bold"),
+            outline=knob_outline,
+            width=1,
         )
 
 
@@ -158,6 +173,11 @@ class DrosophilaGUI:
         self.current_task_name: str | None = None
         self.current_task_cancellable = False
         self.preview_image = None
+        self.operations_logo_image = None
+        self.entry_fly_frames = []
+        self.entry_fly_job: str | None = None
+        self.entry_fly_frame_index = 0
+        self.entry_fly_source_image = None
         self.last_preview_mtime: float | None = None
         self.last_result_mtime: float | None = None
         self.last_used_detection_mtime: float | None = None
@@ -169,6 +189,9 @@ class DrosophilaGUI:
         self.mode_var = tk.StringVar(value="Hardware Mode" if GPIO_AVAILABLE else "Simulation Mode")
         self.detection_var = tk.StringVar(value="Waiting for channel detection output.")
         self.output_dir_var = tk.StringVar(value=str(self._default_channel_output_dir()))
+        self.device_state_labels: dict[str, tk.Label] = {}
+        self.device_state_text: dict[str, tk.StringVar] = {}
+        self.device_detail_text: dict[str, tk.StringVar] = {}
 
         self.control_widgets = []
         self.toggle_widgets = []
@@ -189,21 +212,249 @@ class DrosophilaGUI:
         style.configure("Ops.TLabelframe", background="#F8E8F0", relief="raised", borderwidth=2)
         style.configure("Log.TLabelframe", background="#F8F8F8", relief="sunken", borderwidth=1)
 
-        main_frame = ttk.Frame(self.root, padding="15")
-        main_frame.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
-
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(0, weight=0)
-        main_frame.columnconfigure(1, weight=1)
-        main_frame.columnconfigure(2, weight=0)
-        main_frame.rowconfigure(1, weight=1)
-        main_frame.rowconfigure(3, weight=1)
+        self.page_container = tk.Frame(self.root, bg="#F4EFE6")
+        self.page_container.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        self.page_container.columnconfigure(0, weight=1)
+        self.page_container.rowconfigure(0, weight=1)
 
-        self.create_status_section(main_frame)
-        self.create_main_content(main_frame)
-        self.create_system_controls(main_frame)
-        self.create_log_section(main_frame)
+        self.entry_frame = tk.Frame(self.page_container, bg="#F4EFE6", padx=40, pady=40)
+        self.entry_frame.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        self.entry_frame.columnconfigure(0, weight=1)
+        self.entry_frame.rowconfigure(0, weight=1)
+        self.create_entry_page(self.entry_frame)
+
+        self.main_frame = ttk.Frame(self.page_container, padding="15")
+        self.main_frame.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        self.main_frame.columnconfigure(0, weight=0)
+        self.main_frame.columnconfigure(1, weight=1)
+        self.main_frame.columnconfigure(2, weight=0)
+        self.main_frame.rowconfigure(1, weight=1)
+        self.main_frame.rowconfigure(3, weight=1)
+
+        self.create_status_section(self.main_frame)
+        self.create_main_content(self.main_frame)
+        self.create_system_controls(self.main_frame)
+        self.create_log_section(self.main_frame)
+        self.show_entry_page()
+
+    def create_entry_page(self, parent):
+        entry_card = tk.Frame(
+            parent,
+            bg="#FFF9F1",
+            highlightbackground="#D8CFC2",
+            highlightthickness=1,
+            bd=0,
+            padx=36,
+            pady=36,
+        )
+        entry_card.grid(row=0, column=0)
+        entry_card.columnconfigure(0, weight=0)
+        entry_card.columnconfigure(1, weight=0)
+
+        left_panel = tk.Frame(entry_card, bg="#FFF9F1")
+        left_panel.grid(row=0, column=0, sticky=(tk.N, tk.W), padx=(0, 28))
+
+        tk.Label(
+            left_panel,
+            text="Drosophila Genetics GUI",
+            bg="#FFF9F1",
+            fg="#2F2A24",
+            font=("Arial", 22, "bold"),
+        ).grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
+
+        tk.Label(
+            left_panel,
+            text="Open the control panel when you are ready.",
+            bg="#FFF9F1",
+            fg="#5C5348",
+            font=("Arial", 11),
+            justify="left",
+            anchor="w",
+        ).grid(row=1, column=0, sticky=tk.W, pady=(0, 22))
+
+        enter_button = tk.Button(
+            left_panel,
+            text="Enter Control Panel",
+            bg="#9C27B0",
+            fg="white",
+            font=("Arial", 12, "bold"),
+            padx=18,
+            pady=10,
+            relief="raised",
+            command=self.show_control_panel,
+        )
+        enter_button.grid(row=2, column=0, sticky=tk.W)
+
+        fly_panel = tk.Frame(entry_card, bg="#FFF9F1", padx=6, pady=4)
+        fly_panel.grid(row=0, column=1, sticky=(tk.N, tk.E))
+
+        self.entry_fly_label = tk.Label(
+            fly_panel,
+            bg="#FFF9F1",
+            bd=0,
+            highlightthickness=0,
+        )
+        self.entry_fly_label.grid(row=0, column=0)
+
+    def show_entry_page(self):
+        self.main_frame.grid_remove()
+        self.entry_frame.grid()
+        self.root.after_idle(self.start_entry_animation)
+
+    def show_control_panel(self):
+        self.stop_entry_animation()
+        self.entry_frame.grid_remove()
+        self.main_frame.grid()
+
+    def _load_entry_fly_source_image(self):
+        if self.entry_fly_source_image is not None:
+            return self.entry_fly_source_image
+
+        try:
+            from PIL import Image
+        except ImportError:
+            return None
+
+        image_path = self.repo_root / "assets" / "drosophilafly.png"
+        if not image_path.exists():
+            return None
+
+        try:
+            image = Image.open(image_path).convert("RGBA")
+        except OSError:
+            return None
+
+        width, height = image.size
+        samples = [
+            image.getpixel((0, 0)),
+            image.getpixel((width - 1, 0)),
+            image.getpixel((0, height - 1)),
+            image.getpixel((width - 1, height - 1)),
+        ]
+        bg_rgb = tuple(sum(sample[idx] for sample in samples) // len(samples) for idx in range(3))
+
+        cleaned = image.copy()
+        pixels = cleaned.load()
+        threshold = 86
+        for x_pos in range(width):
+            for y_pos in range(height):
+                r_val, g_val, b_val, alpha = pixels[x_pos, y_pos]
+                color_distance = math.sqrt(
+                    ((r_val - bg_rgb[0]) ** 2) + ((g_val - bg_rgb[1]) ** 2) + ((b_val - bg_rgb[2]) ** 2)
+                )
+                if color_distance < threshold:
+                    fade = int(max(0, min(255, (color_distance / threshold) * 255)))
+                    pixels[x_pos, y_pos] = (r_val, g_val, b_val, fade)
+
+        bbox = cleaned.getbbox()
+        if bbox:
+            cleaned = cleaned.crop(bbox)
+
+        self.entry_fly_source_image = cleaned
+        return self.entry_fly_source_image
+
+    def _build_entry_fly_frames(self):
+        if self.entry_fly_frames:
+            return self.entry_fly_frames
+
+        source_image = self._load_entry_fly_source_image()
+        if source_image is None:
+            return []
+
+        try:
+            from PIL import Image, ImageDraw, ImageEnhance, ImageOps, ImageTk
+        except ImportError:
+            return []
+
+        frame_count = 20
+        canvas_size = 240
+        center_x = canvas_size // 2
+        center_y = 104
+
+        built_frames = []
+        for frame_index in range(frame_count):
+            angle_y = (2.0 * math.pi * frame_index) / frame_count
+            image = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(image, "RGBA")
+
+            glow_center_y = 194
+            draw.ellipse((56, glow_center_y - 11, 184, glow_center_y + 11), fill=(88, 237, 255, 28))
+            draw.ellipse((68, glow_center_y - 7, 172, glow_center_y + 7), fill=(88, 237, 255, 54))
+            draw.ellipse((78, glow_center_y - 3, 162, glow_center_y + 3), outline=(159, 247, 255, 180), width=2)
+            draw.arc((54, glow_center_y - 14, 186, glow_center_y + 14), start=18, end=162, fill=(146, 244, 255, 150), width=2)
+
+            frame_image = source_image.copy()
+            turn_strength = math.cos(angle_y)
+            side_amount = abs(math.sin(angle_y))
+            width_scale = 1.0 - (0.42 * side_amount)
+            height_scale = 1.0 - (0.06 * side_amount)
+            rotation = 5.5 * math.sin(angle_y)
+            vertical_bob = 4.0 * math.sin(angle_y * 2.0)
+            x_shift = 10.0 * math.sin(angle_y)
+            brightness = 0.92 + (0.12 * max(turn_strength, 0.0))
+
+            if turn_strength < 0:
+                frame_image = ImageOps.mirror(frame_image)
+
+            if abs(brightness - 1.0) > 0.01:
+                frame_image = ImageEnhance.Brightness(frame_image).enhance(brightness)
+
+            base_width, base_height = frame_image.size
+            scaled_size = (
+                max(1, int(base_width * width_scale)),
+                max(1, int(base_height * height_scale)),
+            )
+            resample = getattr(Image, "Resampling", Image)
+            frame_image = frame_image.resize(scaled_size, resample.LANCZOS)
+            frame_image = frame_image.rotate(rotation, resample=resample.BICUBIC, expand=True)
+
+            max_bounds = (146, 146)
+            frame_image.thumbnail(max_bounds, resample.LANCZOS)
+            paste_x = int(center_x - (frame_image.width / 2) + x_shift)
+            paste_y = int(center_y - (frame_image.height / 2) + vertical_bob)
+            image.alpha_composite(frame_image, (paste_x, paste_y))
+
+            built_frames.append(ImageTk.PhotoImage(image))
+
+        self.entry_fly_frames = built_frames
+        return self.entry_fly_frames
+
+    def start_entry_animation(self):
+        if getattr(self, "entry_fly_label", None) is None:
+            return
+
+        self.stop_entry_animation()
+
+        if not self.entry_frame.winfo_ismapped():
+            self.entry_fly_job = self.root.after(60, self.start_entry_animation)
+            return
+
+        if not self.entry_fly_frames:
+            self._build_entry_fly_frames()
+
+        if not self.entry_fly_frames:
+            self.entry_fly_label.config(text="Fly preview unavailable")
+            return
+
+        self.entry_fly_frame_index = 0
+        self._advance_entry_animation()
+
+    def _advance_entry_animation(self):
+        if not self.entry_fly_frames or not self.entry_frame.winfo_ismapped():
+            self.entry_fly_job = None
+            return
+
+        frame = self.entry_fly_frames[self.entry_fly_frame_index]
+        self.entry_fly_label.config(image=frame, text="")
+        self.entry_fly_frame_index = (self.entry_fly_frame_index + 1) % len(self.entry_fly_frames)
+        self.entry_fly_job = self.root.after(80, self._advance_entry_animation)
+
+    def stop_entry_animation(self):
+        if self.entry_fly_job is not None:
+            self.root.after_cancel(self.entry_fly_job)
+            self.entry_fly_job = None
 
     def create_status_section(self, parent):
         status_frame = ttk.LabelFrame(parent, text="System Status", style="Status.TLabelframe", padding="10")
@@ -364,28 +615,64 @@ class DrosophilaGUI:
 
         device_frame = ttk.LabelFrame(controls_frame, text="Device Control", style="Device.TLabelframe", padding="10")
         device_frame.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        device_frame.columnconfigure(0, weight=1)
 
-        ttk.Label(device_frame, text="Vacuum:", font=("Arial", 9, "bold")).grid(row=0, column=0, pady=(0, 3), sticky=tk.W)
-        self.vacuum_switch = SliderSwitch(device_frame, command=self.set_vacuum_from_ui, initial=False)
-        self.vacuum_switch.grid(row=1, column=0, pady=2, sticky=tk.W)
+        self.vacuum_switch = self.create_device_card(
+            device_frame,
+            row=0,
+            actuator="vacuum",
+            title="Vacuum",
+            description="Controls pickup suction for holding or releasing flies.",
+            command=self.set_vacuum_from_ui,
+        )
         self.register_toggle(self.vacuum_switch)
 
-        ttk.Label(device_frame, text="Vibration:", font=("Arial", 9, "bold")).grid(row=2, column=0, pady=(12, 3), sticky=tk.W)
-        self.vibration_switch = SliderSwitch(device_frame, command=self.set_vibration_from_ui, initial=False)
-        self.vibration_switch.grid(row=3, column=0, pady=2, sticky=tk.W)
+        self.vibration_switch = self.create_device_card(
+            device_frame,
+            row=1,
+            actuator="vibration",
+            title="Vibration",
+            description="Runs the vibration motor used during assay handling.",
+            command=self.set_vibration_from_ui,
+        )
         self.register_toggle(self.vibration_switch)
 
-        ops_frame = ttk.LabelFrame(controls_frame, text="Operations", style="Ops.TLabelframe", padding="10")
+        ops_frame = ttk.LabelFrame(controls_frame, text="Operations", style="Ops.TLabelframe", padding=(10, 6, 10, 8))
         ops_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
+        ops_frame.columnconfigure(0, weight=1)
+        ops_frame.rowconfigure(0, weight=0)
 
-        self.run_button = self.make_button(ops_frame, "Run Automated", "#9C27B0", self.run_automated)
-        self.run_button.grid(row=0, column=0, pady=3, sticky=(tk.W, tk.E))
+        operations_content = tk.Frame(ops_frame, bg="#F8E8F0")
+        operations_content.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E))
+        operations_content.columnconfigure(0, minsize=126)
+        operations_content.columnconfigure(1, weight=1)
+        operations_content.rowconfigure(0, weight=0)
 
-        self.assay_button = self.make_button(ops_frame, "Run Assay", "#9C27B0", self.run_assay)
-        self.assay_button.grid(row=1, column=0, pady=3, sticky=(tk.W, tk.E))
+        panel_height = 170
+        button_gap = 12
+        button_margin = 20
 
-        self.classify_button = self.make_button(ops_frame, "Classify Fly", "#9C27B0", self.classify_fly_gui)
-        self.classify_button.grid(row=2, column=0, pady=3, sticky=(tk.W, tk.E))
+        action_frame = tk.Frame(operations_content, bg="#F8E8F0", width=126, height=panel_height)
+        action_frame.grid(row=0, column=0, sticky=(tk.N, tk.W), padx=(0, 12))
+        action_frame.grid_propagate(False)
+        action_frame.columnconfigure(0, weight=1)
+        top_button_spacer = tk.Frame(action_frame, bg="#F8E8F0", height=button_margin)
+        top_button_spacer.grid(row=0, column=0, sticky=(tk.W, tk.E))
+
+        self.run_button = self.make_button(action_frame, "Run Automated", "#9C27B0", self.run_automated)
+        self.run_button.grid(row=1, column=0, sticky=(tk.W, tk.E))
+
+        self.assay_button = self.make_button(action_frame, "Run Assay", "#9C27B0", self.run_assay)
+        self.assay_button.grid(row=3, column=0, sticky=(tk.W, tk.E))
+
+        self.classify_button = self.make_button(action_frame, "Classify Fly", "#9C27B0", self.classify_fly_gui)
+        self.classify_button.grid(row=5, column=0, sticky=(tk.W, tk.E))
+
+        tk.Frame(action_frame, bg="#F8E8F0", height=button_gap).grid(row=2, column=0, sticky=(tk.W, tk.E))
+        tk.Frame(action_frame, bg="#F8E8F0", height=button_gap).grid(row=4, column=0, sticky=(tk.W, tk.E))
+        tk.Frame(action_frame, bg="#F8E8F0", height=button_margin).grid(row=6, column=0, sticky=(tk.W, tk.E))
+
+        self.create_operations_logo(operations_content, panel_height)
 
     def create_system_controls(self, parent):
         system_frame = ttk.LabelFrame(parent, text="System Control", padding="10")
@@ -436,6 +723,125 @@ class DrosophilaGUI:
         )
         self.register_control(button)
         return button
+
+    def create_device_card(self, parent, row: int, actuator: str, title: str, description: str, command):
+        card = tk.Frame(
+            parent,
+            bg="#FFFFFF",
+            highlightbackground="#D4DCE5",
+            highlightthickness=1,
+            bd=0,
+            padx=10,
+            pady=8,
+        )
+        card.grid(row=row, column=0, pady=(0, 10 if row == 0 else 0), sticky=(tk.W, tk.E))
+        card.columnconfigure(0, weight=1)
+
+        header = tk.Frame(card, bg="#FFFFFF")
+        header.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        header.columnconfigure(0, weight=1)
+
+        tk.Label(
+            header,
+            text=title,
+            bg="#FFFFFF",
+            fg="#1F2933",
+            font=("Arial", 11, "bold"),
+        ).grid(row=0, column=0, sticky=tk.W)
+
+        state_var = tk.StringVar(value="OFF")
+        detail_var = tk.StringVar(value="Currently off")
+        state_label = tk.Label(
+            header,
+            textvariable=state_var,
+            bg="#EEF2F6",
+            fg="#52606D",
+            font=("Arial", 8, "bold"),
+            padx=10,
+            pady=4,
+        )
+        state_label.grid(row=0, column=1, sticky=tk.E)
+        self.device_state_labels[actuator] = state_label
+        self.device_state_text[actuator] = state_var
+        self.device_detail_text[actuator] = detail_var
+
+        tk.Label(
+            card,
+            text=description,
+            bg="#FFFFFF",
+            fg="#52606D",
+            font=("Arial", 8),
+            justify="left",
+            wraplength=220,
+        ).grid(row=1, column=0, pady=(4, 6), sticky=tk.W)
+
+        control_row = tk.Frame(card, bg="#FFFFFF")
+        control_row.grid(row=2, column=0, sticky=(tk.W, tk.E))
+        control_row.columnconfigure(1, weight=1)
+
+        switch = SliderSwitch(control_row, command=command, initial=False, bg="#FFFFFF")
+        switch.grid(row=0, column=0, sticky=tk.W)
+
+        tk.Label(
+            control_row,
+            textvariable=detail_var,
+            bg="#FFFFFF",
+            fg="#1F2933",
+            font=("Arial", 10, "bold"),
+            anchor="w",
+        ).grid(row=0, column=1, padx=(10, 0), sticky=(tk.W, tk.E))
+
+        self.update_device_card_state(actuator, False)
+        return switch
+
+    def create_operations_logo(self, parent, panel_height: int):
+        logo_area = tk.Frame(parent, bg="#F8E8F0", height=panel_height)
+        logo_area.grid(row=0, column=1, sticky=(tk.N, tk.W, tk.E))
+        logo_area.grid_propagate(False)
+        logo_area.columnconfigure(0, weight=1)
+        logo_margin = 10
+        tk.Frame(logo_area, bg="#F8E8F0", height=logo_margin).grid(row=0, column=0, sticky=(tk.W, tk.E))
+
+        self.operations_logo_label = tk.Label(
+            logo_area,
+            text="Team logo unavailable",
+            bg="#F8E8F0",
+            fg="#6B4C63",
+            font=("Arial", 9, "bold"),
+            justify="center",
+            wraplength=150,
+            anchor="center",
+            bd=0,
+            highlightthickness=0,
+        )
+        self.operations_logo_label.grid(row=1, column=0)
+        tk.Frame(logo_area, bg="#F8E8F0", height=logo_margin).grid(row=2, column=0, sticky=(tk.W, tk.E))
+        self.load_operations_logo()
+
+    def load_operations_logo(self):
+        logo_path = self.repo_root / "assets" / "drosophilafly.png"
+        try:
+            from PIL import Image, ImageTk
+
+            image = Image.open(logo_path)
+            image = image.convert("RGBA")
+            resample = getattr(Image, "Resampling", Image)
+            image.thumbnail((128, 128), resample.LANCZOS)
+            self.operations_logo_image = ImageTk.PhotoImage(image)
+            self.operations_logo_label.config(
+                image=self.operations_logo_image,
+                text="",
+                bg="#F8E8F0",
+                compound="center",
+                anchor="center",
+            )
+        except Exception:
+            self.operations_logo_image = None
+            self.operations_logo_label.config(
+                image="",
+                text="Team fly logo unavailable",
+                bg="#F8E8F0",
+            )
 
     def register_control(self, widget):
         self.control_widgets.append(widget)
@@ -503,6 +909,24 @@ class DrosophilaGUI:
             self.vacuum_switch.set_value(enabled)
         elif actuator == "vibration":
             self.vibration_switch.set_value(enabled)
+        self.update_device_card_state(actuator, enabled)
+
+    def update_device_card_state(self, actuator: str, enabled: bool):
+        state_var = self.device_state_text.get(actuator)
+        detail_var = self.device_detail_text.get(actuator)
+        state_label = self.device_state_labels.get(actuator)
+
+        if state_var is None or detail_var is None or state_label is None:
+            return
+
+        if enabled:
+            state_var.set("ON")
+            detail_var.set("Currently on")
+            state_label.config(bg="#D9F3EC", fg="#176A57")
+        else:
+            state_var.set("OFF")
+            detail_var.set("Currently off")
+            state_label.config(bg="#EEF2F6", fg="#52606D")
 
     def show_classification_result(self, result: dict):
         class_name = result.get("class", "UNCERTAIN")
@@ -973,6 +1397,7 @@ class DrosophilaGUI:
         if self.worker_thread and self.worker_thread.is_alive():
             if not messagebox.askyesno("Quit", "A task is still running. Close the GUI anyway?"):
                 return
+        self.stop_entry_animation()
         self.root.destroy()
 
 

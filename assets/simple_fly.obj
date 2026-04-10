@@ -1,0 +1,33 @@
+
+# Simple Fly-like Model (low poly)
+
+o Fly
+
+# Body (ellipsoid-like)
+v 0 0 0
+v 0.2 0 0
+v -0.2 0 0
+v 0 0.1 0
+v 0 -0.1 0
+v 0 0 0.2
+v 0 0 -0.2
+
+# Wings (flat)
+v 0.1 0.15 0.05
+v -0.1 0.15 0.05
+v 0.1 0.15 -0.05
+v -0.1 0.15 -0.05
+
+# Faces (body)
+f 1 2 4
+f 1 4 3
+f 1 3 5
+f 1 5 2
+f 1 6 2
+f 1 6 3
+f 1 7 4
+f 1 7 5
+
+# Wings
+f 8 9 10
+f 9 11 10
