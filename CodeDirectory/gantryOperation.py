@@ -183,6 +183,11 @@ def run_operation():
                 print("No more flies remaining. Ending operation.")
                 break
 
+            print("Accuracy reset: homing gantry with vacuum OFF before pickup...")
+            vacuum_off()
+            home_to_zero()
+            print(f"Reset complete. Software position: {get_current_position():.2f} mm")
+
             # Move inward to chosen pickup point
             move_and_report("Channel Pickup Position", pickup_position)
 

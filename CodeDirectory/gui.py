@@ -1399,6 +1399,10 @@ class DrosophilaGUI:
                 pickup_position = positions[0]
                 self.worker_log(f"Selected pickup position: {pickup_position:.2f} mm")
 
+                self.worker_status("running", f"Cycle {cycle_index}: accuracy reset home before pickup.")
+                self._set_vacuum(False)
+                home_to_zero()
+
                 self.worker_status("moving", f"Cycle {cycle_index}: moving to pickup position.")
                 move_to_absolute(pickup_position)
 
