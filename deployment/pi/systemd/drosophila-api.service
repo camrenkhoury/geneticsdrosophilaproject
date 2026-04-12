@@ -8,6 +8,8 @@ Type=simple
 User=pi
 WorkingDirectory=%h/geneticsdrosophilaproject
 EnvironmentFile=-%h/geneticsdrosophilaproject/deployment/pi/config/backend.env
+Environment=DROSOPHILA_STATE_DIR=/run/drosophila-api
+RuntimeDirectory=drosophila-api
 ExecStart=%h/geneticsdrosophilaproject/start_backend.sh
 Restart=always
 RestartSec=5
