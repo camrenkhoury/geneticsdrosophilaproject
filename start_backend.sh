@@ -4,18 +4,29 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-if [ -d ".venv" ]; then
+CONFIG_FILE="deployment/pi/config/backend.env"
+if [ -f "$CONFIG_FILE" ]; then
   # shellcheck disable=SC1091
-  source .venv/bin/activate
+  source "$CONFIG_FILE"
+fi
+
+VENV_PATH="${DROSOPHILA_VENV_PATH:-.venv}"
+if [ -d "$VENV_PATH" ]; then
+  # shellcheck disable=SC1091
+  source "$VENV_PATH/bin/activate"
 fi
 
 export DROSOPHILA_API_KEY="${DROSOPHILA_API_KEY:-change-me}"
 export GPIOZERO_PIN_FACTORY="${GPIOZERO_PIN_FACTORY:-lgpio}"
+DROSOPHILA_BACKEND_APP="${DROSOPHILA_BACKEND_APP:-pi_backend.api.app:app}"
+DROSOPHILA_BACKEND_HOST="${DROSOPHILA_BACKEND_HOST:-0.0.0.0}"
+DROSOPHILA_BACKEND_PORT="${DROSOPHILA_BACKEND_PORT:-8000}"
+DROSOPHILA_BACKEND_RELOAD="${DROSOPHILA_BACKEND_RELOAD:-0}"
 
 STATE_DIR="/run/drosophila-api"
 STOP_COUNT_FILE="$STATE_DIR/user-stop-count"
 STOP_TIME_FILE="$STATE_DIR/user-stop-last-epoch"
-STOP_RESET_WINDOW_SEC=300
+STOP_RESET_WINDOW_SEC="${DROSOPHILA_STOP_RESET_WINDOW_SEC:-300}"
 mkdir -p "$STATE_DIR"
 
 reset_stop_counter_if_stale() {
@@ -54,7 +65,18 @@ handle_user_stop() {
 
 trap handle_user_stop TERM INT HUP
 
-python -m uvicorn pi_backend.api.app:app --host 0.0.0.0 --port 8000 &
+uvicorn_args=(
+  -m uvicorn
+  "$DROSOPHILA_BACKEND_APP"
+  --host "$DROSOPHILA_BACKEND_HOST"
+  --port "$DROSOPHILA_BACKEND_PORT"
+)
+
+if [ "$DROSOPHILA_BACKEND_RELOAD" = "1" ]; then
+  uvicorn_args+=(--reload)
+fi
+
+python "${uvicorn_args[@]}" &
 backend_pid=$!
 set +e
 wait "$backend_pid"
