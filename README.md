@@ -405,27 +405,40 @@ Primary GitHub Contributor/Owner: Camren J. Khoury
 
 **Contributions**
 
-- 3D Printing: Rivers Henderson, Dylan Britch, Ainara Garcia
-- Computer Vision Code: Avi Patel, Dylan Britch
-- Database Creation: Ainara Garcia, Dylan Britch, Avi Patel
-- GitHub Ownership: Camren J. Khoury
-- Integration: Camren J. Khoury, William McGlone
-- Logistics: Megan McNuer, William McGlone
-- Motor Control: Camren J. Khoury, William McGlone, Megan McNuer, Dylan Britch
-- Networking and Automation: Camren J. Khoury
-- PCB Design: Camren J. Khoury
-- Primary Development: Camren J. Khoury
-- Raspberry Pi Ownership: Camren J. Khoury
-- Student Project Manager: Ainara Garcia
-- Vacuum Nozzle Development: Dylan Britch, Rivers Henderson, William McGlone, Megan McNuer, Ainara Garcia
-- Wiring and Schematics: William McGlone, Megan McNuer, Camren J. Khoury
+**Mechanical Systems**
+- 3D Modeling/Printing: **Rivers Henderson**, Dylan Britch, Ainara Garcia
+- Vacuum Nozzle Development: **Dylan Britch**, Rivers Henderson, William McGlone, Megan McNuer, Ainara Garcia
+
+**Electrical Systems**
+- PCB Design: **Camren J. Khoury**
+- Wiring and Schematics: **William McGlone**, Camren J. Khoury, Megan McNuer
+
+**Embedded & Control Systems**
+- Motor Control: **Camren J. Khoury**, William McGlone, Megan McNuer, Dylan Britch
+- Raspberry Pi Environment + GPIO Control: **Camren J. Khoury**
+
+**Software & Computational Systems**
+- Computer Vision Code: **Avi Patel**, Dylan Britch
+- Database Creation: **Ainara Garcia**, Dylan Britch, Avi Patel
+- Networking and Automation: **Camren J. Khoury**
+
+**Systems Integration**
+- Integration: **Camren J. Khoury**, William McGlone
+
+**Project Management & Operations**
+- Logistics: **Megan McNuer**, William McGlone
+- Student Project Manager: **Ainara Garcia**
 
 ### **Academic / Institutional Associations**
 
-- Clemson University Institute for Genetics
+#### **Clemson University Institute for Genetics**
+
 - Dr. John Poole
 - Dr. Anurag Chaturvedi
-- Integrated Design Professor: Dr. Hassan Raza
+
+#### **Holcombe Department of Electrical and Computer Engineering**
+
+- Integrated System Design II Professor: Dr. Hassan Raza
 
 ## **License**
 
