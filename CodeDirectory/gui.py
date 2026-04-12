@@ -362,6 +362,16 @@ class DrosophilaGUI:
     def _entry_scale(self, value: int) -> int:
         return max(1, math.ceil(value * self.entry_page_scale))
 
+    def _blend_hex(self, start_hex: str, end_hex: str, ratio: float) -> str:
+        ratio = max(0.0, min(1.0, ratio))
+        start = tuple(int(start_hex[index : index + 2], 16) for index in (1, 3, 5))
+        end = tuple(int(end_hex[index : index + 2], 16) for index in (1, 3, 5))
+        blended = tuple(
+            round(start[channel] + ((end[channel] - start[channel]) * ratio))
+            for channel in range(3)
+        )
+        return f"#{blended[0]:02X}{blended[1]:02X}{blended[2]:02X}"
+
     def create_widgets(self):
         style = ttk.Style()
         style.configure("Status.TLabelframe", background="#E8F4F8", relief="raised", borderwidth=2)
@@ -403,8 +413,35 @@ class DrosophilaGUI:
         self.show_entry_page()
 
     def create_entry_page(self, parent):
-        entry_card = tk.Frame(
+        halo_shell = tk.Frame(
             parent,
+            bg=self._blend_hex("#FFFFFF", "#686766", 0.16),
+            padx=self._entry_scale(10),
+            pady=self._entry_scale(10),
+        )
+        halo_shell.grid(row=0, column=0)
+
+        halo_ring_specs = (
+            (0.28, 10),
+            (0.42, 8),
+            (0.58, 7),
+            (0.74, 5),
+        )
+        halo_container = halo_shell
+        for blend_ratio, padding in halo_ring_specs:
+            halo_color = self._blend_hex("#FFFFFF", "#686766", blend_ratio)
+            halo_container = tk.Frame(
+                halo_container,
+                bg=halo_color,
+                bd=0,
+                highlightthickness=0,
+                padx=self._entry_scale(padding),
+                pady=self._entry_scale(padding),
+            )
+            halo_container.grid(row=0, column=0)
+
+        entry_card = tk.Frame(
+            halo_container,
             bg="#686766",
             highlightbackground="#686766",
             highlightthickness=self._entry_scale(1),
