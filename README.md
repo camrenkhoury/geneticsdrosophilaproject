@@ -1,6 +1,6 @@
-<h1 style="display: flex; align-items: center;">
-  <span style="flex: 1;">Automated Drosophila Sorting System</span>
-  <img src=".github/assets/drosophila.png" height="40" style="vertical-align: middle;"/>
+<h1>
+  Automated Drosophila Sorting System
+  <img src=".github/assets/drosophila.png" align="right" height="52" style="margin-top: -4px;" />
 </h1>
 
 **Automated Drosophila Sorting System** is a mixed hardware, embedded-control, computer-vision, and desktop-software project for detecting, picking, classifying, and sorting **Drosophila melanogaster** with minimal operator intervention.
