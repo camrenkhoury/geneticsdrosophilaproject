@@ -159,7 +159,7 @@ The system provides the following functions in the codebase:
 This repository contains the backend, GUI, shared definitions, hardware-control code, and vision code that make up the working system.
 
 ```text
-geneticsdrosophiliaproject/
+geneticsdrosophilaproject/
 |- .github/
 |  `- assets/
 |     |- Complete3-D ModelM2.png

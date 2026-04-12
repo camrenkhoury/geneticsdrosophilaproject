@@ -7,8 +7,8 @@ If the operator says "prep this for Pi" or asks for a one-click Pi conversion, u
 ## Must be true on the Pi
 
 1. Keep the repo layout the same:
-   - `geneticsdrosophiliaproject/CodeDirectory`
-   - `geneticsdrosophiliaproject/fin6`
+   - `geneticsdrosophilaproject/CodeDirectory`
+   - `geneticsdrosophilaproject/fin6`
 
 2. Install the Pi GUI/tracking dependencies:
    - Run `fin6/install_pi.sh`

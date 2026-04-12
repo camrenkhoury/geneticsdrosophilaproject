@@ -2196,7 +2196,6 @@ class DrosophilaGUI:
             [
                 self._default_channel_output_dir(),
                 Path.home() / "fin6" / "outputs" / "channel",
-                Path.home() / "geneticsdrosophiliaproject" / "fin6" / "outputs" / "channel",
             ]
         )
 

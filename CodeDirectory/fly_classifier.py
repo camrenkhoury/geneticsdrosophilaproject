@@ -17,6 +17,7 @@ Usage from another script:
 import os
 import sys
 import subprocess
+from pathlib import Path
 import numpy as np
 import cv2
 
@@ -35,8 +36,9 @@ except ImportError:
     YOLO = MockYOLO
 
 # ── Config ────────────────────────────────────────────────────────────────────
-CLASSIFIER_MODEL_PATH = os.path.expanduser('~/geneticsdrosophiliaproject/best.pt')
-TEMP_IMAGE_DIR        = os.path.expanduser('~/geneticsdrosophiliaproject/CodeDirectory/tempClassImage')
+REPO_ROOT = Path(__file__).resolve().parents[1]
+CLASSIFIER_MODEL_PATH = str(REPO_ROOT / 'best.pt')
+TEMP_IMAGE_DIR        = str(REPO_ROOT / 'CodeDirectory' / 'tempClassImage')
 TEMP_IMAGE_PATH       = os.path.join(TEMP_IMAGE_DIR, 'temp.jpg')
 
 UNCERTAIN_THRESHOLD   = 0.70   # classifier confidence below this → UNCERTAIN

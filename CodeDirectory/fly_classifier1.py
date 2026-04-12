@@ -24,6 +24,7 @@ import os
 import sys
 import subprocess
 import argparse
+from pathlib import Path
 import numpy as np
 import cv2
 
@@ -40,7 +41,8 @@ except ImportError:
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-CLASSIFIER_MODEL_PATH = os.path.expanduser('~/geneticsdrosophiliaproject/best.pt')
+REPO_ROOT = Path(__file__).resolve().parents[1]
+CLASSIFIER_MODEL_PATH = str(REPO_ROOT / 'best.pt')
 TEMP_IMAGE_DIR        = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tempClassImage')
 TEMP_IMAGE_PATH       = os.path.join(TEMP_IMAGE_DIR, 'temp.jpg')
 

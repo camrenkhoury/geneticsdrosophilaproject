@@ -3,8 +3,7 @@ Version=1.0
 Type=Application
 Name=Drosophila Genetics GUI
 Comment=Launch the Drosophila Genetics GUI
-Path=/mnt/c/Users/khour/Desktop/Drosophila/geneticsdrosophiliaproject/CodeDirectory
-Exec=/bin/sh -c 'cd "/mnt/c/Users/khour/Desktop/Drosophila/geneticsdrosophiliaproject/CodeDirectory" && ./launch_gui.sh'
-Icon=/mnt/c/Users/khour/Desktop/Drosophila/geneticsdrosophiliaproject/assets/drosophila.png
+Exec=/bin/sh -lc 'REPO_DIR="$HOME/geneticsdrosophilaproject"; cd "$REPO_DIR/CodeDirectory" && ./launch_gui.sh'
+Icon=/home/pi/geneticsdrosophilaproject/assets/drosophila.png
 Terminal=false
 Categories=Science;

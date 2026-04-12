@@ -1,12 +1,13 @@
 import json
 import sys
+from pathlib import Path
 
 sys.path.insert(0, '/home/team8/.local/lib/python3.13/site-packages')
 from box_sdk_gen import BoxOAuth, OAuthConfig
 
 CLIENT_ID = 'k1hxdppdrmp3rm8vqcbb66wpf0ut3iyv'
 CLIENT_SECRET = 'IJ4pOmk3t3wWyxL0wYSdoZoyAXGqfp15'
-TOKENS_FILE = '/home/team8/geneticsdrosophiliaproject/box_tokens.json'
+TOKENS_FILE = str(Path(__file__).resolve().parent / 'box_tokens.json')
 
 auth = BoxOAuth(
     OAuthConfig(client_id=CLIENT_ID, client_secret=CLIENT_SECRET)

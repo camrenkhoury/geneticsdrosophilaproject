@@ -6,9 +6,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/geneticsdrosophiliaproject
-EnvironmentFile=-/home/pi/geneticsdrosophiliaproject/deployment/pi/config/backend.env
-ExecStart=/home/pi/geneticsdrosophiliaproject/start_backend.sh
+WorkingDirectory=%h/geneticsdrosophilaproject
+EnvironmentFile=-%h/geneticsdrosophilaproject/deployment/pi/config/backend.env
+ExecStart=%h/geneticsdrosophilaproject/start_backend.sh
 Restart=always
 RestartSec=5
 RestartPreventExitStatus=77
