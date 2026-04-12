@@ -206,8 +206,10 @@ class ActionButton(tk.Canvas):
         self._pady = pady
         self._state = tk.NORMAL
         self._hovered = False
+        self._pressed = False
         self.configure(cursor="hand2")
-        self.bind("<Button-1>", self._on_click)
+        self.bind("<ButtonPress-1>", self._on_press)
+        self.bind("<ButtonRelease-1>", self._on_release)
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
         self.bind("<Configure>", self._on_resize)
@@ -216,9 +218,18 @@ class ActionButton(tk.Canvas):
     def _current_fill(self) -> str:
         if self._state != tk.NORMAL:
             return self._disabled_color
+        if self._pressed:
+            return self._active_color
         if self._hovered:
             return self._active_color
         return self._base_color
+
+    def _outline_color(self) -> str:
+        color = self._current_fill().lstrip("#")
+        red = max(0, int(color[0:2], 16) - 28)
+        green = max(0, int(color[2:4], 16) - 28)
+        blue = max(0, int(color[4:6], 16) - 28)
+        return f"#{red:02X}{green:02X}{blue:02X}"
 
     def _redraw(self) -> None:
         self.delete("all")
@@ -230,7 +241,8 @@ class ActionButton(tk.Canvas):
         height = max(requested_height, self.winfo_height(), 1)
         super().configure(width=width, height=height, cursor="hand2" if self._state == tk.NORMAL else "arrow")
         fill = self._current_fill()
-        self.create_rectangle(0, 0, width, height, fill=fill, outline=fill, width=0)
+        outline = self._outline_color()
+        self.create_rectangle(0, 0, width, height, fill=fill, outline=outline, width=2)
         self.create_text(
             width / 2,
             height / 2,
@@ -239,11 +251,23 @@ class ActionButton(tk.Canvas):
             font=self._font,
         )
 
-    def _on_click(self, _event=None) -> None:
+    def _on_press(self, _event=None) -> None:
         if self._state != tk.NORMAL:
             return
-        if callable(self.command):
-            self.command()
+        self._pressed = True
+        self._redraw()
+
+    def _on_release(self, event=None) -> None:
+        if self._state != tk.NORMAL:
+            return
+        was_pressed = self._pressed
+        self._pressed = False
+        self._redraw()
+        if not was_pressed or event is None:
+            return
+        if 0 <= event.x <= self.winfo_width() and 0 <= event.y <= self.winfo_height():
+            if callable(self.command):
+                self.command()
 
     def _on_enter(self, _event=None) -> None:
         if self._state == tk.NORMAL:
@@ -251,6 +275,7 @@ class ActionButton(tk.Canvas):
             self._redraw()
 
     def _on_leave(self, _event=None) -> None:
+        self._pressed = False
         if self._hovered:
             self._hovered = False
             self._redraw()
@@ -319,6 +344,7 @@ class DrosophilaGUI:
         else:
             self.root.after(10, self._fit_window_to_screen)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.is_macos = sys.platform == "darwin"
 
         self.gui_dir = GUI_DIR
         self.host_app_dir = HOST_APP_DIR
@@ -531,10 +557,10 @@ class DrosophilaGUI:
     def _fit_window_to_screen(self) -> None:
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        target_width = min(max(1100, int(screen_width * 0.9)), screen_width - 80)
-        target_height = min(max(760, int(screen_height * 0.88)), screen_height - 100)
+        target_width = min(max(1100, int(screen_width * 0.94)), screen_width - 40)
+        target_height = min(max(760, int(screen_height * 0.92)), screen_height - 70)
         x_offset = max(20, (screen_width - target_width) // 2)
-        y_offset = max(20, (screen_height - target_height) // 3)
+        y_offset = max(14, (screen_height - target_height) // 4)
         self.root.geometry(f"{target_width}x{target_height}+{x_offset}+{y_offset}")
 
     def _entry_scale(self, value: int) -> int:
@@ -1901,8 +1927,8 @@ class DrosophilaGUI:
         operations_content.columnconfigure(1, weight=1)
         operations_content.rowconfigure(0, weight=0)
 
-        button_gap = 12
-        button_margin = 20
+        button_gap = 10 if self.is_macos else 12
+        button_margin = 12 if self.is_macos else 20
 
         action_frame = tk.Frame(operations_content, bg="#F8E8F0", width=126)
         action_frame.grid(row=0, column=0, sticky=(tk.N, tk.W), padx=(0, 12))
@@ -2040,7 +2066,7 @@ class DrosophilaGUI:
             command=command,
             active_color=self._blend_hex(color, "#111111", 0.18),
             padx=12,
-            pady=7,
+            pady=5 if self.is_macos else 7,
         )
         self.register_control(button)
         return button
@@ -2158,7 +2184,8 @@ class DrosophilaGUI:
             image = Image.open(logo_path)
             image = image.convert("RGBA")
             resample = getattr(Image, "Resampling", Image)
-            image.thumbnail((152, 152), resample.LANCZOS)
+            max_logo_size = 128 if self.is_macos else 152
+            image.thumbnail((max_logo_size, max_logo_size), resample.LANCZOS)
             self.operations_logo_image = ImageTk.PhotoImage(image)
             self.operations_logo_label.config(
                 image=self.operations_logo_image,
