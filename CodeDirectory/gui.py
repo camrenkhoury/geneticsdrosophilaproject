@@ -222,6 +222,7 @@ class DrosophilaGUI:
         self.remote_sync: RemoteSyncManager | None = None
         self._local_runtime_cache: dict[str, object] | None = None
         self._local_runtime_error: str | None = None
+        self.entry_page_scale = 1.4
 
         self.state_var = tk.StringVar(value="IDLE")
         self.position_var = tk.StringVar(value="0.00 mm")
@@ -358,6 +359,9 @@ class DrosophilaGUI:
             except tk.TclError:
                 self.window_icon_images = []
 
+    def _entry_scale(self, value: int) -> int:
+        return max(1, math.ceil(value * self.entry_page_scale))
+
     def create_widgets(self):
         style = ttk.Style()
         style.configure("Status.TLabelframe", background="#E8F4F8", relief="raised", borderwidth=2)
@@ -373,7 +377,12 @@ class DrosophilaGUI:
         self.page_container.columnconfigure(0, weight=1)
         self.page_container.rowconfigure(0, weight=1)
 
-        self.entry_frame = tk.Frame(self.page_container, bg="#FFFFFF", padx=40, pady=40)
+        self.entry_frame = tk.Frame(
+            self.page_container,
+            bg="#FFFFFF",
+            padx=self._entry_scale(20),
+            pady=self._entry_scale(20),
+        )
         self.entry_frame.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
         self.entry_frame.columnconfigure(0, weight=1)
         self.entry_frame.rowconfigure(0, weight=1)
@@ -398,35 +407,35 @@ class DrosophilaGUI:
             parent,
             bg="#686766",
             highlightbackground="#686766",
-            highlightthickness=1,
+            highlightthickness=self._entry_scale(1),
             bd=0,
-            padx=61,
-            pady=61,
+            padx=self._entry_scale(61),
+            pady=self._entry_scale(61),
         )
         entry_card.grid(row=0, column=0)
         entry_card.columnconfigure(0, weight=0)
         entry_card.columnconfigure(1, weight=0)
 
         left_panel = tk.Frame(entry_card, bg="#686766")
-        left_panel.grid(row=0, column=0, sticky=(tk.N, tk.W), padx=(0, 47))
+        left_panel.grid(row=0, column=0, sticky=(tk.N, tk.W), padx=(0, self._entry_scale(47)))
 
         tk.Label(
             left_panel,
             text="Drosophila Genetics GUI",
             bg="#686766",
             fg="#F3F4F6",
-            font=("Arial", 38, "bold"),
-        ).grid(row=0, column=0, sticky=tk.W, pady=(0, 17))
+            font=("Arial", self._entry_scale(38), "bold"),
+        ).grid(row=0, column=0, sticky=tk.W, pady=(0, self._entry_scale(17)))
 
         tk.Label(
             left_panel,
             text="Open the control panel when you are ready.",
             bg="#686766",
             fg="#E5E7EA",
-            font=("Arial", 18),
+            font=("Arial", self._entry_scale(18)),
             justify="left",
             anchor="w",
-        ).grid(row=1, column=0, sticky=tk.W, pady=(0, 38))
+        ).grid(row=1, column=0, sticky=tk.W, pady=(0, self._entry_scale(38)))
 
         enter_button = tk.Button(
             left_panel,
@@ -435,16 +444,21 @@ class DrosophilaGUI:
             fg="#FFFFFF",
             activebackground="#732220",
             activeforeground="#FFFFFF",
-            font=("Arial", 21, "bold"),
-            padx=30,
-            pady=17,
+            font=("Arial", self._entry_scale(21), "bold"),
+            padx=self._entry_scale(30),
+            pady=self._entry_scale(17),
             relief="raised",
             bd=0,
             command=self.show_control_panel,
         )
         enter_button.grid(row=2, column=0, sticky=tk.W)
 
-        fly_panel = tk.Frame(entry_card, bg="#686766", padx=10, pady=7)
+        fly_panel = tk.Frame(
+            entry_card,
+            bg="#686766",
+            padx=self._entry_scale(10),
+            pady=self._entry_scale(7),
+        )
         fly_panel.grid(row=0, column=1, sticky=(tk.N, tk.E))
 
         self.entry_fly_label = tk.Label(
@@ -1014,8 +1028,8 @@ class DrosophilaGUI:
         except ImportError:
             return source_image
 
-        margin_x = 51
-        margin_y = 44
+        margin_x = self._entry_scale(51)
+        margin_y = self._entry_scale(44)
         stage_width = source_image.width + (margin_x * 2)
         stage_height = source_image.height + (margin_y * 2)
         stage_image = Image.new("RGBA", (stage_width, stage_height), (255, 255, 255, 255))
@@ -1071,7 +1085,8 @@ class DrosophilaGUI:
             return
 
         image = self._build_entry_photo_stage(source_image)
-        max_bounds = (372, 372)
+        max_bound = self._entry_scale(372)
+        max_bounds = (max_bound, max_bound)
         resample = getattr(Image, "Resampling", Image)
         image.thumbnail(max_bounds, resample.LANCZOS)
         self.entry_fly_display_image = ImageTk.PhotoImage(image)
@@ -1091,9 +1106,9 @@ class DrosophilaGUI:
             return []
 
         frame_count = 20
-        canvas_size = 240
+        canvas_size = self._entry_scale(240)
         center_x = canvas_size // 2
-        center_y = 104
+        center_y = self._entry_scale(104)
 
         built_frames = []
         for frame_index in range(frame_count):
@@ -1101,15 +1116,51 @@ class DrosophilaGUI:
             image = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
             draw = ImageDraw.Draw(image, "RGBA")
 
-            glow_center_y = 194
-            draw.ellipse((56, glow_center_y - 11, 184, glow_center_y + 11), fill=(88, 237, 255, 28))
-            draw.ellipse((68, glow_center_y - 7, 172, glow_center_y + 7), fill=(88, 237, 255, 54))
-            draw.ellipse((78, glow_center_y - 3, 162, glow_center_y + 3), outline=(159, 247, 255, 180), width=2)
-            draw.arc((54, glow_center_y - 14, 186, glow_center_y + 14), start=18, end=162, fill=(146, 244, 255, 150), width=2)
+            glow_center_y = self._entry_scale(194)
+            draw.ellipse(
+                (
+                    self._entry_scale(56),
+                    glow_center_y - self._entry_scale(11),
+                    self._entry_scale(184),
+                    glow_center_y + self._entry_scale(11),
+                ),
+                fill=(88, 237, 255, 28),
+            )
+            draw.ellipse(
+                (
+                    self._entry_scale(68),
+                    glow_center_y - self._entry_scale(7),
+                    self._entry_scale(172),
+                    glow_center_y + self._entry_scale(7),
+                ),
+                fill=(88, 237, 255, 54),
+            )
+            draw.ellipse(
+                (
+                    self._entry_scale(78),
+                    glow_center_y - self._entry_scale(3),
+                    self._entry_scale(162),
+                    glow_center_y + self._entry_scale(3),
+                ),
+                outline=(159, 247, 255, 180),
+                width=self._entry_scale(2),
+            )
+            draw.arc(
+                (
+                    self._entry_scale(54),
+                    glow_center_y - self._entry_scale(14),
+                    self._entry_scale(186),
+                    glow_center_y + self._entry_scale(14),
+                ),
+                start=18,
+                end=162,
+                fill=(146, 244, 255, 150),
+                width=self._entry_scale(2),
+            )
 
             frame_image = source_image.copy()
-            x_shift = 14.0 * math.cos(orbit_angle)
-            vertical_bob = -10.0 * math.sin(orbit_angle)
+            x_shift = float(self._entry_scale(14)) * math.cos(orbit_angle)
+            vertical_bob = -float(self._entry_scale(10)) * math.sin(orbit_angle)
             depth_factor = (math.sin(orbit_angle) + 1.0) / 2.0
             orbit_scale = 0.9 + (0.14 * depth_factor)
             rotation = 5.0 * math.cos(orbit_angle)
@@ -1127,7 +1178,8 @@ class DrosophilaGUI:
             frame_image = frame_image.resize(scaled_size, resample.LANCZOS)
             frame_image = frame_image.rotate(rotation, resample=resample.BICUBIC, expand=True)
 
-            max_bounds = (146, 146)
+            max_frame_bound = self._entry_scale(146)
+            max_bounds = (max_frame_bound, max_frame_bound)
             frame_image.thumbnail(max_bounds, resample.LANCZOS)
             paste_x = int(center_x - (frame_image.width / 2) + x_shift)
             paste_y = int(center_y - (frame_image.height / 2) + vertical_bob)
