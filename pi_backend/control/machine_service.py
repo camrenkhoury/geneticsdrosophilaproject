@@ -44,21 +44,15 @@ class MachineService:
             BackendLifecycleState.STARTING_BACKEND,
             "Initializing Pi machine service.",
         )
-        self.set_vacuum(False)
-        self.set_vibration(False)
-        self.runtime_state.set_current_position_mm(self.motion.get_current_position())
+        self._initialize_subsystems()
+        if self.motion.available:
+            self.runtime_state.set_current_position_mm(self.motion.get_current_position())
+        else:
+            self.runtime_state.set_current_position_mm(0.0)
         self.runtime_state.set_controller_state(
             ClientControllerState.CLIENT_DISCONNECTED,
             "Waiting for remote client.",
         )
-        self.runtime_state.set_subsystem_health("motion_available", True)
-        self.runtime_state.set_subsystem_health("vacuum_available", True)
-        self.runtime_state.set_subsystem_health("vibration_available", True)
-        self.runtime_state.set_subsystem_health("detection_reader_available", True)
-        self.runtime_state.set_subsystem_health("classifier_available", True)
-        self.runtime_state.set_subsystem_health("motion_simulation", self.motion.simulation_enabled)
-        self.runtime_state.set_subsystem_health("vacuum_simulation", self.vacuum.simulation_enabled)
-        self.runtime_state.set_subsystem_health("vibration_simulation", self.vibration.simulation_enabled)
         self.refresh_detection_summary()
         self.runtime_state.set_backend_lifecycle_state(
             BackendLifecycleState.WAITING_FOR_CLIENT,
@@ -66,6 +60,92 @@ class MachineService:
         )
         self.runtime_state.set_orchestrator_state(OrchestratorState.SYSTEM_IDLE, "Machine idle.")
         self.logger.info("Machine service initialized.")
+
+    def _initialize_subsystems(self) -> None:
+        self.motion.initialize()
+        self.vacuum.initialize()
+        self.vibration.initialize()
+        self.classify_service.initialize()
+        self.assay_service.initialize()
+
+        self._record_component_state(
+            "motion",
+            available=self.motion.available,
+            simulation_enabled=self.motion.simulation_enabled,
+            last_error=self.motion.last_error,
+        )
+        self._record_component_state(
+            "vacuum",
+            available=self.vacuum.available,
+            simulation_enabled=self.vacuum.simulation_enabled,
+            last_error=self.vacuum.last_error,
+        )
+        self._record_component_state(
+            "vibration",
+            available=self.vibration.available,
+            simulation_enabled=self.vibration.simulation_enabled,
+            last_error=self.vibration.last_error,
+        )
+        self._record_component_state(
+            "classifier",
+            available=self.classify_service.available,
+            simulation_enabled=False,
+            last_error=self.classify_service.last_error,
+        )
+        self._record_component_state(
+            "assay",
+            available=self.assay_service.available,
+            simulation_enabled=False,
+            last_error=self.assay_service.last_error,
+        )
+
+    def _record_component_state(
+        self,
+        name: str,
+        *,
+        available: bool,
+        simulation_enabled: bool,
+        last_error: str | None,
+    ) -> None:
+        status = "unavailable"
+        if available:
+            status = "simulation" if simulation_enabled else "available"
+
+        self.runtime_state.set_subsystem_health(f"{name}_available", available)
+        self.runtime_state.set_subsystem_health(f"{name}_simulation", simulation_enabled)
+        self.runtime_state.set_subsystem_health(f"{name}_status", status)
+        self.runtime_state.set_subsystem_error(name, last_error)
+
+        boot_degraded = self.runtime_state.snapshot().backend_boot_degraded
+        if simulation_enabled or not available:
+            self.runtime_state.set_backend_boot_degraded(True)
+            if last_error:
+                self.logger.warning("%s subsystem degraded: %s", name, last_error)
+            else:
+                self.logger.warning("%s subsystem running in simulation mode.", name)
+            return
+
+        self.runtime_state.set_backend_boot_degraded(boot_degraded)
+
+    def _unavailable_message(self, subsystem: str) -> str | None:
+        snapshot = self.runtime_state.snapshot()
+        available = bool(snapshot.subsystem_health.get(f"{subsystem}_available", False))
+        if available:
+            return None
+
+        error_detail = snapshot.subsystem_errors.get(subsystem)
+        if error_detail:
+            return f"{subsystem} subsystem unavailable: {error_detail}"
+        return f"{subsystem} subsystem unavailable."
+
+    def validate_motion_command(self) -> str | None:
+        return self._unavailable_message("motion")
+
+    def validate_vacuum_command(self) -> str | None:
+        return self._unavailable_message("vacuum")
+
+    def validate_vibration_command(self) -> str | None:
+        return self._unavailable_message("vibration")
 
     def home(self) -> float:
         self.runtime_state.begin_task("home", TaskState.HOMING_RUNNING, "Homing gantry.")
@@ -128,7 +208,12 @@ class MachineService:
         request_state = OrchestratorState.VACUUM_ON_REQUESTED if enabled else OrchestratorState.VACUUM_OFF_REQUESTED
         self.runtime_state.set_orchestrator_state(request_state, "Applying vacuum output.")
         self.logger.info("Setting vacuum to %s.", "ON" if enabled else "OFF")
-        self.vacuum.set_enabled(enabled)
+        try:
+            self.vacuum.set_enabled(enabled)
+        except Exception:
+            self.runtime_state.set_orchestrator_state(OrchestratorState.SYSTEM_IDLE, "Machine idle.")
+            self.logger.exception("Vacuum command failed.")
+            raise
         self.runtime_state.set_vacuum_on(enabled)
         self.runtime_state.set_orchestrator_state(OrchestratorState.ACTUATOR_COMPLETE, "Vacuum state applied.")
         self.runtime_state.set_orchestrator_state(OrchestratorState.SYSTEM_IDLE, "Machine idle.")
@@ -138,7 +223,12 @@ class MachineService:
         request_state = OrchestratorState.VIBRATION_ON_REQUESTED if enabled else OrchestratorState.VIBRATION_OFF_REQUESTED
         self.runtime_state.set_orchestrator_state(request_state, "Applying vibration output.")
         self.logger.info("Setting vibration to %s.", "ON" if enabled else "OFF")
-        self.vibration.set_enabled(enabled)
+        try:
+            self.vibration.set_enabled(enabled)
+        except Exception:
+            self.runtime_state.set_orchestrator_state(OrchestratorState.SYSTEM_IDLE, "Machine idle.")
+            self.logger.exception("Vibration command failed.")
+            raise
         self.runtime_state.set_vibration_on(enabled)
         self.runtime_state.set_orchestrator_state(OrchestratorState.ACTUATOR_COMPLETE, "Vibration state applied.")
         self.runtime_state.set_orchestrator_state(OrchestratorState.SYSTEM_IDLE, "Machine idle.")
@@ -151,6 +241,25 @@ class MachineService:
         return self.classify_service.run()
 
     def refresh_detection_summary(self) -> DetectionSummary:
-        summary = self.detection_reader.read_summary()
+        try:
+            summary = self.detection_reader.read_summary()
+        except Exception as exc:
+            error_message = f"{type(exc).__name__}: {exc}"
+            self.runtime_state.set_subsystem_health("detection_reader_available", False)
+            self.runtime_state.set_subsystem_health("detection_reader_status", "unavailable")
+            self.runtime_state.set_subsystem_error("detection_reader", error_message)
+            self.runtime_state.set_backend_boot_degraded(True)
+            self.logger.exception("Detection reader failed.")
+            summary = DetectionSummary(
+                source_path=str(self.runtime_config.detection_result_path),
+                source_exists=False,
+                status="error",
+            )
+            self.runtime_state.set_detection_summary(summary)
+            return summary
+
+        self.runtime_state.set_subsystem_health("detection_reader_available", True)
+        self.runtime_state.set_subsystem_health("detection_reader_status", "available")
+        self.runtime_state.set_subsystem_error("detection_reader", None)
         self.runtime_state.set_detection_summary(summary)
         return summary

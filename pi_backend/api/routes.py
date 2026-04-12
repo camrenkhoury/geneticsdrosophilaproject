@@ -35,7 +35,11 @@ def get_status(request: Request) -> StatusResponse:
 @router.post("/home", response_model=CommandResponse, dependencies=[Depends(require_api_key)])
 def post_home(request: Request) -> CommandResponse:
     context = request.app.state.backend_context
-    return context.submit_machine_task("home", context.machine_service.home)
+    return context.submit_machine_task(
+        "home",
+        context.machine_service.home,
+        precheck=context.machine_service.validate_motion_command,
+    )
 
 
 @router.post("/move_absolute", response_model=CommandResponse, dependencies=[Depends(require_api_key)])
@@ -44,6 +48,7 @@ def post_move_absolute(request: Request, payload: MoveAbsoluteRequest) -> Comman
     return context.submit_machine_task(
         "move_absolute",
         lambda: context.machine_service.move_absolute(payload.target_mm, payload.move_time),
+        precheck=context.machine_service.validate_motion_command,
     )
 
 
@@ -53,6 +58,7 @@ def post_move_relative(request: Request, payload: MoveRelativeRequest) -> Comman
     return context.submit_machine_task(
         "move_relative",
         lambda: context.machine_service.move_relative(payload.distance_mm, payload.move_time),
+        precheck=context.machine_service.validate_motion_command,
     )
 
 
@@ -62,6 +68,7 @@ def post_vacuum(request: Request, payload: VacuumRequest) -> CommandResponse:
     return context.apply_actuator_command(
         "vacuum",
         lambda: context.machine_service.set_vacuum(payload.enabled),
+        precheck=context.machine_service.validate_vacuum_command,
     )
 
 
@@ -71,6 +78,7 @@ def post_vibration(request: Request, payload: VibrationRequest) -> CommandRespon
     return context.apply_actuator_command(
         "vibration",
         lambda: context.machine_service.set_vibration(payload.enabled),
+        precheck=context.machine_service.validate_vibration_command,
     )
 
 

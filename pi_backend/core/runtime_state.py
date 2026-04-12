@@ -44,6 +44,7 @@ class DetectionSummary:
 @dataclass(slots=True)
 class RuntimeStateSnapshot:
     backend_lifecycle_state: BackendLifecycleState = BackendLifecycleState.STARTING_BACKEND
+    backend_boot_degraded: bool = False
     controller_state: ClientControllerState = ClientControllerState.CLIENT_DISCONNECTED
     orchestrator_state: OrchestratorState = OrchestratorState.SYSTEM_IDLE
     task_state: TaskState | None = None
@@ -57,6 +58,7 @@ class RuntimeStateSnapshot:
     classifier_result: ClassifierResultSummary | None = None
     detection_summary: DetectionSummary = field(default_factory=DetectionSummary)
     subsystem_health: dict[str, bool | str | float] = field(default_factory=dict)
+    subsystem_errors: dict[str, str] = field(default_factory=dict)
 
 
 class RuntimeStateStore:
@@ -100,6 +102,10 @@ class RuntimeStateStore:
             self._snapshot.controller_state = state
             if message is not None:
                 self._snapshot.latest_message = message
+
+    def set_backend_boot_degraded(self, degraded: bool) -> None:
+        with self._lock:
+            self._snapshot.backend_boot_degraded = degraded
 
     def set_orchestrator_state(
         self,
@@ -159,3 +165,10 @@ class RuntimeStateStore:
     def set_subsystem_health(self, name: str, value: bool | str | float) -> None:
         with self._lock:
             self._snapshot.subsystem_health[name] = value
+
+    def set_subsystem_error(self, name: str, error: str | None) -> None:
+        with self._lock:
+            if error is None:
+                self._snapshot.subsystem_errors.pop(name, None)
+                return
+            self._snapshot.subsystem_errors[name] = error

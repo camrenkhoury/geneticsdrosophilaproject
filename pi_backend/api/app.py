@@ -42,16 +42,23 @@ class BackendApiContext:
                 BackendLifecycleState.PROCESS_DOWN,
             },
             backend_lifecycle_state=str(snapshot.backend_lifecycle_state),
+            backend_boot_degraded=snapshot.backend_boot_degraded,
             api_alive=True,
-            motion_available=bool(subsystem_health.get("motion_available", True)),
-            vacuum_available=bool(subsystem_health.get("vacuum_available", True)),
-            vibration_available=bool(subsystem_health.get("vibration_available", True)),
-            detection_reader_available=bool(subsystem_health.get("detection_reader_available", True)),
-            classifier_available=bool(subsystem_health.get("classifier_available", True)),
+            motion_available=bool(subsystem_health.get("motion_available", False)),
+            vacuum_available=bool(subsystem_health.get("vacuum_available", False)),
+            vibration_available=bool(subsystem_health.get("vibration_available", False)),
+            detection_reader_available=bool(subsystem_health.get("detection_reader_available", False)),
+            classifier_available=bool(subsystem_health.get("classifier_available", False)),
+            subsystem_errors=dict(snapshot.subsystem_errors),
             message=snapshot.latest_message,
         )
 
-    def submit_machine_task(self, command: str, worker: Callable[[], Any]) -> CommandResponse:
+    def submit_machine_task(
+        self,
+        command: str,
+        worker: Callable[[], Any],
+        precheck: Callable[[], str | None] | None = None,
+    ) -> CommandResponse:
         with self._worker_lock:
             if self.is_busy():
                 self.runtime_state.append_log("WARNING", f"Rejected {command}: machine busy with {self._active_command}.")
@@ -62,6 +69,18 @@ class BackendApiContext:
                     command=command,
                     message=f"Machine is busy running {self._active_command}.",
                 )
+
+            if precheck is not None:
+                error_message = precheck()
+                if error_message is not None:
+                    self.runtime_state.append_log("WARNING", f"Rejected {command}: {error_message}")
+                    return CommandResponse.from_snapshot(
+                        self.runtime_state.snapshot(),
+                        ok=False,
+                        accepted=False,
+                        command=command,
+                        message=error_message,
+                    )
 
             self.runtime_state.set_stop_requested(False)
             self.runtime_state.set_orchestrator_state(
@@ -87,7 +106,12 @@ class BackendApiContext:
             message=f"{command} accepted.",
         )
 
-    def apply_actuator_command(self, command: str, action: Callable[[], Any]) -> CommandResponse:
+    def apply_actuator_command(
+        self,
+        command: str,
+        action: Callable[[], Any],
+        precheck: Callable[[], str | None] | None = None,
+    ) -> CommandResponse:
         with self._worker_lock:
             if self.is_busy():
                 self.runtime_state.append_log("WARNING", f"Rejected {command}: machine busy with {self._active_command}.")
@@ -98,6 +122,18 @@ class BackendApiContext:
                     command=command,
                     message=f"Cannot change {command} while {self._active_command} is active.",
                 )
+
+            if precheck is not None:
+                error_message = precheck()
+                if error_message is not None:
+                    self.runtime_state.append_log("WARNING", f"Rejected {command}: {error_message}")
+                    return CommandResponse.from_snapshot(
+                        self.runtime_state.snapshot(),
+                        ok=False,
+                        accepted=False,
+                        command=command,
+                        message=error_message,
+                    )
 
         try:
             action()
@@ -154,8 +190,14 @@ class BackendApiContext:
             "API shutdown in progress.",
         )
         try:
-            self.machine_service.set_vacuum(False)
-            self.machine_service.set_vibration(False)
+            try:
+                self.machine_service.set_vacuum(False)
+            except Exception:
+                self.logger.exception("Failed to set vacuum safe-off during shutdown.")
+            try:
+                self.machine_service.set_vibration(False)
+            except Exception:
+                self.logger.exception("Failed to set vibration safe-off during shutdown.")
         finally:
             self.runtime_state.set_stop_requested(True)
 

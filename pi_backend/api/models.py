@@ -88,17 +88,20 @@ class DetectionSummaryModel(BaseModel):
 class HealthResponse(BaseModel):
     ok: bool
     backend_lifecycle_state: str
+    backend_boot_degraded: bool
     api_alive: bool
     motion_available: bool
     vacuum_available: bool
     vibration_available: bool
     detection_reader_available: bool
     classifier_available: bool
+    subsystem_errors: dict[str, str]
     message: str
 
 
 class StatusResponse(BaseModel):
     backend_lifecycle_state: str
+    backend_boot_degraded: bool
     controller_state: str
     orchestrator_state: str
     task_state: str | None
@@ -112,11 +115,13 @@ class StatusResponse(BaseModel):
     classification_result: ClassificationResultModel | None
     detection_summary: DetectionSummaryModel
     subsystem_health: dict[str, bool | str | float]
+    subsystem_errors: dict[str, str]
 
     @classmethod
     def from_snapshot(cls, snapshot: RuntimeStateSnapshot) -> "StatusResponse":
         return cls(
             backend_lifecycle_state=str(snapshot.backend_lifecycle_state),
+            backend_boot_degraded=snapshot.backend_boot_degraded,
             controller_state=str(snapshot.controller_state),
             orchestrator_state=str(snapshot.orchestrator_state),
             task_state=str(snapshot.task_state) if snapshot.task_state is not None else None,
@@ -130,6 +135,7 @@ class StatusResponse(BaseModel):
             classification_result=ClassificationResultModel.from_summary(snapshot.classifier_result),
             detection_summary=DetectionSummaryModel.from_summary(snapshot.detection_summary),
             subsystem_health=dict(snapshot.subsystem_health),
+            subsystem_errors=dict(snapshot.subsystem_errors),
         )
 
 
