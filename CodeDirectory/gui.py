@@ -10,6 +10,7 @@ import importlib
 import json
 import math
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -421,6 +422,7 @@ class DrosophilaGUI:
         self.entry_frame.columnconfigure(0, weight=1)
         self.entry_frame.rowconfigure(0, weight=1)
         self.entry_frame.rowconfigure(1, weight=0)
+        self.entry_frame.rowconfigure(2, weight=0)
         self.create_entry_page(self.entry_frame)
 
         self.main_frame = ttk.Frame(self.page_container, padding="15")
@@ -528,7 +530,75 @@ class DrosophilaGUI:
         )
         self.entry_fly_label.grid(row=0, column=0)
 
-        self.create_footer_banners(parent, row=1, column=0, background=self.entry_frame.cget("bg"), pady=(self._entry_scale(18), 0))
+        self.create_entry_metadata(
+            parent,
+            row=1,
+            column=0,
+            background=self.entry_frame.cget("bg"),
+            pady=(self._entry_scale(18), 0),
+        )
+        self.create_footer_banners(
+            parent,
+            row=2,
+            column=0,
+            background=self.entry_frame.cget("bg"),
+            pady=(self._entry_scale(14), 0),
+        )
+
+    def _repo_version_summary(self) -> tuple[str, str]:
+        commit_count = "?"
+        last_update = "Unavailable"
+
+        try:
+            count_result = subprocess.run(
+                ["git", "-C", str(self.repo_root), "rev-list", "--count", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=2.5,
+                check=False,
+            )
+            if count_result.returncode == 0:
+                parsed_count = count_result.stdout.strip()
+                if parsed_count.isdigit():
+                    commit_count = parsed_count
+        except Exception:
+            pass
+
+        try:
+            date_result = subprocess.run(
+                ["git", "-C", str(self.repo_root), "log", "-1", "--date=short", "--format=%cd"],
+                capture_output=True,
+                text=True,
+                timeout=2.5,
+                check=False,
+            )
+            if date_result.returncode == 0:
+                parsed_date = date_result.stdout.strip()
+                if parsed_date:
+                    last_update = parsed_date
+        except Exception:
+            pass
+
+        return f"V1.{commit_count}", last_update
+
+    def create_entry_metadata(self, parent, row: int, column: int, background: str, pady=(12, 0)):
+        metadata_frame = tk.Frame(parent, bg=background)
+        metadata_frame.grid(row=row, column=column, sticky=(tk.W, tk.E), pady=pady)
+        metadata_frame.columnconfigure(0, weight=1)
+
+        version_text, date_text = self._repo_version_summary()
+        metadata_label = tk.Label(
+            metadata_frame,
+            text=f"{version_text}  |  Last Update: {date_text}",
+            bg=background,
+            fg="#8E2D2B",
+            font=("Arial", self._entry_scale(11), "bold"),
+            justify="center",
+            anchor="center",
+            padx=self._entry_scale(14),
+            pady=self._entry_scale(6),
+        )
+        metadata_label.grid(row=0, column=0)
 
     def show_entry_page(self):
         self.main_frame.grid_remove()
