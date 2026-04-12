@@ -18,6 +18,7 @@ import time
 import traceback
 from pathlib import Path
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import messagebox, scrolledtext, ttk
 
 GUI_DIR = Path(__file__).resolve().parent
@@ -176,6 +177,136 @@ class SliderSwitch(tk.Canvas):
         )
 
 
+class ActionButton(tk.Canvas):
+    """Cross-platform colored button that does not rely on native Tk button theming."""
+
+    def __init__(
+        self,
+        parent,
+        text: str,
+        color: str,
+        command=None,
+        *,
+        font=("Arial", 10, "bold"),
+        padx=12,
+        pady=7,
+        disabled_color="#B0B7C3",
+        active_color=None,
+        **kwargs,
+    ):
+        super().__init__(parent, highlightthickness=0, bd=0, relief="flat", **kwargs)
+        self.command = command
+        self._text = text
+        self._base_color = color
+        self._active_color = active_color or color
+        self._disabled_color = disabled_color
+        self._fg = "#FFFFFF"
+        self._font = tkfont.Font(font=font)
+        self._padx = padx
+        self._pady = pady
+        self._state = tk.NORMAL
+        self._hovered = False
+        self.configure(cursor="hand2")
+        self.bind("<Button-1>", self._on_click)
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.bind("<Configure>", self._on_resize)
+        self._redraw()
+
+    def _current_fill(self) -> str:
+        if self._state != tk.NORMAL:
+            return self._disabled_color
+        if self._hovered:
+            return self._active_color
+        return self._base_color
+
+    def _redraw(self) -> None:
+        self.delete("all")
+        text_width = self._font.measure(self._text)
+        text_height = self._font.metrics("linespace")
+        requested_width = text_width + (self._padx * 2)
+        requested_height = text_height + (self._pady * 2)
+        width = max(requested_width, self.winfo_width(), 1)
+        height = max(requested_height, self.winfo_height(), 1)
+        super().configure(width=width, height=height, cursor="hand2" if self._state == tk.NORMAL else "arrow")
+        fill = self._current_fill()
+        self.create_rectangle(0, 0, width, height, fill=fill, outline=fill, width=0)
+        self.create_text(
+            width / 2,
+            height / 2,
+            text=self._text,
+            fill=self._fg if self._state == tk.NORMAL else "#F5F7FA",
+            font=self._font,
+        )
+
+    def _on_click(self, _event=None) -> None:
+        if self._state != tk.NORMAL:
+            return
+        if callable(self.command):
+            self.command()
+
+    def _on_enter(self, _event=None) -> None:
+        if self._state == tk.NORMAL:
+            self._hovered = True
+            self._redraw()
+
+    def _on_leave(self, _event=None) -> None:
+        if self._hovered:
+            self._hovered = False
+            self._redraw()
+
+    def _on_resize(self, _event=None) -> None:
+        self._redraw()
+
+    def config(self, cnf=None, **kwargs):
+        self.configure(cnf, **kwargs)
+
+    def configure(self, cnf=None, **kwargs):
+        if cnf:
+            kwargs.update(cnf)
+        redraw_needed = False
+        if "text" in kwargs:
+            self._text = kwargs.pop("text")
+            redraw_needed = True
+        if "command" in kwargs:
+            self.command = kwargs.pop("command")
+        if "state" in kwargs:
+            self._state = kwargs.pop("state")
+            redraw_needed = True
+        if "bg" in kwargs:
+            self._base_color = kwargs.pop("bg")
+            redraw_needed = True
+        if "activebackground" in kwargs:
+            self._active_color = kwargs.pop("activebackground")
+            redraw_needed = True
+        if "fg" in kwargs:
+            self._fg = kwargs.pop("fg")
+            redraw_needed = True
+        if "font" in kwargs:
+            self._font = tkfont.Font(font=kwargs.pop("font"))
+            redraw_needed = True
+        if "padx" in kwargs:
+            self._padx = kwargs.pop("padx")
+            redraw_needed = True
+        if "pady" in kwargs:
+            self._pady = kwargs.pop("pady")
+            redraw_needed = True
+        super().configure(**kwargs)
+        if redraw_needed:
+            self._redraw()
+
+    configure = configure
+
+    def cget(self, key):
+        if key == "text":
+            return self._text
+        if key == "state":
+            return self._state
+        if key == "bg":
+            return self._base_color
+        return super().cget(key)
+
+
 class DrosophilaGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -183,7 +314,10 @@ class DrosophilaGUI:
         self.root.title("Drosophila Genetics Control Panel")
         self.root.geometry("1100x760")
         self.root.minsize(960, 680)
-        self.root.state("zoomed")
+        if sys.platform.startswith("win"):
+            self.root.state("zoomed")
+        else:
+            self.root.after(10, self._fit_window_to_screen)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.gui_dir = GUI_DIR
@@ -394,6 +528,15 @@ class DrosophilaGUI:
         except Exception:
             pass
 
+    def _fit_window_to_screen(self) -> None:
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        target_width = min(max(1100, int(screen_width * 0.9)), screen_width - 80)
+        target_height = min(max(760, int(screen_height * 0.88)), screen_height - 100)
+        x_offset = max(20, (screen_width - target_width) // 2)
+        y_offset = max(20, (screen_height - target_height) // 3)
+        self.root.geometry(f"{target_width}x{target_height}+{x_offset}+{y_offset}")
+
     def _entry_scale(self, value: int) -> int:
         return max(1, math.ceil(value * self.entry_page_scale))
 
@@ -515,34 +658,26 @@ class DrosophilaGUI:
         button_row.grid(row=2, column=0, sticky=tk.W)
         button_gap = self._entry_scale(18)
 
-        enter_button = tk.Button(
+        enter_button = ActionButton(
             button_row,
             text="Enter Control Panel",
-            bg="#8E2D2B",
-            fg="#FFFFFF",
-            activebackground="#732220",
-            activeforeground="#FFFFFF",
+            color="#8E2D2B",
+            active_color="#732220",
             font=("Arial", self._entry_button_scale(21), "bold"),
             padx=self._entry_button_scale(30),
             pady=self._entry_button_scale(17),
-            relief="raised",
-            bd=0,
             command=self.show_control_panel,
         )
         enter_button.grid(row=0, column=0, sticky=tk.W, padx=(0, button_gap))
 
-        update_button = tk.Button(
+        update_button = ActionButton(
             button_row,
             text="Check for Updates",
-            bg="#8E2D2B",
-            fg="#FFFFFF",
-            activebackground="#732220",
-            activeforeground="#FFFFFF",
+            color="#8E2D2B",
+            active_color="#732220",
             font=("Arial", self._entry_button_scale(21), "bold"),
             padx=self._entry_button_scale(30),
             pady=self._entry_button_scale(17),
-            relief="raised",
-            bd=0,
             command=self.check_for_updates,
         )
         update_button.grid(row=0, column=1, sticky=tk.W)
@@ -1766,13 +1901,11 @@ class DrosophilaGUI:
         operations_content.columnconfigure(1, weight=1)
         operations_content.rowconfigure(0, weight=0)
 
-        panel_height = 170
         button_gap = 12
         button_margin = 20
 
-        action_frame = tk.Frame(operations_content, bg="#F8E8F0", width=126, height=panel_height)
+        action_frame = tk.Frame(operations_content, bg="#F8E8F0", width=126)
         action_frame.grid(row=0, column=0, sticky=(tk.N, tk.W), padx=(0, 12))
-        action_frame.grid_propagate(False)
         action_frame.columnconfigure(0, weight=1)
         top_button_spacer = tk.Frame(action_frame, bg="#F8E8F0", height=button_margin)
         top_button_spacer.grid(row=0, column=0, sticky=(tk.W, tk.E))
@@ -1791,7 +1924,7 @@ class DrosophilaGUI:
         tk.Frame(action_frame, bg="#F8E8F0", height=button_gap).grid(row=4, column=0, sticky=(tk.W, tk.E))
         tk.Frame(action_frame, bg="#F8E8F0", height=button_margin).grid(row=6, column=0, sticky=(tk.W, tk.E))
 
-        self.create_operations_logo(operations_content, panel_height)
+        self.create_operations_logo(operations_content)
 
     def create_system_controls(self, parent):
         system_frame = ttk.LabelFrame(parent, text="System Control", padding="10")
@@ -1899,14 +2032,15 @@ class DrosophilaGUI:
                     banner_label.config(text="")
 
     def make_button(self, parent, text: str, color: str, command):
-        button = tk.Button(
+        button = ActionButton(
             parent,
             text=text,
-            bg=color,
-            fg="white",
+            color=color,
             font=("Arial", 10, "bold"),
-            relief="raised",
             command=command,
+            active_color=self._blend_hex(color, "#111111", 0.18),
+            padx=12,
+            pady=7,
         )
         self.register_control(button)
         return button
@@ -1981,10 +2115,9 @@ class DrosophilaGUI:
         self.update_device_card_state(actuator, False)
         return switch
 
-    def create_operations_logo(self, parent, panel_height: int):
-        logo_area = tk.Frame(parent, bg="#F8E8F0", height=panel_height)
+    def create_operations_logo(self, parent):
+        logo_area = tk.Frame(parent, bg="#F8E8F0")
         logo_area.grid(row=0, column=1, sticky=(tk.N, tk.W, tk.E))
-        logo_area.grid_propagate(False)
         logo_area.columnconfigure(0, weight=1)
         logo_margin = 10
         tk.Frame(logo_area, bg="#F8E8F0", height=logo_margin).grid(row=0, column=0, sticky=(tk.W, tk.E))
