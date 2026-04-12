@@ -1,4 +1,4 @@
-# Automated Drosophila Sorting System
+# <img src=".github/assets/drosophila.png" width="28" style="vertical-align: middle;"/> Automated Drosophila Sorting System
 
 **Automated Drosophila Sorting System** is a mixed hardware, embedded-control, computer-vision, and desktop-software project for detecting, picking, classifying, and sorting **Drosophila melanogaster** with minimal operator intervention.
 
@@ -381,15 +381,6 @@ Code changes should respect the following:
 ## **Physical System Reference**
 
 The images below provide physical context for the hardware and mechanical system represented by the codebase.
-
-### **Project Graphic**
-
-<p align="center">
-  <img src=".github/assets/drosophila.png" alt="Project drosophila graphic" width="320">
-</p>
-<p align="center">
-  <em>Project drosophila graphic used as a visual reference for the system.</em>
-</p>
 
 ### **Core PCB**
 
