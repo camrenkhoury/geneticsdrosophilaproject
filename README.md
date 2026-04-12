@@ -165,6 +165,7 @@ geneticsdrosophilaproject/
 |     |- Complete3-D ModelM2.png
 |     |- Drosophilia_Core_PCB_2.png
 |     |- Full-System-Integration.png
+|     |- GUI-Loading-Page.png
 |     `- drosophila.png
 |- README.md
 |- assets/
@@ -208,6 +209,19 @@ geneticsdrosophilaproject/
 ### **`CodeDirectory/`**
 
 This directory contains the main desktop GUI and several core control modules used by the system.
+
+#### **GUI Screens**
+
+The desktop GUI currently includes a dedicated loading / landing page that serves as the operator entry point before opening the control panel. It presents the main access action, update-check workflow, version/date metadata, and project branding in a simplified startup view.
+
+<p align="center">
+  <img src=".github/assets/GUI-Loading-Page.png" alt="GUI loading page" width="900">
+</p>
+<p align="center">
+  <em>Loading / landing page of the desktop GUI.</em>
+</p>
+
+Additional GUI surfaces, including the control panel and assay-specific views, are part of the overall application and can be documented alongside this section as those screens are finalized.
 
 **Important files:**
 

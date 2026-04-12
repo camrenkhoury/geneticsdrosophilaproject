@@ -210,6 +210,7 @@ class DrosophilaGUI:
         self._remote_classification_seen_once = False
         self.connection_state = ConnectionState.LOCAL
         self.preview_image = None
+        self.preview_source_image = None
         self.operations_logo_image = None
         self.footer_banner_images = []
         self.window_icon_images = []
@@ -1673,12 +1674,11 @@ class DrosophilaGUI:
             bg="black",
             fg="white",
             font=("Arial", 10, "bold"),
-            width=48,
-            height=20,
             anchor=tk.CENTER,
             justify="center",
         )
         self.preview_label.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        self.preview_label.bind("<Configure>", self._refresh_preview_image)
 
     def create_device_operations(self, parent):
         controls_frame = ttk.Frame(parent)
@@ -2269,34 +2269,57 @@ class DrosophilaGUI:
 
     def load_channel_preview(self, path: Path):
         try:
-            from PIL import Image, ImageTk
+            from PIL import Image
 
             image = Image.open(path)
             image = image.convert("RGB")
-            resample = getattr(Image, "Resampling", Image)
-            image.thumbnail((420, 300), resample.LANCZOS)
-            self.preview_image = ImageTk.PhotoImage(image)
-            self.preview_label.config(image=self.preview_image, text="")
+            self.preview_source_image = image
+            self._render_preview_image()
         except Exception:
             self.preview_image = None
+            self.preview_source_image = None
             self.set_preview_placeholder(f"Preview unavailable:\n{path.name}")
 
     def load_channel_preview_bytes(self, image_bytes: bytes):
         try:
-            from PIL import Image, ImageTk
+            from PIL import Image
 
             image = Image.open(io.BytesIO(image_bytes))
             image = image.convert("RGB")
-            resample = getattr(Image, "Resampling", Image)
-            image.thumbnail((420, 300), resample.LANCZOS)
-            self.preview_image = ImageTk.PhotoImage(image)
-            self.preview_label.config(image=self.preview_image, text="")
+            self.preview_source_image = image
+            self._render_preview_image()
         except Exception as exc:
             self.preview_image = None
+            self.preview_source_image = None
             self.set_preview_placeholder(f"Remote preview unavailable:\n{exc}")
 
     def set_preview_placeholder(self, message: str):
+        self.preview_source_image = None
         self.preview_label.config(image="", text=message, bg="black", fg="white")
+
+    def _refresh_preview_image(self, _event=None):
+        if self.preview_source_image is not None:
+            self._render_preview_image()
+
+    def _render_preview_image(self):
+        if self.preview_source_image is None:
+            return
+
+        try:
+            from PIL import Image, ImageTk
+
+            target_width = max(self.preview_label.winfo_width(), 420)
+            target_height = max(self.preview_label.winfo_height(), 300)
+            if target_width <= 1 or target_height <= 1:
+                return
+
+            image = self.preview_source_image.copy()
+            resample = getattr(Image, "Resampling", Image)
+            image.thumbnail((target_width, target_height), resample.LANCZOS)
+            self.preview_image = ImageTk.PhotoImage(image)
+            self.preview_label.config(image=self.preview_image, text="")
+        except Exception:
+            self.preview_image = None
 
     def worker_log(self, message: str):
         self.ui_queue.put(("log", message))
