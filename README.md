@@ -416,7 +416,7 @@ Primary GitHub Contributor/Owner: Camren J. Khoury
 
 #### **Holcombe Department of Electrical and Computer Engineering**
 
-- Integrated System Design II Professor: Dr. Hassan Raza
+- Dr. Hassan Raza
 
 ## **License**
 
