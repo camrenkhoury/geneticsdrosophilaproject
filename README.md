@@ -132,7 +132,10 @@ This repository contains the backend, GUI, shared definitions, hardware-control 
 geneticsdrosophiliaproject/
 |- .github/
 |  `- assets/
-|     `- Full-System-Integration.png
+|     |- Complete3-D ModelM2.png
+|     |- Drosophilia_Core_PCB_2.png
+|     |- Full-System-Integration.png
+|     `- drosophila.png
 |- README.md
 |- assets/
 |- CodeDirectory/
@@ -374,6 +377,37 @@ Code changes should respect the following:
 - YOLO / detection performance varies with lighting and camera conditions.
 - Classification accuracy and throughput need refinement.
 - Deployment and service management are not yet fully standardized.
+
+## **Physical System Reference**
+
+The images below provide physical context for the hardware and mechanical system represented by the codebase.
+
+### **Project Graphic**
+
+<p align="center">
+  <img src=".github/assets/drosophila.png" alt="Project drosophila graphic" width="320">
+</p>
+<p align="center">
+  <em>Project drosophila graphic used as a visual reference for the system.</em>
+</p>
+
+### **Core PCB**
+
+<p align="center">
+  <img src=".github/assets/Drosophilia_Core_PCB_2.png" alt="Core PCB render" width="820">
+</p>
+<p align="center">
+  <em>Render of the core PCB used for motor-driver interfacing, power distribution, and control connectivity.</em>
+</p>
+
+### **3D Printed Assembly Model**
+
+<p align="center">
+  <img src=".github/assets/Complete3-D ModelM2.png" alt="Exploded 3D assembly model" width="760">
+</p>
+<p align="center">
+  <em>Exploded 3D model of the printed and assembled hardware system showing the major mechanical components and part layout (items 1-14).</em>
+</p>
 
 ## **Project Team**
 

@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.png
-!.github/assets/Full-System-Integration.png
+!.github/assets/*.png
 *.jpg
 *.jpeg
 *.mp4
