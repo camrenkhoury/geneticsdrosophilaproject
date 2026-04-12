@@ -56,6 +56,17 @@ The hardware stack includes:
 - **Top-down camera**
 - **Custom PCB support** for motor-driver interfacing, power distribution, and GPIO breakout/control
 
+### **Motor Systems**
+
+The system uses three motor-driven subsystems:
+
+- **Gantry Stepper Motor**
+  - Drives X-axis motion for homing, positioning, pickup, and tube placement
+- **Vacuum Motor**
+  - Provides suction for fly pickup through the nozzle system
+- **Vibration Motor**
+  - Drives vibration-based redistribution and assay-related motion
+
 ### **Software Layer**
 
 The software stack includes:
