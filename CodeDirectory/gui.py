@@ -9,6 +9,7 @@ import io
 import importlib
 import json
 import math
+import os
 import queue
 import subprocess
 import sys
@@ -226,7 +227,7 @@ class DrosophilaGUI:
         self.remote_sync: RemoteSyncManager | None = None
         self._local_runtime_cache: dict[str, object] | None = None
         self._local_runtime_error: str | None = None
-        self.entry_page_scale = 1.4
+        self.entry_page_scale = 1.54
 
         self.state_var = tk.StringVar(value="IDLE")
         self.position_var = tk.StringVar(value="0.00 mm")
@@ -387,6 +388,9 @@ class DrosophilaGUI:
     def _entry_scale(self, value: int) -> int:
         return max(1, math.ceil(value * self.entry_page_scale))
 
+    def _entry_button_scale(self, value: int) -> int:
+        return max(1, round(self._entry_scale(value) * 0.75))
+
     def _blend_hex(self, start_hex: str, end_hex: str, ratio: float) -> str:
         ratio = max(0.0, min(1.0, ratio))
         start = tuple(int(start_hex[index : index + 2], 16) for index in (1, 3, 5))
@@ -498,21 +502,41 @@ class DrosophilaGUI:
             anchor="w",
         ).grid(row=1, column=0, sticky=tk.W, pady=(0, self._entry_scale(38)))
 
+        button_row = tk.Frame(left_panel, bg="#686766")
+        button_row.grid(row=2, column=0, sticky=tk.W)
+        button_gap = self._entry_scale(18)
+
         enter_button = tk.Button(
-            left_panel,
+            button_row,
             text="Enter Control Panel",
             bg="#8E2D2B",
             fg="#FFFFFF",
             activebackground="#732220",
             activeforeground="#FFFFFF",
-            font=("Arial", self._entry_scale(21), "bold"),
-            padx=self._entry_scale(30),
-            pady=self._entry_scale(17),
+            font=("Arial", self._entry_button_scale(21), "bold"),
+            padx=self._entry_button_scale(30),
+            pady=self._entry_button_scale(17),
             relief="raised",
             bd=0,
             command=self.show_control_panel,
         )
-        enter_button.grid(row=2, column=0, sticky=tk.W)
+        enter_button.grid(row=0, column=0, sticky=tk.W, padx=(0, button_gap))
+
+        update_button = tk.Button(
+            button_row,
+            text="Check for Updates",
+            bg="#8E2D2B",
+            fg="#FFFFFF",
+            activebackground="#732220",
+            activeforeground="#FFFFFF",
+            font=("Arial", self._entry_button_scale(21), "bold"),
+            padx=self._entry_button_scale(30),
+            pady=self._entry_button_scale(17),
+            relief="raised",
+            bd=0,
+            command=self.check_for_updates,
+        )
+        update_button.grid(row=0, column=1, sticky=tk.W)
 
         fly_panel = tk.Frame(
             entry_card,
@@ -580,6 +604,114 @@ class DrosophilaGUI:
             pass
 
         return f"V1.{commit_count}", last_update
+
+    def _run_git_command(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(self.repo_root), *args],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+
+    def _relaunch_application(self) -> None:
+        launch_bat = self.code_dir / "launch_gui.bat"
+        launch_sh = self.code_dir / "launch_gui.sh"
+
+        if sys.platform.startswith("win") and launch_bat.exists():
+            subprocess.Popen(
+                ["cmd", "/c", "start", "", str(launch_bat)],
+                cwd=str(self.code_dir),
+            )
+            return
+
+        if not sys.platform.startswith("win") and launch_sh.exists():
+            subprocess.Popen(
+                ["bash", str(launch_sh)],
+                cwd=str(self.code_dir),
+                start_new_session=True,
+            )
+            return
+
+        if getattr(sys, "frozen", False):
+            subprocess.Popen([sys.executable], cwd=str(self.code_dir))
+            return
+
+        subprocess.Popen([sys.executable, str(self.code_dir / "gui.py")], cwd=str(self.code_dir))
+
+    def check_for_updates(self) -> None:
+        repo_git_dir = self.repo_root / ".git"
+        if not repo_git_dir.exists():
+            messagebox.showerror("Updates", "This copy of the application is not inside a git repository.")
+            return
+
+        try:
+            status_result = self._run_git_command("status", "--porcelain")
+        except Exception as exc:
+            messagebox.showerror("Updates", f"Could not inspect repository state:\n{exc}")
+            return
+
+        if status_result.returncode != 0:
+            detail = status_result.stderr.strip() or status_result.stdout.strip() or "Unknown git error."
+            messagebox.showerror("Updates", f"Could not inspect repository state:\n{detail}")
+            return
+
+        if status_result.stdout.strip():
+            messagebox.showwarning(
+                "Updates",
+                "The repository has local changes. Commit or stash them before updating from GitHub.",
+            )
+            return
+
+        try:
+            self.root.config(cursor="watch")
+            self.root.update_idletasks()
+
+            fetch_result = self._run_git_command("fetch", "--quiet")
+            if fetch_result.returncode != 0:
+                detail = fetch_result.stderr.strip() or fetch_result.stdout.strip() or "Unknown git error."
+                messagebox.showerror("Updates", f"Could not check for updates:\n{detail}")
+                return
+
+            upstream_result = self._run_git_command("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+            if upstream_result.returncode != 0:
+                detail = upstream_result.stderr.strip() or upstream_result.stdout.strip() or "No upstream branch configured."
+                messagebox.showerror("Updates", f"Could not determine the tracked branch:\n{detail}")
+                return
+
+            behind_result = self._run_git_command("rev-list", "--count", "HEAD..@{u}")
+            if behind_result.returncode != 0:
+                detail = behind_result.stderr.strip() or behind_result.stdout.strip() or "Unknown git error."
+                messagebox.showerror("Updates", f"Could not compare repository versions:\n{detail}")
+                return
+
+            behind_count = behind_result.stdout.strip()
+            if not behind_count.isdigit() or int(behind_count) <= 0:
+                messagebox.showinfo("Updates", "This installation is already up to date.")
+                return
+
+            should_update = messagebox.askyesno(
+                "Update Available",
+                (
+                    f"{behind_count} update(s) are available.\n\n"
+                    "The application will pull the latest changes, close, and reopen.\n\n"
+                    "Continue?"
+                ),
+            )
+            if not should_update:
+                return
+
+            pull_result = self._run_git_command("pull", "--ff-only")
+            if pull_result.returncode != 0:
+                detail = pull_result.stderr.strip() or pull_result.stdout.strip() or "Unknown git error."
+                messagebox.showerror("Updates", f"Update failed:\n{detail}")
+                return
+
+            self._relaunch_application()
+            self.on_close()
+        finally:
+            with contextlib.suppress(tk.TclError):
+                self.root.config(cursor="")
 
     def create_entry_metadata(self, parent, row: int, column: int, background: str, pady=(12, 0)):
         metadata_frame = tk.Frame(parent, bg=background)
