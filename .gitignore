@@ -5,7 +5,9 @@ __pycache__/
 *.png
 !.github/assets/*.png
 *.jpg
+!.github/assets/*.jpg
 *.jpeg
+!.github/assets/*.jpeg
 *.mp4
 *.zip
 *.tar

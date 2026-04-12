@@ -62,10 +62,28 @@ The system uses three motor-driven subsystems:
 
 - **Gantry Stepper Motor**
   - Drives X-axis motion for homing, positioning, pickup, and tube placement
+  <p align="center">
+    <img src=".github/assets/StepperMotor.jpg" alt="Gantry stepper motor" width="220">
+  </p>
+  <p align="center">
+    <em>NEMA stepper motor used for gantry motion.</em>
+  </p>
 - **Vacuum Motor**
   - Provides suction for fly pickup through the nozzle system
+  <p align="center">
+    <img src=".github/assets/vacuumMotor.jpg" alt="Vacuum motor" width="260">
+  </p>
+  <p align="center">
+    <em>Vacuum motor used for nozzle suction.</em>
+  </p>
 - **Vibration Motor**
   - Drives vibration-based redistribution and assay-related motion
+  <p align="center">
+    <img src=".github/assets/vibrationmotor.jpg" alt="Vibration motor" width="220">
+  </p>
+  <p align="center">
+    <em>Vibration motor used for redistribution and assay motion.</em>
+  </p>
 
 ### **Software Layer**
 
