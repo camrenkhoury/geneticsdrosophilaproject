@@ -101,36 +101,19 @@ The following are currently working in the codebase:
 - **Local / simulation-capable behavior** preserved
 - **Manual control validated on real hardware**
 
-## **Implementation Phases**
-
-The current architecture has already gone through several migration phases:
-
-- **Phase 1**
-  - Runtime state + machine control abstraction
-- **Phase 2**
-  - FastAPI backend on the Raspberry Pi
-- **Phase 3**
-  - Remote GUI + controller abstraction
-- **Phase 3.1**
-  - Lazy loading + host-safe startup
-- **Phase 4**
-  - Classify + assay through the API/controller path
-
-**Current status:** manual control and reconnect handling are already working on real hardware.
-
 ## **In Progress / Roadmap**
 
-The major remaining architecture task is:
+The main remaining system-level task is:
 
-- **Migrate the full automated sorting workflow** so it is owned by the Pi backend rather than the older local flow
+- **Complete the automated sorting workflow** so the full detect-pick-classify-place loop runs under the Raspberry Pi backend
 
 Other active directions:
 
-- Expand backend orchestration for long-running tasks
+- Improve long-running task orchestration
 - Improve stop/cancel behavior
 - Tighten CV integration and live re-detection behavior
 - Improve throughput and classification reliability
-- Standardize deployment and Pi startup
+- Standardize deployment and Raspberry Pi startup behavior
 
 ## **How It Works**
 
@@ -151,7 +134,7 @@ Other active directions:
 
 ## **Repository Structure**
 
-This repository contains both newer architecture code and legacy modules that still matter to the working system.
+This repository contains both the current backend/client structure and older modules that still remain part of the working system.
 
 ```text
 geneticsdrosophiliaproject/
@@ -390,8 +373,8 @@ Code changes should respect the following:
 
 ## **Known Issues / Current Gaps**
 
-- Automated sorting is not yet fully migrated into Pi backend ownership.
-- Some flows still rely on transitional legacy code.
+- The full automated sorting loop is still being completed under the Raspberry Pi backend.
+- Some working behaviors still depend on older local control modules.
 - GPIO environment setup can be sensitive on some Pi systems.
 - YOLO / detection performance varies with lighting and camera conditions.
 - Classification accuracy and throughput still need refinement.
