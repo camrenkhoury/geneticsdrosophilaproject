@@ -1,3 +1,5 @@
+from pathlib import Path
+import sys
 from motion import home_to_zero, move_to_absolute, get_current_position, GPIO_AVAILABLE
 try:
     from gpiozero import PWMOutputDevice, OutputDevice
@@ -10,6 +12,13 @@ import config
 import time
 import json
 import os
+
+CODE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = CODE_DIR.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from shared.config.project_paths import DETECTION_RESULT_PATH
 
 
 # -----------------------------
@@ -55,8 +64,7 @@ def apply_pickup_correction(position_mm: float) -> float:
 
 def load_x_positions_from_json():
     """
-    Loads x positions from:
-    ~/fin6/outputs/channel/last_channel_result.json
+    Loads x positions from the shared channel-detection output JSON.
 
     Uses:
       data["x_positions_mm"]
@@ -66,7 +74,7 @@ def load_x_positions_from_json():
       - "done" when no flies remain
       - [] for malformed/missing data that should retry
     """
-    json_path = os.path.expanduser("~/fin6/outputs/channel/last_channel_result.json")
+    json_path = str(DETECTION_RESULT_PATH)
 
     try:
         with open(json_path, "r") as f:
@@ -467,7 +475,7 @@ def main():
     print("2. Go to CHANNEL_LOCATION_END + 15")
     print("3. Ask if channel detection is finished")
     print("4. When Y, load x coordinates from:")
-    print("   ~/fin6/outputs/channel/last_channel_result.json")
+    print(f"   {DETECTION_RESULT_PATH}")
     print("5. Sort descending and choose the largest X")
     print("6. Move to pickup position")
     print("7. Pick up fly")

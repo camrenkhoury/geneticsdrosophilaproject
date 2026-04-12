@@ -10,6 +10,7 @@ from pi_backend.api.models import CommandResponse, HealthResponse
 from pi_backend.api.routes import router
 from pi_backend.core.config_runtime import BackendRuntimeConfig, build_backend_runtime_config
 from pi_backend.core.runtime_state import RuntimeStateSnapshot, RuntimeStateStore
+from pi_backend.core.subsystem_support import SubsystemUnavailableError
 from pi_backend.control.machine_service import MachineService
 from shared.state.state_enums import BackendLifecycleState, OrchestratorState
 
@@ -190,16 +191,40 @@ class BackendApiContext:
             "API shutdown in progress.",
         )
         try:
-            try:
-                self.machine_service.set_vacuum(False)
-            except Exception:
-                self.logger.exception("Failed to set vacuum safe-off during shutdown.")
-            try:
-                self.machine_service.set_vibration(False)
-            except Exception:
-                self.logger.exception("Failed to set vibration safe-off during shutdown.")
+            self._safe_shutdown_actuator("vacuum", lambda: self.machine_service.set_vacuum(False))
+            self._safe_shutdown_actuator("vibration", lambda: self.machine_service.set_vibration(False))
         finally:
             self.runtime_state.set_stop_requested(True)
+
+    def _safe_shutdown_actuator(self, name: str, action: Callable[[], Any]) -> None:
+        try:
+            action()
+        except Exception as exc:
+            if self._is_expected_shutdown_condition(exc):
+                self.logger.warning(
+                    "Skipping %s safe-off during shutdown: %s",
+                    name,
+                    exc,
+                )
+                return
+            self.logger.exception("Failed to set %s safe-off during shutdown.", name)
+
+    @staticmethod
+    def _is_expected_shutdown_condition(exc: Exception) -> bool:
+        if isinstance(exc, SubsystemUnavailableError):
+            return True
+
+        message = str(exc).strip().lower()
+        busy_tokens = (
+            "busy",
+            "in use",
+            "already in use",
+            "gpio busy",
+            "resource busy",
+            "device or resource busy",
+            "cannot determine soc peripheral base address",
+        )
+        return any(token in message for token in busy_tokens)
 
     def _run_worker_wrapper(self, command: str, worker: Callable[[], Any]) -> None:
         try:

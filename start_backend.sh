@@ -2,15 +2,24 @@
 
 set -euo pipefail
 
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
 CONFIG_FILE="deployment/pi/config/backend.env"
+CONFIG_EXAMPLE_FILE="deployment/pi/config/backend.env.example"
 if [ -f "$CONFIG_FILE" ]; then
   # shellcheck disable=SC1091
   source "$CONFIG_FILE"
+elif [ -f "$CONFIG_EXAMPLE_FILE" ]; then
+  # shellcheck disable=SC1091
+  source "$CONFIG_EXAMPLE_FILE"
 fi
 
 VENV_PATH="${DROSOPHILA_VENV_PATH:-.venv}"
+case "$VENV_PATH" in
+  /*) ;;
+  *) VENV_PATH="$SCRIPT_DIR/$VENV_PATH" ;;
+esac
 if [ -d "$VENV_PATH" ]; then
   # shellcheck disable=SC1091
   source "$VENV_PATH/bin/activate"

@@ -35,3 +35,7 @@ fin6/*.sh
 fin6/requirements.txt
 fin6/.fly_tracking_gui_settings.json
 box_tokens.json
+.drosophila_remote_gui.json
+deployment/pi/config/backend.env
+!.drosophila_remote_gui.example.json
+!deployment/pi/config/backend.env.example

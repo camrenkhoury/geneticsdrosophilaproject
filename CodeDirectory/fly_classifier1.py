@@ -28,6 +28,13 @@ from pathlib import Path
 import numpy as np
 import cv2
 
+CODE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = CODE_DIR.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from shared.config.project_paths import MODEL_PATH, TEMP_CLASS_IMAGE_DIR
+
 try:
     from ultralytics import YOLO
     ULTRALYTICS_AVAILABLE = True
@@ -41,9 +48,8 @@ except ImportError:
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-CLASSIFIER_MODEL_PATH = str(REPO_ROOT / 'best.pt')
-TEMP_IMAGE_DIR        = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tempClassImage')
+CLASSIFIER_MODEL_PATH = str(MODEL_PATH)
+TEMP_IMAGE_DIR        = str(TEMP_CLASS_IMAGE_DIR)
 TEMP_IMAGE_PATH       = os.path.join(TEMP_IMAGE_DIR, 'temp.jpg')
 
 # YOLO confidence threshold below which result is UNCERTAIN

@@ -7,6 +7,7 @@ import termios
 import tty
 import datetime
 import subprocess
+from pathlib import Path
 
 # Simple Raspberry Pi live-preview + capture script.
 # Intended use:
@@ -19,7 +20,7 @@ import subprocess
 #   5) Restore desktop later if needed:
 #        sudo systemctl start display-manager
 
-SAVE_DIR = "/home/team8/captures"
+SAVE_DIR = str(Path(__file__).resolve().parent / "captures")
 CAPTURE_KEY = " "
 QUIT_KEY = "q"
 PREVIEW_CMD = ["/usr/bin/rpicam-hello", "-t", "0"]

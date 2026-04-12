@@ -1,6 +1,0 @@
-{
-  "base_url": "http://100.87.197.18:8000",
-  "api_key": "change-me",
-  "poll_interval_s": 1.5,
-  "request_timeout_s": 5.0
-}

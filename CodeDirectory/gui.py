@@ -41,6 +41,7 @@ from shared.config.network_config import (
     load_remote_connection_settings,
     save_remote_connection_settings,
 )
+from shared.config.project_paths import CHANNEL_OUTPUT_DIR
 
 
 class TaskCancelled(Exception):
@@ -2169,7 +2170,7 @@ class DrosophilaGUI:
             self.ui_queue.put(("task_finished", name, ok, message))
 
     def _default_channel_output_dir(self) -> Path:
-        return self.repo_root / "fin6" / "outputs" / "channel"
+        return CHANNEL_OUTPUT_DIR
 
     def _settings_channel_output_dir(self) -> Path | None:
         settings_path = self.repo_root / "fin6" / ".fly_tracking_gui_settings.json"
@@ -2195,7 +2196,6 @@ class DrosophilaGUI:
         candidates.extend(
             [
                 self._default_channel_output_dir(),
-                Path.home() / "fin6" / "outputs" / "channel",
             ]
         )
 

@@ -1,8 +1,11 @@
 import json
+import site
 import sys
 from pathlib import Path
 
-sys.path.insert(0, '/home/team8/.local/lib/python3.13/site-packages')
+for user_site in [site.getusersitepackages()]:
+    if user_site and user_site not in sys.path:
+        sys.path.insert(0, user_site)
 from box_sdk_gen import BoxOAuth, OAuthConfig
 
 CLIENT_ID = 'k1hxdppdrmp3rm8vqcbb66wpf0ut3iyv'

@@ -5,8 +5,7 @@ import json
 import os
 from pathlib import Path
 
-
-DEFAULT_REMOTE_CONFIG_FILENAME = ".drosophila_remote_gui.json"
+from shared.config.project_paths import REMOTE_GUI_SETTINGS_EXAMPLE_PATH, REMOTE_GUI_SETTINGS_PATH
 
 
 @dataclass(slots=True)
@@ -19,12 +18,22 @@ class RemoteConnectionSettings:
 
 
 def load_remote_connection_settings(repo_root: Path) -> RemoteConnectionSettings:
-    config_path = repo_root / DEFAULT_REMOTE_CONFIG_FILENAME
+    config_path = REMOTE_GUI_SETTINGS_PATH if repo_root == REMOTE_GUI_SETTINGS_PATH.parent else repo_root / REMOTE_GUI_SETTINGS_PATH.name
+    example_path = (
+        REMOTE_GUI_SETTINGS_EXAMPLE_PATH
+        if repo_root == REMOTE_GUI_SETTINGS_EXAMPLE_PATH.parent
+        else repo_root / REMOTE_GUI_SETTINGS_EXAMPLE_PATH.name
+    )
     payload: dict[str, object] = {}
 
     if config_path.exists():
         try:
             payload = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+    elif example_path.exists():
+        try:
+            payload = json.loads(example_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             payload = {}
 

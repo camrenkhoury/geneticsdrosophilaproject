@@ -9,6 +9,7 @@ If the operator says "prep this for Pi" or asks for a one-click Pi conversion, u
 1. Keep the repo layout the same:
    - `geneticsdrosophilaproject/CodeDirectory`
    - `geneticsdrosophilaproject/fin6`
+   - `geneticsdrosophilaproject/start_backend.sh`
 
 2. Install the Pi GUI/tracking dependencies:
    - Run `fin6/install_pi.sh`
@@ -21,8 +22,8 @@ If the operator says "prep this for Pi" or asks for a one-click Pi conversion, u
    - `python3 -m pip install ultralytics`
 
 5. Put the classifier model at:
-   - `~/newone.pt`
-   - Or change `CLASSIFIER_MODEL_PATH` in `CodeDirectory/fly_classifier.py`
+   - `best.pt` at the repository root by default
+   - Or override `DROSOPHILA_MODEL_PATH`
 
 6. Verify the Pi camera capture command exists:
    - `/usr/bin/rpicam-still`
@@ -43,14 +44,14 @@ If the operator says "prep this for Pi" or asks for a one-click Pi conversion, u
 
 1. The main GUI channel output path is already Pi-friendly if the repo layout is preserved.
 
-2. `fin6/.fly_tracking_gui_settings.json` already contains Pi-style paths under `/home/team8/...`, but the username or device nodes may need updating on the target Pi.
+2. `fin6/.fly_tracking_gui_settings.json` is a local runtime settings file when present and is not tracked in git.
 
 3. `CodeDirectory/fly_classifier.py` assumes:
-   - model path: `~/newone.pt`
-   - temp image dir: `~/tempClassImage`
+   - model path defaults to the repo-root `best.pt`
+   - temp image dir defaults to `CodeDirectory/tempClassImage`
    - camera command: `/usr/bin/rpicam-still`
 
-4. `CodeDirectory/nozzle_implementation.py` and `CodeDirectory/gantryOperation.py` contain older JSON path assumptions and should be sanity-checked if those scripts are used directly outside the GUI.
+4. `CodeDirectory/nozzle_implementation.py` and `CodeDirectory/gantryOperation.py` now resolve the shared channel-detection output path from the repo layout.
 
 ## Success checks on the Pi
 
@@ -68,7 +69,7 @@ If the operator says "prep this for Pi" or asks for a one-click Pi conversion, u
 
 1. `fin6/install_pi.sh` should also install `python3-gpiozero`.
 
-2. The classifier path should ideally be configurable instead of hardcoded to `~/newone.pt`.
+2. Backend and GUI config should be copied from the tracked example files into local override files where machine-specific values are needed.
 
 3. The camera command path in `fly_classifier.py` should ideally be configurable or validated at startup.
 

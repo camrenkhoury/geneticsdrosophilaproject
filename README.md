@@ -167,6 +167,7 @@ geneticsdrosophilaproject/
 |     |- Full-System-Integration.png
 |     |- GUI-Loading-Page.png
 |     `- drosophila.png
+|- .drosophila_remote_gui.example.json
 |- README.md
 |- assets/
 |- CodeDirectory/
@@ -201,6 +202,10 @@ geneticsdrosophilaproject/
 |- shared/
 |  |- config/
 |  `- state/
+|- deployment/
+|  `- pi/
+|     `- config/
+|        `- backend.env.example
 `- supporting scripts / notebooks / prototypes
 ```
 
@@ -269,6 +274,14 @@ Host-side support code for remote GUI operation.
   - Connection state
   - Remote polling/sync logic
 
+**Local config behavior:**
+
+- **`.drosophila_remote_gui.example.json`**
+  - Tracked example for GUI connection defaults
+- **`.drosophila_remote_gui.json`**
+  - Machine-local GUI settings written by the application
+  - Intentionally untracked
+
 ### **`shared/`**
 
 Shared project definitions used by both sides.
@@ -312,6 +325,21 @@ These are used for:
 - Fly-position detection output
 - Annotated preview display
 - Remote GUI preview fetch from the Pi
+
+## **Local Configuration**
+
+Machine-specific runtime settings are kept outside tracked source files where possible.
+
+- **`deployment/pi/config/backend.env.example`**
+  - Tracked example for Pi backend configuration
+- **`deployment/pi/config/backend.env`**
+  - Machine-local backend override file
+  - Intentionally untracked
+- **`.drosophila_remote_gui.example.json`**
+  - Tracked example for host GUI connection defaults
+- **`.drosophila_remote_gui.json`**
+  - Machine-local host GUI settings file
+  - Intentionally untracked
 
 ## **API Endpoints**
 

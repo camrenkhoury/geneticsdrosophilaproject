@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from host_app.controllers.base_controller import BaseController, ControllerPayload
-from shared.config.machine_paths import DETECTION_RESULT_JSON, ensure_code_directory_on_path
+from shared.config.project_paths import DETECTION_RESULT_PATH, ensure_code_directory_on_path
 from shared.state.state_enums import BackendLifecycleState, ClientControllerState, OrchestratorState
 
 ensure_code_directory_on_path()
@@ -114,7 +114,7 @@ class LocalController(BaseController):
             "latest_message": self._latest_message,
             "recent_logs": [],
             "classification_result": None,
-            "detection_summary": self._build_detection_summary(DETECTION_RESULT_JSON),
+            "detection_summary": self._build_detection_summary(DETECTION_RESULT_PATH),
             "subsystem_health": {
                 "motion_available": True,
                 "motion_simulation": not gpio_available,
