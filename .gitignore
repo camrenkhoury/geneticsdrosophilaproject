@@ -33,3 +33,4 @@ fin6/*.md
 fin6/*.txt
 fin6/*.sh
 fin6/requirements.txt
+fin6/.fly_tracking_gui_settings.json
