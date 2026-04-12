@@ -107,6 +107,12 @@ The system provides the following functions in the codebase:
 
 `GUI -> Controller -> FastAPI API -> Machine Service -> Hardware / CV logic -> Runtime State -> GUI`
 
+### **System Workflow Diagram**
+
+<p align="center">
+  <img src=".github/assets/Full-System-Integration.png" alt="Full system integration workflow diagram" width="900">
+</p>
+
 **Operationally:**
 
 1. The operator launches the GUI.
@@ -124,6 +130,9 @@ This repository contains the backend, GUI, shared definitions, hardware-control 
 
 ```text
 geneticsdrosophiliaproject/
+|- .github/
+|  `- assets/
+|     `- Full-System-Integration.png
 |- README.md
 |- assets/
 |- CodeDirectory/
