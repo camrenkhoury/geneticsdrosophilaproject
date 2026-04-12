@@ -415,7 +415,7 @@ Primary GitHub Contributor/Owner: Camren J. Khoury
 
 **Embedded & Control Systems**
 - Motor Control: **William McGlone**, Camren J. Khoury, Megan McNuer, Dylan Britch
-- Raspberry Pi Environment + GPIO Control: **Camren J. Khoury**
+- Raspberry Pi Setup and GPIO Control: **Camren J. Khoury**
 
 **Software & Computational Systems**
 - Computer Vision Code: **Avi Patel**, Dylan Britch
