@@ -4,7 +4,11 @@ __pycache__/
 *.pyo
 *.png
 !.github/assets/*.png
+!assets/Genetcs_Logo_Banner.png
+!assets/Clemson University Banner Logo.png
+!assets/ECE_Banner_Clemson.png
 *.jpg
+!assets/ECE_Banner_Clemson.jpg
 !.github/assets/*.jpg
 *.jpeg
 !.github/assets/*.jpeg

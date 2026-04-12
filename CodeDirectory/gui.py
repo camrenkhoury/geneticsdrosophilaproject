@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import io
 import importlib
 import json
@@ -171,6 +172,7 @@ class SliderSwitch(tk.Canvas):
 class DrosophilaGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
+        self._configure_windows_app_id()
         self.root.title("Drosophila Genetics Control Panel")
         self.root.geometry("1100x760")
         self.root.minsize(960, 680)
@@ -207,6 +209,7 @@ class DrosophilaGUI:
         self.connection_state = ConnectionState.LOCAL
         self.preview_image = None
         self.operations_logo_image = None
+        self.footer_banner_images = []
         self.window_icon_images = []
         self.entry_fly_display_image = None
         self.entry_fly_frames = []
@@ -333,11 +336,21 @@ class DrosophilaGUI:
         return None
 
     def _set_window_icon(self) -> None:
+        ico_path = self._resolve_asset_path("drosophila.ico")
         icon_path = self._resolve_asset_path(
             "drosophila.png",
             "drosophilafly.png",
             "drosphoila.png",
         )
+        if icon_path is None and ico_path is None:
+            return
+
+        if sys.platform.startswith("win") and ico_path is not None:
+            try:
+                self.root.iconbitmap(default=str(ico_path))
+            except tk.TclError:
+                pass
+
         if icon_path is None:
             return
 
@@ -358,6 +371,17 @@ class DrosophilaGUI:
                 self.root.iconphoto(True, fallback_icon)
             except tk.TclError:
                 self.window_icon_images = []
+
+    def _configure_windows_app_id(self) -> None:
+        if not sys.platform.startswith("win"):
+            return
+
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "CamrenKhoury.AutomatedDrosophilaSortingSystem"
+            )
+        except Exception:
+            pass
 
     def _entry_scale(self, value: int) -> int:
         return max(1, math.ceil(value * self.entry_page_scale))
@@ -389,13 +413,14 @@ class DrosophilaGUI:
 
         self.entry_frame = tk.Frame(
             self.page_container,
-            bg="#FFFFFF",
+            bg=self._blend_hex("#FFFFFF", "#686766", 0.58),
             padx=self._entry_scale(20),
             pady=self._entry_scale(20),
         )
         self.entry_frame.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
         self.entry_frame.columnconfigure(0, weight=1)
         self.entry_frame.rowconfigure(0, weight=1)
+        self.entry_frame.rowconfigure(1, weight=0)
         self.create_entry_page(self.entry_frame)
 
         self.main_frame = ttk.Frame(self.page_container, padding="15")
@@ -415,14 +440,13 @@ class DrosophilaGUI:
     def create_entry_page(self, parent):
         halo_shell = tk.Frame(
             parent,
-            bg=self._blend_hex("#FFFFFF", "#686766", 0.42),
+            bg=self._blend_hex("#FFFFFF", "#686766", 0.58),
             padx=self._entry_scale(10),
             pady=self._entry_scale(10),
         )
         halo_shell.grid(row=0, column=0)
 
         halo_ring_specs = (
-            (0.58, 7),
             (0.74, 5),
         )
         halo_container = halo_shell
@@ -503,6 +527,8 @@ class DrosophilaGUI:
             highlightthickness=0,
         )
         self.entry_fly_label.grid(row=0, column=0)
+
+        self.create_footer_banners(parent, row=1, column=0, background=self.entry_frame.cget("bg"), pady=(self._entry_scale(18), 0))
 
     def show_entry_page(self):
         self.main_frame.grid_remove()
@@ -1557,6 +1583,65 @@ class DrosophilaGUI:
         )
         self.log_text.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
 
+    def create_footer_banners(self, parent, row: int, column: int, background: str, pady=(12, 0)):
+        footer_frame = tk.Frame(parent, bg=background)
+        footer_frame.grid(row=row, column=column, columnspan=3, sticky=(tk.W, tk.E), pady=pady)
+
+        banner_box_width = 312
+        banner_box_height = 88
+        for gap_column in (0, 2, 4, 6):
+            footer_frame.columnconfigure(gap_column, weight=1)
+        for banner_column in (1, 3, 5):
+            footer_frame.columnconfigure(banner_column, weight=0, minsize=banner_box_width)
+
+        banner_specs = (
+            ("Genetcs_Logo_Banner.png",),
+            ("Clemson University Banner Logo.png",),
+            ("ECE_Banner_Clemson.png", "ECE_Banner_Clemson.jpg"),
+        )
+
+        self.footer_banner_images = []
+        for index, candidate_names in enumerate(banner_specs):
+            banner_column = (index * 2) + 1
+            banner_cell = tk.Frame(
+                footer_frame,
+                bg=background,
+                width=banner_box_width,
+                height=banner_box_height,
+                bd=0,
+                highlightthickness=0,
+            )
+            banner_cell.grid(row=0, column=banner_column, sticky="")
+            banner_cell.grid_propagate(False)
+            banner_cell.columnconfigure(0, weight=1)
+            banner_cell.rowconfigure(0, weight=1)
+
+            banner_label = tk.Label(
+                banner_cell,
+                bg=background,
+                bd=0,
+                highlightthickness=0,
+            )
+            banner_label.grid(row=0, column=0, sticky="")
+            banner_path = self._resolve_asset_path(*candidate_names)
+            if banner_path is None:
+                continue
+
+            try:
+                from PIL import Image, ImageTk
+
+                image = Image.open(banner_path).convert("RGBA")
+                alpha_bbox = image.getchannel("A").getbbox()
+                if alpha_bbox is not None:
+                    image = image.crop(alpha_bbox)
+                resample = getattr(Image, "Resampling", Image)
+                image.thumbnail((banner_box_width, banner_box_height), resample.LANCZOS)
+                banner_photo = ImageTk.PhotoImage(image)
+                self.footer_banner_images.append(banner_photo)
+                banner_label.config(image=banner_photo)
+            except Exception:
+                banner_label.config(text="")
+
     def make_button(self, parent, text: str, color: str, command):
         button = tk.Button(
             parent,
@@ -1684,7 +1769,7 @@ class DrosophilaGUI:
             image = Image.open(logo_path)
             image = image.convert("RGBA")
             resample = getattr(Image, "Resampling", Image)
-            image.thumbnail((128, 128), resample.LANCZOS)
+            image.thumbnail((152, 152), resample.LANCZOS)
             self.operations_logo_image = ImageTk.PhotoImage(image)
             self.operations_logo_label.config(
                 image=self.operations_logo_image,
