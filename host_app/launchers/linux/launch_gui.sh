@@ -3,7 +3,7 @@ set -eu
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)"
-GUI_PATH="host_app/gui/gui.py"
+GUI_PATH="CodeDirectory/gui.py"
 cd "$REPO_ROOT"
 
 if [ -x ".venv/bin/python" ]; then

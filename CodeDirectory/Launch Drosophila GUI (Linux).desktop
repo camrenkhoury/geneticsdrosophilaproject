@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Drosophila Genetics GUI (Linux)
+Comment=Launch the Drosophila Genetics GUI
+Exec=/bin/sh -lc 'DESKTOP_FILE="%k"; SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$DESKTOP_FILE")" && pwd)"; exec "$SCRIPT_DIR/launch_gui.sh"'
+Icon=applications-science
+Terminal=false
+Categories=Science;
