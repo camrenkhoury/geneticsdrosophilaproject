@@ -425,7 +425,7 @@ Primary GitHub Contributor/Owner: Camren J. Khoury
 
 **Mechanical Systems**
 - 3D Modeling/Printing: **Rivers Henderson**, Dylan Britch, Ainara Garcia
-- Vacuum Nozzle Development: **Dylan Britch**, Rivers Henderson, William McGlone, Megan McNuer, Ainara Garcia
+- Vacuum Nozzle Development: **Rivers Henderson**, Dylan Britch, William McGlone, Megan McNuer, Ainara Garcia
 
 **Electrical Systems**
 - PCB Design: **Camren J. Khoury**
