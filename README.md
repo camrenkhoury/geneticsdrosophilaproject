@@ -8,7 +8,7 @@ This repository contains the actual working project code:
 - **Desktop GUI control**
 - **Computer vision and channel-detection code**
 - **Backend API and runtime-state architecture**
-- **Legacy modules still used by the current system**
+- **Control, vision, and support modules used by the system**
 
 It should be read as a real electromechanical system codebase, not just a GUI project and not just an API project.
 
@@ -67,7 +67,7 @@ The software stack includes:
 
 ### **Responsibility Split**
 
-The repository is currently structured around this separation:
+The repository is structured around this separation:
 
 - **Pi backend**
   - Owns hardware control
@@ -83,9 +83,9 @@ The repository is currently structured around this separation:
 
 **Communication model:** FastAPI + HTTP in remote mode.
 
-## **Current Working State**
+## **System Functions**
 
-The following are currently working in the codebase:
+The system provides the following functions in the codebase:
 
 - **Remote GUI control** from host to Pi
 - **Homing**
@@ -100,20 +100,6 @@ The following are currently working in the codebase:
 - **Degraded backend startup** when some subsystems are unavailable
 - **Local / simulation-capable behavior** preserved
 - **Manual control validated on real hardware**
-
-## **In Progress / Roadmap**
-
-The main remaining system-level task is:
-
-- **Complete the automated sorting workflow** so the full detect-pick-classify-place loop runs under the Raspberry Pi backend
-
-Other active directions:
-
-- Improve long-running task orchestration
-- Improve stop/cancel behavior
-- Tighten CV integration and live re-detection behavior
-- Improve throughput and classification reliability
-- Standardize deployment and Raspberry Pi startup behavior
 
 ## **How It Works**
 
@@ -134,7 +120,7 @@ Other active directions:
 
 ## **Repository Structure**
 
-This repository contains both the current backend/client structure and older modules that still remain part of the working system.
+This repository contains the backend, GUI, shared definitions, hardware-control code, and vision code that make up the working system.
 
 ```text
 geneticsdrosophiliaproject/
@@ -179,7 +165,7 @@ geneticsdrosophiliaproject/
 
 ### **`CodeDirectory/`**
 
-This is still a major part of the active system.
+This directory contains the main desktop GUI and several core control modules used by the system.
 
 **Important files:**
 
@@ -200,7 +186,7 @@ This is still a major part of the active system.
 
 ### **`pi_backend/`**
 
-The newer Raspberry Pi backend architecture.
+The Raspberry Pi backend architecture.
 
 **Subdirectories:**
 
@@ -250,7 +236,7 @@ Computer vision and channel-detection code.
 - **`assay_tracking.py`**
 - **`camera_sources.py`**
 
-This area currently handles:
+This area handles:
 
 - Detection result generation
 - Annotated preview image generation
@@ -259,7 +245,7 @@ This area currently handles:
 
 ## **Computer Vision / Output Artifacts**
 
-Important generated files currently include:
+Important generated files include:
 
 - **`fin6/outputs/channel/last_channel_result.json`**
 - **`fin6/outputs/channel/last_channel_annotated.png`**
@@ -347,7 +333,7 @@ Used by the `fin6/` tooling and analysis flows:
 
 - The **Pi backend** requires hardware-facing dependencies.
 - The **host remote GUI** should not require Pi GPIO libraries.
-- **Local mode / simulation** may still touch more of the legacy dependency stack than pure remote host mode.
+- **Local mode / simulation** uses a broader local dependency stack than pure remote host mode.
 - Some `fin6/` workflows use a wider scientific Python stack than the minimal remote GUI path.
 
 ## **Safety Notes**
@@ -373,11 +359,11 @@ Code changes should respect the following:
 
 ## **Known Issues / Current Gaps**
 
-- The full automated sorting loop is still being completed under the Raspberry Pi backend.
-- Some working behaviors still depend on older local control modules.
+- The full automated sorting loop is not yet fully exposed through the Raspberry Pi backend.
+- Some working behaviors use direct local control modules in addition to the backend/client split.
 - GPIO environment setup can be sensitive on some Pi systems.
 - YOLO / detection performance varies with lighting and camera conditions.
-- Classification accuracy and throughput still need refinement.
+- Classification accuracy and throughput need refinement.
 - Deployment and service management are not yet fully standardized.
 
 ## **Project Team**
