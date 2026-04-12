@@ -415,15 +415,13 @@ class DrosophilaGUI:
     def create_entry_page(self, parent):
         halo_shell = tk.Frame(
             parent,
-            bg=self._blend_hex("#FFFFFF", "#686766", 0.16),
+            bg=self._blend_hex("#FFFFFF", "#686766", 0.42),
             padx=self._entry_scale(10),
             pady=self._entry_scale(10),
         )
         halo_shell.grid(row=0, column=0)
 
         halo_ring_specs = (
-            (0.28, 10),
-            (0.42, 8),
             (0.58, 7),
             (0.74, 5),
         )
