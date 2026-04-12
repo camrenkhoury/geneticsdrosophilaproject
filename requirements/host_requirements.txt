@@ -1,0 +1,4 @@
+# Host-side GUI runtime dependencies
+# tkinter is provided by the Python standard library / OS packages.
+requests
+

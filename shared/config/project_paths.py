@@ -23,6 +23,9 @@ VISION_DIR = REPO_ROOT / "fin6"
 FIN6_DIR = VISION_DIR
 ASSETS_DIR = REPO_ROOT / "assets"
 DEPLOYMENT_DIR = REPO_ROOT / "deployment"
+PI_APP_DIR = REPO_ROOT / "pi_app"
+REQUIREMENTS_DIR = REPO_ROOT / "requirements"
+VISION_ROOT_DIR = REPO_ROOT / "vision"
 
 CHANNEL_OUTPUT_DIR = _env_path("DROSOPHILA_CHANNEL_OUTPUT_DIR", FIN6_DIR / "outputs" / "channel")
 ASSAY_OUTPUT_DIR = _env_path("DROSOPHILA_ASSAY_OUTPUT_DIR", FIN6_DIR / "outputs" / "assay")

@@ -1,0 +1,17 @@
+[Unit]
+Description=Drosophila Backend API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Environment=DROSOPHILA_STATE_DIR=/run/drosophila-api
+RuntimeDirectory=drosophila-api
+ExecStart=%h/geneticsdrosophilaproject/start_backend.sh
+Restart=always
+RestartSec=5
+RestartPreventExitStatus=77
+
+[Install]
+WantedBy=multi-user.target

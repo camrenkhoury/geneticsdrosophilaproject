@@ -1,0 +1,11 @@
+# Pi-side backend and runtime dependencies
+fastapi
+uvicorn
+pydantic
+requests
+gpiozero
+lgpio
+numpy
+opencv-python
+ultralytics
+
