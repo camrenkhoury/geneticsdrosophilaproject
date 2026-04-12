@@ -100,6 +100,7 @@ class HealthResponse(BaseModel):
 
 
 class StatusResponse(BaseModel):
+    status_revision: int
     backend_lifecycle_state: str
     backend_boot_degraded: bool
     controller_state: str
@@ -120,6 +121,7 @@ class StatusResponse(BaseModel):
     @classmethod
     def from_snapshot(cls, snapshot: RuntimeStateSnapshot) -> "StatusResponse":
         return cls(
+            status_revision=snapshot.status_revision,
             backend_lifecycle_state=str(snapshot.backend_lifecycle_state),
             backend_boot_degraded=snapshot.backend_boot_degraded,
             controller_state=str(snapshot.controller_state),

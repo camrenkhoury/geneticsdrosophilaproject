@@ -1,0 +1,13 @@
+from __future__ import annotations
+
+from enum import Enum
+
+
+class ConnectionState(str, Enum):
+    LOCAL = "LOCAL"
+    CONNECTING_TO_PI = "CONNECTING_TO_PI"
+    CLIENT_CONNECTED = "CLIENT_CONNECTED"
+    CLIENT_DISCONNECTED = "CLIENT_DISCONNECTED"
+    RETRY_WAIT = "RETRY_WAIT"
+    RECONNECT_ATTEMPT = "RECONNECT_ATTEMPT"
+    CLIENT_RECONNECTED = "CLIENT_RECONNECTED"

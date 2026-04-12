@@ -43,6 +43,7 @@ class DetectionSummary:
 
 @dataclass(slots=True)
 class RuntimeStateSnapshot:
+    status_revision: int = 0
     backend_lifecycle_state: BackendLifecycleState = BackendLifecycleState.STARTING_BACKEND
     backend_boot_degraded: bool = False
     controller_state: ClientControllerState = ClientControllerState.CLIENT_DISCONNECTED
@@ -76,11 +77,16 @@ class RuntimeStateStore:
             snapshot_copy.recent_logs = list(self._recent_logs)
             return snapshot_copy
 
+    def _bump_status_revision_locked(self) -> None:
+        self._snapshot.status_revision += 1
+
     def append_log(self, level: str, message: str) -> LogEntry:
         entry = LogEntry(created_at=datetime.now(timezone.utc), level=level.upper(), message=message)
         with self._lock:
             self._recent_logs.append(entry)
-            self._snapshot.latest_message = message
+            if self._snapshot.latest_message != message:
+                self._snapshot.latest_message = message
+            self._bump_status_revision_locked()
         return entry
 
     def set_backend_lifecycle_state(
@@ -89,9 +95,15 @@ class RuntimeStateStore:
         message: str | None = None,
     ) -> None:
         with self._lock:
-            self._snapshot.backend_lifecycle_state = state
-            if message is not None:
+            changed = False
+            if self._snapshot.backend_lifecycle_state != state:
+                self._snapshot.backend_lifecycle_state = state
+                changed = True
+            if message is not None and self._snapshot.latest_message != message:
                 self._snapshot.latest_message = message
+                changed = True
+            if changed:
+                self._bump_status_revision_locked()
 
     def set_controller_state(
         self,
@@ -99,13 +111,22 @@ class RuntimeStateStore:
         message: str | None = None,
     ) -> None:
         with self._lock:
-            self._snapshot.controller_state = state
-            if message is not None:
+            changed = False
+            if self._snapshot.controller_state != state:
+                self._snapshot.controller_state = state
+                changed = True
+            if message is not None and self._snapshot.latest_message != message:
                 self._snapshot.latest_message = message
+                changed = True
+            if changed:
+                self._bump_status_revision_locked()
 
     def set_backend_boot_degraded(self, degraded: bool) -> None:
         with self._lock:
+            if self._snapshot.backend_boot_degraded == degraded:
+                return
             self._snapshot.backend_boot_degraded = degraded
+            self._bump_status_revision_locked()
 
     def set_orchestrator_state(
         self,
@@ -113,62 +134,119 @@ class RuntimeStateStore:
         message: str | None = None,
     ) -> None:
         with self._lock:
-            self._snapshot.orchestrator_state = state
-            if message is not None:
+            changed = False
+            if self._snapshot.orchestrator_state != state:
+                self._snapshot.orchestrator_state = state
+                changed = True
+            if message is not None and self._snapshot.latest_message != message:
                 self._snapshot.latest_message = message
+                changed = True
+            if changed:
+                self._bump_status_revision_locked()
 
     def begin_task(self, task_name: str, task_state: TaskState, message: str) -> None:
         with self._lock:
+            changed = (
+                self._snapshot.current_task != task_name
+                or self._snapshot.task_state != task_state
+                or self._snapshot.orchestrator_state != OrchestratorState.TASK_STARTING
+                or self._snapshot.latest_message != message
+            )
             self._snapshot.current_task = task_name
             self._snapshot.task_state = task_state
             self._snapshot.orchestrator_state = OrchestratorState.TASK_STARTING
             self._snapshot.latest_message = message
+            if changed:
+                self._bump_status_revision_locked()
 
     def complete_task(self, task_state: TaskState, message: str) -> None:
         with self._lock:
+            changed = (
+                self._snapshot.task_state != task_state
+                or self._snapshot.current_task is not None
+                or self._snapshot.orchestrator_state != OrchestratorState.TASK_COMPLETE
+                or self._snapshot.latest_message != message
+            )
             self._snapshot.task_state = task_state
             self._snapshot.current_task = None
             self._snapshot.orchestrator_state = OrchestratorState.TASK_COMPLETE
             self._snapshot.latest_message = message
+            if changed:
+                self._bump_status_revision_locked()
 
     def fail_task(self, task_state: TaskState, message: str) -> None:
         with self._lock:
+            changed = (
+                self._snapshot.task_state != task_state
+                or self._snapshot.current_task is not None
+                or self._snapshot.orchestrator_state != OrchestratorState.TASK_ERROR
+                or self._snapshot.latest_message != message
+            )
             self._snapshot.task_state = task_state
             self._snapshot.current_task = None
             self._snapshot.orchestrator_state = OrchestratorState.TASK_ERROR
             self._snapshot.latest_message = message
+            if changed:
+                self._bump_status_revision_locked()
 
     def set_current_position_mm(self, position_mm: float) -> None:
         with self._lock:
+            if self._snapshot.current_position_mm == position_mm:
+                return
             self._snapshot.current_position_mm = position_mm
+            self._bump_status_revision_locked()
 
     def set_vacuum_on(self, enabled: bool) -> None:
         with self._lock:
+            if self._snapshot.vacuum_on == enabled:
+                return
             self._snapshot.vacuum_on = enabled
+            self._bump_status_revision_locked()
 
     def set_vibration_on(self, enabled: bool) -> None:
         with self._lock:
+            if self._snapshot.vibration_on == enabled:
+                return
             self._snapshot.vibration_on = enabled
+            self._bump_status_revision_locked()
 
     def set_stop_requested(self, requested: bool) -> None:
         with self._lock:
+            if self._snapshot.stop_requested == requested:
+                return
             self._snapshot.stop_requested = requested
+            self._bump_status_revision_locked()
 
     def set_classifier_result(self, result: ClassifierResultSummary) -> None:
         with self._lock:
+            if self._snapshot.classifier_result == result:
+                return
             self._snapshot.classifier_result = deepcopy(result)
+            self._bump_status_revision_locked()
 
     def set_detection_summary(self, summary: DetectionSummary) -> None:
         with self._lock:
+            if self._snapshot.detection_summary == summary:
+                return
             self._snapshot.detection_summary = deepcopy(summary)
+            self._bump_status_revision_locked()
 
     def set_subsystem_health(self, name: str, value: bool | str | float) -> None:
         with self._lock:
+            if self._snapshot.subsystem_health.get(name) == value:
+                return
             self._snapshot.subsystem_health[name] = value
+            self._bump_status_revision_locked()
 
     def set_subsystem_error(self, name: str, error: str | None) -> None:
         with self._lock:
             if error is None:
+                if name not in self._snapshot.subsystem_errors:
+                    return
                 self._snapshot.subsystem_errors.pop(name, None)
+                self._bump_status_revision_locked()
+                return
+            if self._snapshot.subsystem_errors.get(name) == error:
                 return
             self._snapshot.subsystem_errors[name] = error
+            self._bump_status_revision_locked()

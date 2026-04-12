@@ -86,3 +86,23 @@ def post_vibration(request: Request, payload: VibrationRequest) -> CommandRespon
 def post_stop(request: Request) -> CommandResponse:
     context = request.app.state.backend_context
     return context.request_stop()
+
+
+@router.post("/classify", response_model=CommandResponse, dependencies=[Depends(require_api_key)])
+def post_classify(request: Request) -> CommandResponse:
+    context = request.app.state.backend_context
+    return context.submit_machine_task(
+        "classify",
+        context.machine_service.classify_fly,
+        precheck=context.machine_service.validate_classifier_command,
+    )
+
+
+@router.post("/run_assay", response_model=CommandResponse, dependencies=[Depends(require_api_key)])
+def post_run_assay(request: Request) -> CommandResponse:
+    context = request.app.state.backend_context
+    return context.submit_machine_task(
+        "run_assay",
+        context.machine_service.run_assay,
+        precheck=context.machine_service.validate_assay_command,
+    )

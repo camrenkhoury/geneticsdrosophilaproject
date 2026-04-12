@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import contextlib
+import importlib
 import json
 import math
 import queue
+import sys
 import threading
 import time
 import traceback
@@ -14,19 +16,27 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, scrolledtext, ttk
 
+CODE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = CODE_DIR.parent
+if str(CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(CODE_DIR))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 import config
-from assay import assay
-from fly_classifier import classify_fly
-from motion import (
-    GPIO_AVAILABLE,
-    get_current_position,
-    get_operational_max_mm,
-    home_to_zero,
-    move_relative,
-    move_to_absolute,
+from host_app.controllers.base_controller import (
+    ControllerCommandRejected,
+    ControllerConnectionError,
+    ControllerError,
 )
-from vacuum import vacuum_off, vacuum_on
-from vibration import vibration_off, vibration_on
+from host_app.controllers.remote_controller import RemoteController
+from host_app.sync.connection_state import ConnectionState
+from host_app.sync.remote_sync import RemoteSyncManager
+from shared.config.network_config import (
+    RemoteConnectionSettings,
+    load_remote_connection_settings,
+    save_remote_connection_settings,
+)
 
 
 class TaskCancelled(Exception):
@@ -160,20 +170,36 @@ class SliderSwitch(tk.Canvas):
 class DrosophilaGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
-        mode = " (Simulation Mode)" if not GPIO_AVAILABLE else ""
-        self.root.title(f"Drosophila Genetics Control Panel{mode}")
+        self.root.title("Drosophila Genetics Control Panel")
         self.root.geometry("1100x760")
         self.root.minsize(960, 680)
         self.root.state("zoomed")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        self.code_dir = Path(__file__).resolve().parent
-        self.repo_root = self.code_dir.parent
+        self.code_dir = CODE_DIR
+        self.repo_root = REPO_ROOT
         self.ui_queue: queue.Queue = queue.Queue()
         self.stop_requested = threading.Event()
         self.worker_thread: threading.Thread | None = None
         self.current_task_name: str | None = None
         self.current_task_cancellable = False
+        self.local_task_busy = False
+        self.local_task_cancellable = False
+        self.remote_request_in_flight = False
+        self.remote_connected = False
+        self.remote_backend_busy = False
+        self.remote_stop_allowed = False
+        self.remote_backend_degraded = False
+        self.remote_motion_available = True
+        self.remote_vacuum_available = True
+        self.remote_vibration_available = True
+        self.remote_classifier_available = True
+        self.remote_assay_available = True
+        self.remote_seen_log_keys: set[tuple[str, str, str]] = set()
+        self._last_remote_status_revision: int | None = None
+        self._last_remote_classification_signature: tuple[str, float, tuple[str, ...]] | None = None
+        self._remote_classification_seen_once = False
+        self.connection_state = ConnectionState.LOCAL
         self.preview_image = None
         self.operations_logo_image = None
         self.window_icon_images = []
@@ -186,11 +212,20 @@ class DrosophilaGUI:
         self.last_result_mtime: float | None = None
         self.last_used_detection_mtime: float | None = None
         self._last_output_dir_text = ""
+        self.remote_settings = load_remote_connection_settings(self.repo_root)
+        self.remote_controller: RemoteController | None = None
+        self.remote_sync: RemoteSyncManager | None = None
+        self._local_runtime_cache: dict[str, object] | None = None
+        self._local_runtime_error: str | None = None
 
         self.state_var = tk.StringVar(value="IDLE")
         self.position_var = tk.StringVar(value="0.00 mm")
         self.message_var = tk.StringVar(value="Ready")
-        self.mode_var = tk.StringVar(value="Hardware Mode" if GPIO_AVAILABLE else "Simulation Mode")
+        self.mode_var = tk.StringVar(value="Local Mode")
+        self.connection_var = tk.StringVar(value="Local controller active.")
+        self.controller_mode_choice = tk.StringVar(value="Local")
+        self.remote_url_var = tk.StringVar(value=self.remote_settings.base_url)
+        self.remote_api_key_var = tk.StringVar(value=self.remote_settings.api_key)
         self.detection_var = tk.StringVar(value="Waiting for channel detection output.")
         self.output_dir_var = tk.StringVar(value=str(self._default_channel_output_dir()))
         self.device_state_labels: dict[str, tk.Label] = {}
@@ -199,6 +234,8 @@ class DrosophilaGUI:
 
         self.control_widgets = []
         self.toggle_widgets = []
+        self.motion_widgets = []
+        self.remote_unsupported_widgets = []
         self.manual_move_entry: ttk.Entry | None = None
 
         self.create_widgets()
@@ -208,6 +245,74 @@ class DrosophilaGUI:
         self.update_position()
         self.update_channel_preview()
         self.process_queue()
+        self._apply_connection_state(ConnectionState.LOCAL, "Local controller active.")
+
+    def _load_local_runtime(self) -> dict[str, object]:
+        if self._local_runtime_cache is not None:
+            return self._local_runtime_cache
+
+        try:
+            motion = importlib.import_module("motion")
+            vacuum = importlib.import_module("vacuum")
+            vibration = importlib.import_module("vibration")
+            assay_module = importlib.import_module("assay")
+            classifier_module = importlib.import_module("fly_classifier")
+        except Exception as exc:
+            self._local_runtime_error = f"{type(exc).__name__}: {exc}"
+            self._refresh_local_mode_display()
+            raise RuntimeError(f"Local runtime dependencies are unavailable: {self._local_runtime_error}") from exc
+
+        self._local_runtime_error = None
+        self._local_runtime_cache = {
+            "motion": motion,
+            "vacuum": vacuum,
+            "vibration": vibration,
+            "assay": getattr(assay_module, "assay"),
+            "classify_fly": getattr(classifier_module, "classify_fly"),
+            "gpio_available": bool(getattr(motion, "GPIO_AVAILABLE", False)),
+        }
+        self._refresh_local_mode_display()
+        return self._local_runtime_cache
+
+    def _get_local_runtime_if_loaded(self) -> dict[str, object] | None:
+        return self._local_runtime_cache
+
+    def _ensure_local_runtime_or_warn(self, action_label: str) -> dict[str, object] | None:
+        try:
+            return self._load_local_runtime()
+        except RuntimeError as exc:
+            self.set_status("error", str(exc))
+            self.log_message(f"{action_label} unavailable: {exc}")
+            messagebox.showerror("Local Mode Unavailable", f"{action_label} requires local dependencies.\n\n{exc}")
+            return None
+
+    def _get_local_gpio_available(self) -> bool | None:
+        runtime = self._get_local_runtime_if_loaded()
+        if runtime is None:
+            return None
+        return bool(runtime["gpio_available"])
+
+    def _local_mode_presentation(self) -> tuple[str, str]:
+        if self._local_runtime_error:
+            return "Local Mode (Unavailable)", "#F44336"
+
+        gpio_available = self._get_local_gpio_available()
+        if gpio_available is True:
+            return "Local Hardware Mode", "#4CAF50"
+        if gpio_available is False:
+            return "Local Simulation Mode", "#FF9800"
+        return "Local Mode", "#607D8B"
+
+    def _refresh_local_mode_display(self) -> None:
+        if self.is_remote_mode():
+            return
+
+        label_text, label_color = self._local_mode_presentation()
+        self.mode_var.set(label_text)
+        if getattr(self, "mode_label", None) is not None:
+            self.mode_label.config(bg=label_color)
+        if getattr(self, "connection_label", None) is not None:
+            self.connection_label.config(bg=label_color)
 
     def _resolve_asset_path(self, *candidate_names: str) -> Path | None:
         search_roots = (
@@ -353,6 +458,365 @@ class DrosophilaGUI:
     def show_control_panel(self):
         self.entry_frame.grid_remove()
         self.main_frame.grid()
+
+    def is_remote_mode(self) -> bool:
+        return self.controller_mode_choice.get().strip().lower() == "remote"
+
+    def _save_remote_settings(self) -> RemoteConnectionSettings:
+        settings = RemoteConnectionSettings(
+            base_url=self.remote_url_var.get().strip().rstrip("/"),
+            api_key=self.remote_api_key_var.get().strip(),
+            poll_interval_s=self.remote_settings.poll_interval_s,
+            request_timeout_s=self.remote_settings.request_timeout_s,
+            config_path=self.remote_settings.config_path,
+        )
+        save_remote_connection_settings(settings)
+        self.remote_settings = settings
+        return settings
+
+    def _build_remote_controller(self) -> RemoteController:
+        settings = self._save_remote_settings()
+        return RemoteController(
+            base_url=settings.base_url,
+            api_key=settings.api_key,
+            timeout_s=settings.request_timeout_s,
+        )
+
+    def _start_remote_sync(self) -> None:
+        if not self.is_remote_mode():
+            return
+
+        try:
+            self.remote_controller = self._build_remote_controller()
+        except OSError as exc:
+            self._apply_connection_state(ConnectionState.CLIENT_DISCONNECTED, f"Could not save remote settings: {exc}")
+            self.set_status("error", "Remote settings could not be saved.")
+            return
+
+        if self.remote_sync is not None:
+            self.remote_sync.stop()
+
+        self.remote_sync = RemoteSyncManager(
+            self.remote_controller,
+            self.ui_queue,
+            idle_poll_interval_s=self.remote_settings.poll_interval_s,
+        )
+        self.remote_sync.start()
+
+    def _stop_remote_sync(self) -> None:
+        if self.remote_sync is not None:
+            self.remote_sync.stop()
+            self.remote_sync = None
+
+    def reconnect_remote(self) -> None:
+        if not self.is_remote_mode():
+            messagebox.showinfo("Remote Mode", "Switch the controller mode to Remote first.")
+            return
+        self._apply_connection_state(ConnectionState.CONNECTING_TO_PI, "Connecting to Pi backend.")
+        self._start_remote_sync()
+
+    def on_controller_mode_changed(self, _event=None) -> None:
+        if self.is_remote_mode():
+            self.remote_connected = False
+            self.remote_backend_busy = False
+            self.remote_stop_allowed = False
+            self.remote_request_in_flight = False
+            self.remote_seen_log_keys.clear()
+            self._last_remote_status_revision = None
+            self.set_preview_placeholder("Remote mode preview not available over API.")
+            self._apply_connection_state(ConnectionState.CONNECTING_TO_PI, "Connecting to Pi backend.")
+            self._start_remote_sync()
+            return
+
+        self._stop_remote_sync()
+        self.remote_controller = None
+        self.remote_connected = False
+        self.remote_backend_busy = False
+        self.remote_stop_allowed = False
+        self.remote_request_in_flight = False
+        self.remote_backend_degraded = False
+        self.remote_motion_available = True
+        self.remote_vacuum_available = True
+        self.remote_vibration_available = True
+        self.remote_classifier_available = True
+        self.remote_assay_available = True
+        self.remote_seen_log_keys.clear()
+        self._last_remote_status_revision = None
+        self._last_remote_classification_signature = None
+        self._remote_classification_seen_once = False
+        self.output_dir_var.set(str(self._current_channel_output_dir()))
+        self._apply_connection_state(ConnectionState.LOCAL, "Local controller active.")
+        self.set_status("idle", "Ready")
+
+    def _apply_connection_state(self, state: ConnectionState, message: str) -> None:
+        self.connection_state = state
+        self.connection_var.set(message)
+
+        if state == ConnectionState.LOCAL:
+            label_text, label_color = self._local_mode_presentation()
+            connection_color = label_color
+            self.remote_connected = False
+        elif state in {ConnectionState.CLIENT_CONNECTED, ConnectionState.CLIENT_RECONNECTED}:
+            label_text = "Remote Mode (Degraded)" if self.remote_backend_degraded else "Remote Mode"
+            label_color = "#FF9800" if self.remote_backend_degraded else "#4CAF50"
+            connection_color = "#4CAF50"
+            self.remote_connected = True
+        elif state in {ConnectionState.CONNECTING_TO_PI, ConnectionState.RECONNECT_ATTEMPT, ConnectionState.RETRY_WAIT}:
+            label_text = "Remote Mode"
+            label_color = "#FF9800"
+            connection_color = "#FF9800"
+            self.remote_connected = False
+            self.remote_backend_busy = False
+            self.remote_stop_allowed = False
+            self._last_remote_status_revision = None
+        else:
+            label_text = "Remote Mode"
+            label_color = "#F44336"
+            connection_color = "#F44336"
+            self.remote_connected = False
+            self.remote_backend_busy = False
+            self.remote_stop_allowed = False
+            self._last_remote_status_revision = None
+
+        self.mode_var.set(label_text)
+        self.mode_label.config(bg=label_color)
+        if getattr(self, "connection_label", None) is not None:
+            self.connection_label.config(bg=connection_color)
+        self._update_control_interactivity()
+
+    def _backend_busy_from_status(self, status: dict) -> bool:
+        current_task = status.get("current_task")
+        task_state = str(status.get("task_state") or "")
+        orchestrator_state = str(status.get("orchestrator_state") or "")
+        if current_task:
+            return True
+        busy_tokens = ("RUNNING", "REQUESTED", "STARTING", "VALIDATING", "APPLYING", "STOP")
+        return any(token in task_state.upper() for token in busy_tokens) or any(
+            token in orchestrator_state.upper() for token in busy_tokens
+        )
+
+    def _apply_remote_status(self, status: dict) -> None:
+        status_revision = status.get("status_revision")
+        if status_revision is not None:
+            normalized_revision = int(status_revision)
+            if normalized_revision == self._last_remote_status_revision:
+                return
+            self._last_remote_status_revision = normalized_revision
+
+        self.remote_backend_degraded = bool(status.get("backend_boot_degraded", False))
+        subsystem_health = status.get("subsystem_health", {}) or {}
+        subsystem_errors = status.get("subsystem_errors", {}) or {}
+
+        self.remote_motion_available = bool(subsystem_health.get("motion_available", False))
+        self.remote_vacuum_available = bool(subsystem_health.get("vacuum_available", False))
+        self.remote_vibration_available = bool(subsystem_health.get("vibration_available", False))
+        self.remote_classifier_available = bool(subsystem_health.get("classifier_available", False))
+        self.remote_assay_available = bool(subsystem_health.get("assay_available", False))
+        self.remote_backend_busy = self._backend_busy_from_status(status)
+        self.remote_stop_allowed = self.remote_connected and self.remote_backend_busy
+
+        state_text = self._summarize_remote_state(status)
+        self.set_status(state_text, str(status.get("latest_message", "Remote status updated.")))
+        self.position_var.set(f"{float(status.get('current_position_mm', 0.0)):.2f} mm")
+        self.mode_var.set("Remote Mode (Degraded)" if self.remote_backend_degraded else "Remote Mode")
+        self.mode_label.config(bg="#FF9800" if self.remote_backend_degraded else "#4CAF50")
+        self.detection_var.set(self._format_remote_detection(status.get("detection_summary", {}) or {}))
+
+        detection_summary = status.get("detection_summary", {}) or {}
+        source_path = detection_summary.get("source_path")
+        if source_path:
+            self.output_dir_var.set(str(source_path))
+
+        self.update_actuator_state("vacuum", bool(status.get("vacuum_on", False)))
+        self.update_actuator_state("vibration", bool(status.get("vibration_on", False)))
+        self._update_device_availability("vacuum", self.remote_vacuum_available, subsystem_errors.get("vacuum"))
+        self._update_device_availability("vibration", self.remote_vibration_available, subsystem_errors.get("vibration"))
+        self._handle_remote_classification_result(status)
+
+        recent_logs = status.get("recent_logs", []) or []
+        self._append_remote_logs(recent_logs)
+        self._update_control_interactivity()
+
+    def _summarize_remote_state(self, status: dict) -> str:
+        task_state = status.get("task_state")
+        if task_state:
+            return str(task_state)
+        orchestrator_state = status.get("orchestrator_state")
+        if orchestrator_state:
+            return str(orchestrator_state)
+        return str(status.get("backend_lifecycle_state", "CONNECTED"))
+
+    def _format_remote_detection(self, summary: dict) -> str:
+        status_text = str(summary.get("status", "unknown"))
+        fly_remaining = summary.get("fly_remaining")
+        positions = summary.get("x_positions_mm") or []
+        count = len(positions) if isinstance(positions, list) else 0
+        if fly_remaining is None:
+            return f"status={status_text} count={count}"
+        return f"status={status_text} remaining={bool(fly_remaining)} count={count}"
+
+    def _append_remote_logs(self, recent_logs: list[dict]) -> None:
+        for entry in recent_logs:
+            created_at = str(entry.get("created_at", ""))
+            level = str(entry.get("level", "INFO"))
+            message = str(entry.get("message", ""))
+            key = (created_at, level, message)
+            if key in self.remote_seen_log_keys:
+                continue
+            self.remote_seen_log_keys.add(key)
+            formatted_message = f"[REMOTE {level}] {message}"
+            self.log_message(formatted_message)
+
+    def _handle_remote_classification_result(self, status: dict) -> None:
+        result = status.get("classification_result")
+        if not result:
+            return
+
+        signature = (
+            str(result.get("result_class", "UNCERTAIN")),
+            float(result.get("confidence", 0.0)),
+            tuple(str(error) for error in result.get("errors", [])),
+        )
+
+        if not self._remote_classification_seen_once:
+            self._remote_classification_seen_once = True
+            self._last_remote_classification_signature = signature
+            return
+
+        if signature == self._last_remote_classification_signature:
+            return
+
+        self._last_remote_classification_signature = signature
+        normalized_result = {
+            "class": result.get("result_class", "UNCERTAIN"),
+            "confidence": float(result.get("confidence", 0.0)),
+            "errors": list(result.get("errors", [])),
+        }
+        self.show_classification_result(normalized_result)
+
+    def _start_remote_command(self, label: str, status_state: str, message: str, command_callable) -> None:
+        if not self.is_remote_mode():
+            return
+        if self.remote_request_in_flight:
+            messagebox.showwarning("Busy", "Wait for the current remote request to finish.")
+            return
+        if not self.remote_connected or self.remote_controller is None:
+            messagebox.showwarning("Disconnected", "Connect to the Pi backend before sending commands.")
+            return
+
+        self.remote_request_in_flight = True
+        self.set_status(status_state, message)
+        self.log_message(f"Sending remote {label} command.")
+        self._update_control_interactivity()
+
+        threading.Thread(
+            target=self._remote_command_worker,
+            args=(label, command_callable),
+            daemon=True,
+        ).start()
+
+    def _remote_command_worker(self, label: str, command_callable) -> None:
+        try:
+            response = command_callable()
+            self.ui_queue.put(("remote_command_result", label, response))
+        except ControllerCommandRejected as exc:
+            self.ui_queue.put(("remote_command_error", label, str(exc), exc.payload))
+        except (ControllerConnectionError, ControllerError) as exc:
+            self.ui_queue.put(("remote_command_error", label, str(exc), None))
+
+    def _complete_remote_command(self, label: str, response: dict) -> None:
+        self.remote_request_in_flight = False
+        message = str(response.get("message", f"Remote {label} request completed."))
+        self.log_message(f"Remote {label}: {message}")
+        self.set_status("running", message)
+        self._update_control_interactivity()
+        if self.remote_sync is not None:
+            self.remote_sync.request_immediate_poll()
+
+    def _fail_remote_command(self, label: str, message: str, payload: dict | None) -> None:
+        self.remote_request_in_flight = False
+        self.log_message(f"Remote {label} failed: {message}")
+        self.set_status("error", message)
+        self._update_control_interactivity()
+        if payload:
+            self.message_var.set(str(payload.get("message", message)))
+
+    def _update_control_interactivity(self) -> None:
+        busy = self.local_task_busy or self.remote_request_in_flight or (self.is_remote_mode() and self.remote_backend_busy)
+        entry_state = "disabled" if busy else "normal"
+        controls_enabled = not busy and (not self.is_remote_mode() or self.remote_connected)
+
+        for widget in self.control_widgets:
+            if widget in (self.stop_button, self.reset_button):
+                continue
+            if getattr(self, "clear_log_button", None) is widget:
+                try:
+                    widget.config(state=tk.NORMAL)
+                except tk.TclError:
+                    pass
+                continue
+            if widget in self.remote_unsupported_widgets and self.is_remote_mode():
+                target_state = tk.DISABLED
+                target_entry_state = "disabled"
+            else:
+                target_state = tk.NORMAL if controls_enabled else tk.DISABLED
+                target_entry_state = "normal" if controls_enabled else "disabled"
+
+            if self.is_remote_mode() and widget in self.motion_widgets and not self.remote_motion_available:
+                target_state = tk.DISABLED
+                target_entry_state = "disabled"
+            if self.is_remote_mode() and getattr(self, "classify_button", None) is widget and not self.remote_classifier_available:
+                target_state = tk.DISABLED
+                target_entry_state = "disabled"
+            if self.is_remote_mode() and getattr(self, "assay_button", None) is widget and not self.remote_assay_available:
+                target_state = tk.DISABLED
+                target_entry_state = "disabled"
+
+            try:
+                if isinstance(widget, ttk.Entry):
+                    widget.config(state=target_entry_state)
+                else:
+                    widget.config(state=target_state)
+            except tk.TclError:
+                pass
+
+        for toggle in self.toggle_widgets:
+            enabled = controls_enabled
+            if self.is_remote_mode():
+                if toggle is self.vacuum_switch:
+                    enabled = enabled and self.remote_vacuum_available
+                elif toggle is self.vibration_switch:
+                    enabled = enabled and self.remote_vibration_available
+            toggle.set_enabled(enabled)
+
+        stop_enabled = False
+        if self.is_remote_mode():
+            stop_enabled = self.remote_connected and self.remote_stop_allowed
+        else:
+            stop_enabled = self.local_task_busy and self.local_task_cancellable
+
+        self.stop_button.config(state=tk.NORMAL if stop_enabled else tk.DISABLED)
+        self.reset_button.config(state=tk.DISABLED if busy or (self.is_remote_mode() and not self.remote_connected) else tk.NORMAL)
+
+    def _update_device_availability(self, actuator: str, available: bool, error_detail: str | None) -> None:
+        if available:
+            current_on = False
+            if actuator == "vacuum":
+                current_on = self.vacuum_switch.value
+            elif actuator == "vibration":
+                current_on = self.vibration_switch.value
+            self.update_device_card_state(actuator, current_on)
+            return
+
+        state_var = self.device_state_text.get(actuator)
+        detail_var = self.device_detail_text.get(actuator)
+        state_label = self.device_state_labels.get(actuator)
+        if state_var is None or detail_var is None or state_label is None:
+            return
+
+        state_var.set("UNAVAILABLE")
+        detail_var.set(error_detail or "Remote subsystem unavailable")
+        state_label.config(bg="#FDECEC", fg="#B42318")
 
     def _load_entry_fly_source_image(self):
         if self.entry_fly_source_image is not None:
@@ -618,7 +1082,7 @@ class DrosophilaGUI:
         self.message_label.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
         ttk.Label(status_frame, text="Mode:", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky=tk.W, pady=2)
-        mode_color = "#4CAF50" if GPIO_AVAILABLE else "#FF9800"
+        _, mode_color = self._local_mode_presentation()
         self.mode_label = tk.Label(
             status_frame,
             textvariable=self.mode_var,
@@ -631,7 +1095,46 @@ class DrosophilaGUI:
         )
         self.mode_label.grid(row=3, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
-        ttk.Label(status_frame, text="Detection:", font=("Arial", 10, "bold")).grid(row=4, column=0, sticky=tk.W, pady=2)
+        ttk.Label(status_frame, text="Controller:", font=("Arial", 10, "bold")).grid(row=4, column=0, sticky=tk.W, pady=2)
+        controller_row = ttk.Frame(status_frame)
+        controller_row.grid(row=4, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
+        controller_row.columnconfigure(0, weight=1)
+        self.controller_mode_combo = ttk.Combobox(
+            controller_row,
+            textvariable=self.controller_mode_choice,
+            values=("Local", "Remote"),
+            state="readonly",
+            width=14,
+        )
+        self.controller_mode_combo.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        self.controller_mode_combo.bind("<<ComboboxSelected>>", self.on_controller_mode_changed)
+
+        self.reconnect_button = ttk.Button(controller_row, text="Reconnect", command=self.reconnect_remote)
+        self.reconnect_button.grid(row=0, column=1, padx=(8, 0))
+
+        ttk.Label(status_frame, text="Remote URL:", font=("Arial", 10, "bold")).grid(row=5, column=0, sticky=tk.W, pady=2)
+        self.remote_url_entry = ttk.Entry(status_frame, textvariable=self.remote_url_var)
+        self.remote_url_entry.grid(row=5, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
+
+        ttk.Label(status_frame, text="API Key:", font=("Arial", 10, "bold")).grid(row=6, column=0, sticky=tk.W, pady=2)
+        self.remote_api_key_entry = ttk.Entry(status_frame, textvariable=self.remote_api_key_var, show="*")
+        self.remote_api_key_entry.grid(row=6, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
+
+        ttk.Label(status_frame, text="Connection:", font=("Arial", 10, "bold")).grid(row=7, column=0, sticky=tk.W, pady=2)
+        self.connection_label = tk.Label(
+            status_frame,
+            textvariable=self.connection_var,
+            bg=mode_color,
+            fg="white",
+            relief="sunken",
+            font=("Arial", 10),
+            padx=5,
+            pady=2,
+            anchor="w",
+        )
+        self.connection_label.grid(row=7, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
+
+        ttk.Label(status_frame, text="Detection:", font=("Arial", 10, "bold")).grid(row=8, column=0, sticky=tk.W, pady=2)
         self.detection_label = tk.Label(
             status_frame,
             textvariable=self.detection_var,
@@ -643,9 +1146,9 @@ class DrosophilaGUI:
             anchor="w",
             justify="left",
         )
-        self.detection_label.grid(row=4, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
+        self.detection_label.grid(row=8, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
-        ttk.Label(status_frame, text="Output Dir:", font=("Arial", 10, "bold")).grid(row=5, column=0, sticky=tk.W, pady=2)
+        ttk.Label(status_frame, text="Output Dir:", font=("Arial", 10, "bold")).grid(row=9, column=0, sticky=tk.W, pady=2)
         self.output_dir_label = tk.Label(
             status_frame,
             textvariable=self.output_dir_var,
@@ -657,7 +1160,7 @@ class DrosophilaGUI:
             anchor="w",
             justify="left",
         )
-        self.output_dir_label.grid(row=5, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
+        self.output_dir_label.grid(row=9, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
     def create_main_content(self, parent):
         content_frame = ttk.Frame(parent)
@@ -677,6 +1180,7 @@ class DrosophilaGUI:
 
         home_button = self.make_button(motion_frame, "Home", "#4CAF50", self.home_gantry)
         home_button.grid(row=0, column=0, pady=3, sticky=(tk.W, tk.E))
+        self.motion_widgets.append(home_button)
 
         positions = [
             ("Channel", config.CHANNEL_CENTER),
@@ -696,15 +1200,18 @@ class DrosophilaGUI:
                 lambda pos=position, name=label: self.move_to_position(pos, name),
             )
             button.grid(row=index, column=0, pady=2, sticky=(tk.W, tk.E))
+            self.motion_widgets.append(button)
 
         ttk.Separator(motion_frame, orient="horizontal").grid(row=8, column=0, sticky=(tk.W, tk.E), pady=8)
         ttk.Label(motion_frame, text="Manual Move (mm):", font=("Arial", 9, "bold")).grid(row=9, column=0, pady=(5, 2), sticky=tk.W)
         self.manual_move_entry = ttk.Entry(motion_frame, width=12, font=("Arial", 10))
         self.manual_move_entry.grid(row=10, column=0, pady=2, sticky=(tk.W, tk.E))
         self.register_control(self.manual_move_entry)
+        self.motion_widgets.append(self.manual_move_entry)
 
         manual_button = self.make_button(motion_frame, "Move Relative", "#607D8B", self.manual_move)
         manual_button.grid(row=11, column=0, pady=3, sticky=(tk.W, tk.E))
+        self.motion_widgets.append(manual_button)
 
     def create_channel_preview(self, parent):
         preview_frame = ttk.LabelFrame(parent, text="Channel Detection Preview", style="Log.TLabelframe", padding="10")
@@ -778,6 +1285,7 @@ class DrosophilaGUI:
 
         self.run_button = self.make_button(action_frame, "Run Automated", "#9C27B0", self.run_automated)
         self.run_button.grid(row=1, column=0, sticky=(tk.W, tk.E))
+        self.remote_unsupported_widgets.append(self.run_button)
 
         self.assay_button = self.make_button(action_frame, "Run Assay", "#9C27B0", self.run_assay)
         self.assay_button.grid(row=3, column=0, sticky=(tk.W, tk.E))
@@ -797,6 +1305,7 @@ class DrosophilaGUI:
 
         self.start_button = self.make_button(system_frame, "START", "#4CAF50", self.system_start)
         self.start_button.grid(row=0, column=0, pady=3, padx=5, sticky=(tk.W, tk.E))
+        self.remote_unsupported_widgets.append(self.start_button)
 
         self.stop_button = self.make_button(system_frame, "STOP", "#F44336", self.system_stop)
         self.stop_button.grid(row=0, column=1, pady=3, padx=5, sticky=(tk.W, tk.E))
@@ -805,8 +1314,8 @@ class DrosophilaGUI:
         self.reset_button = self.make_button(system_frame, "RESET", "#FF9800", self.system_reset)
         self.reset_button.grid(row=0, column=2, pady=3, padx=5, sticky=(tk.W, tk.E))
 
-        clear_log_button = self.make_button(system_frame, "CLEAR LOG", "#607D8B", self.clear_log)
-        clear_log_button.grid(row=0, column=3, pady=3, padx=5, sticky=(tk.W, tk.E))
+        self.clear_log_button = self.make_button(system_frame, "CLEAR LOG", "#607D8B", self.clear_log)
+        self.clear_log_button.grid(row=0, column=3, pady=3, padx=5, sticky=(tk.W, tk.E))
 
         for column in range(4):
             system_frame.columnconfigure(column, weight=1)
@@ -979,8 +1488,16 @@ class DrosophilaGUI:
         self.toggle_widgets.append(widget)
 
     def update_position(self):
+        if self.is_remote_mode():
+            self.root.after(1000, self.update_position)
+            return
+        runtime = self._get_local_runtime_if_loaded()
+        if runtime is None:
+            self.root.after(1000, self.update_position)
+            return
         try:
-            self.position_var.set(f"{get_current_position():.2f} mm")
+            motion = runtime["motion"]
+            self.position_var.set(f"{motion.get_current_position():.2f} mm")
         except Exception as exc:
             self.log_message(f"Position update error: {exc}")
         self.root.after(1000, self.update_position)
@@ -1003,6 +1520,14 @@ class DrosophilaGUI:
                     self.show_classification_result(item[1])
                 elif kind == "clear_stop":
                     self.stop_requested.clear()
+                elif kind == "remote_connection":
+                    self._apply_connection_state(ConnectionState(item[1]), item[2])
+                elif kind == "remote_status":
+                    self._apply_remote_status(item[1])
+                elif kind == "remote_command_result":
+                    self._complete_remote_command(item[1], item[2])
+                elif kind == "remote_command_error":
+                    self._fail_remote_command(item[1], item[2], item[3])
         except queue.Empty:
             pass
 
@@ -1011,16 +1536,19 @@ class DrosophilaGUI:
     def set_status(self, state: str, message: str):
         self.state_var.set(state.upper())
         self.message_var.set(message)
-        color = {
-            "idle": "#4CAF50",
-            "running": "#2196F3",
-            "detecting": "#FF9800",
-            "moving": "#FF9800",
-            "picking": "#FF9800",
-            "assaying": "#9C27B0",
-            "error": "#F44336",
-            "stopped": "#607D8B",
-        }.get(state.lower(), "#9E9E9E")
+        state_lower = state.lower()
+        if any(token in state_lower for token in ("error", "failed")):
+            color = "#F44336"
+        elif any(token in state_lower for token in ("stopped", "disconnect", "retry")):
+            color = "#607D8B"
+        elif "assay" in state_lower:
+            color = "#9C27B0"
+        elif any(token in state_lower for token in ("detect", "move", "pick", "home", "run", "start", "task", "connect")):
+            color = "#2196F3" if "connect" not in state_lower else "#FF9800"
+        elif "idle" in state_lower or "ready" in state_lower:
+            color = "#4CAF50"
+        else:
+            color = "#9E9E9E"
         self.state_label.config(bg=color)
         self.message_label.config(bg=color)
 
@@ -1068,25 +1596,9 @@ class DrosophilaGUI:
         messagebox.showinfo("Fly Classification", message)
 
     def set_controls_busy(self, busy: bool, cancellable: bool = False):
-        state = tk.DISABLED if busy else tk.NORMAL
-        entry_state = "disabled" if busy else "normal"
-
-        for widget in self.control_widgets:
-            if widget in (self.stop_button, self.reset_button):
-                continue
-            try:
-                if isinstance(widget, ttk.Entry):
-                    widget.config(state=entry_state)
-                else:
-                    widget.config(state=state)
-            except tk.TclError:
-                pass
-
-        for toggle in self.toggle_widgets:
-            toggle.set_enabled(not busy)
-
-        self.stop_button.config(state=tk.NORMAL if busy and cancellable else tk.DISABLED)
-        self.reset_button.config(state=tk.DISABLED if busy else tk.NORMAL)
+        self.local_task_busy = busy
+        self.local_task_cancellable = cancellable
+        self._update_control_interactivity()
 
     def start_task(self, name: str, state: str, message: str, target, cancellable: bool = False):
         if self.worker_thread and self.worker_thread.is_alive():
@@ -1204,6 +1716,14 @@ class DrosophilaGUI:
             return None
 
     def update_channel_preview(self):
+        if self.is_remote_mode():
+            if not self.remote_connected:
+                self.set_preview_placeholder("Remote mode preview unavailable while disconnected.")
+            else:
+                self.set_preview_placeholder("Remote mode preview not available over API.")
+            self.root.after(1000, self.update_channel_preview)
+            return
+
         output_dir = self._current_channel_output_dir()
         output_text = str(output_dir)
         if output_text != self._last_output_dir_text:
@@ -1271,21 +1791,27 @@ class DrosophilaGUI:
             time.sleep(min(0.1, remaining))
 
     def _set_vacuum(self, enabled: bool):
+        runtime = self._load_local_runtime()
+        vacuum = runtime["vacuum"]
         if enabled:
-            vacuum_on()
+            vacuum.vacuum_on()
         else:
-            vacuum_off()
+            vacuum.vacuum_off()
         self.ui_queue.put(("actuator", "vacuum", enabled))
 
     def _set_vibration(self, enabled: bool):
+        runtime = self._load_local_runtime()
+        vibration = runtime["vibration"]
         if enabled:
-            vibration_on()
+            vibration.vibration_on()
         else:
-            vibration_off()
+            vibration.vibration_off()
         self.ui_queue.put(("actuator", "vibration", enabled))
 
     def _clamp_operational(self, position_mm: float) -> float:
-        return max(0.0, min(position_mm, get_operational_max_mm()))
+        runtime = self._load_local_runtime()
+        motion = runtime["motion"]
+        return max(0.0, min(position_mm, motion.get_operational_max_mm()))
 
     def _apply_pickup_correction(self, position_mm: float) -> float:
         corrected_position = position_mm + config.PICKUP_POSITION_CORRECTION_MM
@@ -1350,16 +1876,20 @@ class DrosophilaGUI:
             self._sleep_with_stop(1.0)
 
     def _run_assay_worker(self):
+        runtime = self._load_local_runtime()
+        assay_callable = runtime["assay"]
         self.worker_status("assaying", "Running assay.")
         self.ui_queue.put(("actuator", "vibration", True))
         try:
-            assay()
+            assay_callable()
         finally:
             self.ui_queue.put(("actuator", "vibration", False))
 
     def _classify_worker(self):
+        runtime = self._load_local_runtime()
+        classify_callable = runtime["classify_fly"]
         self.worker_status("running", "Capturing and classifying fly.")
-        result = classify_fly()
+        result = classify_callable()
         self.ui_queue.put(("classification_result", result))
 
     def _reset_worker(self):
@@ -1369,6 +1899,9 @@ class DrosophilaGUI:
         self.ui_queue.put(("clear_stop",))
 
     def _run_automated_worker(self):
+        runtime = self._load_local_runtime()
+        motion = runtime["motion"]
+        assay_callable = runtime["assay"]
         chamber_drop_s = 2.0
         chamber_identify_s = 6.0
         chamber_pickup_s = 2.0
@@ -1388,10 +1921,10 @@ class DrosophilaGUI:
 
                 self.worker_status("running", f"Cycle {cycle_index}: homing gantry.")
                 self._set_vacuum(False)
-                home_to_zero()
+                motion.home_to_zero()
 
                 self.worker_status("moving", f"Cycle {cycle_index}: moving to channel photo position.")
-                move_to_absolute(camera_photo_position)
+                motion.move_to_absolute(camera_photo_position)
 
                 last_detection_mtime, positions = self._wait_for_detection_result(last_detection_mtime)
                 self.last_used_detection_mtime = last_detection_mtime
@@ -1405,17 +1938,17 @@ class DrosophilaGUI:
 
                 self.worker_status("running", f"Cycle {cycle_index}: accuracy reset home before pickup.")
                 self._set_vacuum(False)
-                home_to_zero()
+                motion.home_to_zero()
 
                 self.worker_status("moving", f"Cycle {cycle_index}: moving to pickup position.")
-                move_to_absolute(pickup_position)
+                motion.move_to_absolute(pickup_position)
 
                 self.worker_status("picking", f"Cycle {cycle_index}: picking fly.")
                 self._set_vacuum(True)
                 self._sleep_with_stop(2.0)
 
                 self.worker_status("moving", "Moving to chamber center.")
-                move_to_absolute(config.CHAMBER_CENTER)
+                motion.move_to_absolute(config.CHAMBER_CENTER)
 
                 self.worker_status("running", "Dropping fly in chamber.")
                 self._set_vacuum(False)
@@ -1429,14 +1962,14 @@ class DrosophilaGUI:
                 self._sleep_with_stop(chamber_pickup_s)
 
                 self.worker_status("moving", f"Moving to {tube_label}.")
-                move_to_absolute(tube_position)
+                motion.move_to_absolute(tube_position)
 
                 self.worker_status("running", f"Dropping fly into {tube_label}.")
                 self._set_vacuum(False)
                 self._sleep_with_stop(tube_drop_s)
 
                 self.worker_status("running", f"Cycle {cycle_index}: returning home.")
-                home_to_zero()
+                motion.home_to_zero()
 
             self.worker_status("assaying", "Sorting complete. Assay starts in 10 seconds.")
             for seconds_left in range(10, 0, -1):
@@ -1446,7 +1979,7 @@ class DrosophilaGUI:
 
             self.ui_queue.put(("actuator", "vibration", True))
             try:
-                assay()
+                assay_callable()
             finally:
                 self.ui_queue.put(("actuator", "vibration", False))
         finally:
@@ -1454,14 +1987,31 @@ class DrosophilaGUI:
             self.ui_queue.put(("actuator", "vibration", False))
 
     def home_gantry(self):
-        self.start_task("home", "moving", "Homing gantry.", home_to_zero)
+        if self.is_remote_mode():
+            self._start_remote_command("home", "moving", "Sending remote home command.", self.remote_controller.home)
+            return
+        runtime = self._ensure_local_runtime_or_warn("Home")
+        if runtime is None:
+            return
+        self.start_task("home", "moving", "Homing gantry.", runtime["motion"].home_to_zero)
 
     def move_to_position(self, position: float, label: str):
+        if self.is_remote_mode():
+            self._start_remote_command(
+                f"move to {label}",
+                "moving",
+                f"Sending remote move to {label}.",
+                lambda: self.remote_controller.move_absolute(position),
+            )
+            return
+        runtime = self._ensure_local_runtime_or_warn(f"Move to {label}")
+        if runtime is None:
+            return
         self.start_task(
             f"move to {label}",
             "moving",
             f"Moving to {label}.",
-            lambda: move_to_absolute(position),
+            lambda: runtime["motion"].move_to_absolute(position),
         )
 
     def manual_move(self):
@@ -1473,13 +2023,35 @@ class DrosophilaGUI:
             self.manual_move_entry.delete(0, tk.END)
             return
 
+        if self.is_remote_mode():
+            self._start_remote_command(
+                "manual move",
+                "moving",
+                f"Sending remote relative move by {distance:.2f} mm.",
+                lambda: self.remote_controller.move_relative(distance),
+            )
+            self.manual_move_entry.delete(0, tk.END)
+            return
+        runtime = self._ensure_local_runtime_or_warn("Manual Move")
+        if runtime is None:
+            return
+
         def task():
-            move_relative(distance)
+            runtime["motion"].move_relative(distance)
 
         if self.start_task("manual move", "moving", f"Moving relative by {distance:.2f} mm.", task):
             self.manual_move_entry.delete(0, tk.END)
 
     def set_vacuum_from_ui(self, enabled: bool):
+        if self.is_remote_mode():
+            self._start_remote_command(
+                "vacuum",
+                "running",
+                f"Sending remote vacuum {'on' if enabled else 'off'} command.",
+                lambda: self.remote_controller.set_vacuum(enabled),
+            )
+            return
+
         def task():
             self.worker_status("running", f"Turning vacuum {'on' if enabled else 'off'}.")
             self._set_vacuum(enabled)
@@ -1487,6 +2059,15 @@ class DrosophilaGUI:
         self.start_task("vacuum", "running", f"Turning vacuum {'on' if enabled else 'off'}.", task)
 
     def set_vibration_from_ui(self, enabled: bool):
+        if self.is_remote_mode():
+            self._start_remote_command(
+                "vibration",
+                "running",
+                f"Sending remote vibration {'on' if enabled else 'off'} command.",
+                lambda: self.remote_controller.set_vibration(enabled),
+            )
+            return
+
         def task():
             self.worker_status("running", f"Turning vibration {'on' if enabled else 'off'}.")
             self._set_vibration(enabled)
@@ -1494,6 +2075,12 @@ class DrosophilaGUI:
         self.start_task("vibration", "running", f"Turning vibration {'on' if enabled else 'off'}.", task)
 
     def run_automated(self):
+        if self.is_remote_mode():
+            messagebox.showinfo("Remote Mode", "Automated run is not wired for remote mode in this phase.")
+            return
+        runtime = self._ensure_local_runtime_or_warn("Run Automated")
+        if runtime is None:
+            return
         if messagebox.askyesno(
             "Confirm",
             "Start automated operation?\n\nThe GUI will follow the existing gantry sequence and wait for channel detection JSON updates.",
@@ -1507,15 +2094,47 @@ class DrosophilaGUI:
             )
 
     def run_assay(self):
+        if self.is_remote_mode():
+            self._start_remote_command(
+                "assay",
+                "assaying",
+                "Sending remote assay request.",
+                self.remote_controller.run_assay,
+            )
+            return
+        runtime = self._ensure_local_runtime_or_warn("Run Assay")
+        if runtime is None:
+            return
         self.start_task("assay", "assaying", "Running assay.", self._run_assay_worker)
 
     def classify_fly_gui(self):
+        if self.is_remote_mode():
+            self._start_remote_command(
+                "classification",
+                "running",
+                "Sending remote classification request.",
+                self.remote_controller.classify_fly,
+            )
+            return
+        runtime = self._ensure_local_runtime_or_warn("Classify Fly")
+        if runtime is None:
+            return
         self.start_task("classification", "running", "Classifying fly.", self._classify_worker)
 
     def system_start(self):
         self.run_automated()
 
     def system_stop(self):
+        if self.is_remote_mode():
+            if not self.remote_connected:
+                messagebox.showinfo("Stop", "Remote backend is not connected.")
+                return
+            if not self.remote_stop_allowed:
+                messagebox.showinfo("Stop", "Stop is only available while the remote backend is busy.")
+                return
+            self._start_remote_command("stop", "stopped", "Sending remote stop request.", self.remote_controller.stop)
+            return
+
         if not (self.worker_thread and self.worker_thread.is_alive() and self.current_task_cancellable):
             messagebox.showinfo("Stop", "Stop is only available during an automated run.")
             return
@@ -1528,6 +2147,14 @@ class DrosophilaGUI:
         if self.worker_thread and self.worker_thread.is_alive():
             messagebox.showwarning("Busy", "Wait for the current task to finish before resetting.")
             return
+        if self.is_remote_mode():
+            self._apply_connection_state(self.connection_state, self.connection_var.get())
+            self.set_status("idle", "Remote UI reset.")
+            self.remote_seen_log_keys.clear()
+            return
+        runtime = self._ensure_local_runtime_or_warn("Reset")
+        if runtime is None:
+            return
         self.start_task("reset", "running", "Resetting system.", self._reset_worker)
 
     def on_close(self):
@@ -1535,6 +2162,7 @@ class DrosophilaGUI:
             if not messagebox.askyesno("Quit", "A task is still running. Close the GUI anyway?"):
                 return
         self.stop_entry_animation()
+        self._stop_remote_sync()
         self.root.destroy()
 
 

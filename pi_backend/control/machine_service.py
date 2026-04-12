@@ -147,6 +147,15 @@ class MachineService:
     def validate_vibration_command(self) -> str | None:
         return self._unavailable_message("vibration")
 
+    def validate_classifier_command(self) -> str | None:
+        return self._unavailable_message("classifier")
+
+    def validate_assay_command(self) -> str | None:
+        assay_message = self._unavailable_message("assay")
+        if assay_message is not None:
+            return assay_message
+        return self._unavailable_message("vibration")
+
     def home(self) -> float:
         self.runtime_state.begin_task("home", TaskState.HOMING_RUNNING, "Homing gantry.")
         self.runtime_state.set_orchestrator_state(OrchestratorState.TASK_STARTING, "Starting home task.")
