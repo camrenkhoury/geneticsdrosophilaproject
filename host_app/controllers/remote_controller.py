@@ -57,6 +57,9 @@ class RemoteController(BaseController):
     def get_health(self) -> ControllerPayload:
         return self._request_json("GET", "/health")
 
+    def get_channel_preview_image(self) -> bytes | None:
+        return self._request_bytes("GET", "/artifacts/channel/annotated")
+
     def _command_request(
         self,
         method: str,
@@ -103,3 +106,43 @@ class RemoteController(BaseController):
             raise ControllerError(f"Pi backend returned HTTP {response.status_code}: {detail}")
 
         return payload
+
+    def _request_bytes(
+        self,
+        method: str,
+        path: str,
+    ) -> bytes | None:
+        url = f"{self.base_url}{path}"
+        headers = {"X-API-Key": self.api_key}
+
+        try:
+            response = self.session.request(
+                method=method,
+                url=url,
+                headers=headers,
+                timeout=self.timeout_s,
+            )
+        except requests.RequestException as exc:
+            raise ControllerConnectionError(f"Failed to reach Pi backend at {self.base_url}: {exc}") from exc
+
+        if response.status_code == 401:
+            try:
+                payload = response.json()
+                detail = str(payload.get("detail", "Remote authentication failed."))
+            except ValueError:
+                detail = "Remote authentication failed."
+            raise ControllerConnectionError(detail)
+
+        if response.status_code == 404:
+            return None
+
+        if response.status_code >= 400:
+            detail = response.text
+            try:
+                payload = response.json()
+                detail = str(payload.get("detail") or payload.get("message") or detail)
+            except ValueError:
+                pass
+            raise ControllerError(f"Pi backend returned HTTP {response.status_code}: {detail}")
+
+        return response.content

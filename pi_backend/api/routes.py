@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
 
 from pi_backend.api.auth import require_api_key
 from pi_backend.api.models import (
@@ -30,6 +33,15 @@ def get_status(request: Request) -> StatusResponse:
     context.machine_service.refresh_detection_summary()
     snapshot = context.runtime_state.snapshot()
     return StatusResponse.from_snapshot(snapshot)
+
+
+@router.get("/artifacts/channel/annotated", dependencies=[Depends(require_api_key)])
+def get_channel_annotated_preview(request: Request) -> FileResponse:
+    context = request.app.state.backend_context
+    preview_path = Path(context.runtime_config.channel_output_directory) / "last_channel_annotated.png"
+    if not preview_path.exists():
+        raise HTTPException(status_code=404, detail="Channel annotated preview is not available yet.")
+    return FileResponse(preview_path, media_type="image/png", filename=preview_path.name)
 
 
 @router.post("/home", response_model=CommandResponse, dependencies=[Depends(require_api_key)])

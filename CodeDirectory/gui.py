@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import io
 import importlib
 import json
 import math
@@ -190,6 +191,8 @@ class DrosophilaGUI:
         self.remote_backend_busy = False
         self.remote_stop_allowed = False
         self.remote_backend_degraded = False
+        self.remote_home_calibration_required = False
+        self.remote_home_prompt_scheduled = False
         self.remote_motion_available = True
         self.remote_vacuum_available = True
         self.remote_vibration_available = True
@@ -197,6 +200,8 @@ class DrosophilaGUI:
         self.remote_assay_available = True
         self.remote_seen_log_keys: set[tuple[str, str, str]] = set()
         self._last_remote_status_revision: int | None = None
+        self._last_remote_preview_source_mtime: float | None = None
+        self._remote_preview_fetch_in_flight = False
         self._last_remote_classification_signature: tuple[str, float, tuple[str, ...]] | None = None
         self._remote_classification_seen_once = False
         self.connection_state = ConnectionState.LOCAL
@@ -521,9 +526,13 @@ class DrosophilaGUI:
             self.remote_backend_busy = False
             self.remote_stop_allowed = False
             self.remote_request_in_flight = False
+            self.remote_home_calibration_required = False
+            self.remote_home_prompt_scheduled = False
             self.remote_seen_log_keys.clear()
             self._last_remote_status_revision = None
-            self.set_preview_placeholder("Remote mode preview not available over API.")
+            self._last_remote_preview_source_mtime = None
+            self._remote_preview_fetch_in_flight = False
+            self.set_preview_placeholder("Waiting for remote channel detection image...")
             self._apply_connection_state(ConnectionState.CONNECTING_TO_PI, "Connecting to Pi backend.")
             self._start_remote_sync()
             return
@@ -535,6 +544,8 @@ class DrosophilaGUI:
         self.remote_stop_allowed = False
         self.remote_request_in_flight = False
         self.remote_backend_degraded = False
+        self.remote_home_calibration_required = False
+        self.remote_home_prompt_scheduled = False
         self.remote_motion_available = True
         self.remote_vacuum_available = True
         self.remote_vibration_available = True
@@ -542,6 +553,8 @@ class DrosophilaGUI:
         self.remote_assay_available = True
         self.remote_seen_log_keys.clear()
         self._last_remote_status_revision = None
+        self._last_remote_preview_source_mtime = None
+        self._remote_preview_fetch_in_flight = False
         self._last_remote_classification_signature = None
         self._remote_classification_seen_once = False
         self.output_dir_var.set(str(self._current_channel_output_dir()))
@@ -556,6 +569,8 @@ class DrosophilaGUI:
             label_text, label_color = self._local_mode_presentation()
             connection_color = label_color
             self.remote_connected = False
+            self.remote_home_calibration_required = False
+            self.remote_home_prompt_scheduled = False
         elif state in {ConnectionState.CLIENT_CONNECTED, ConnectionState.CLIENT_RECONNECTED}:
             label_text = "Remote Mode (Degraded)" if self.remote_backend_degraded else "Remote Mode"
             label_color = "#FF9800" if self.remote_backend_degraded else "#4CAF50"
@@ -568,6 +583,8 @@ class DrosophilaGUI:
             self.remote_connected = False
             self.remote_backend_busy = False
             self.remote_stop_allowed = False
+            self.remote_home_calibration_required = False
+            self.remote_home_prompt_scheduled = False
             self._last_remote_status_revision = None
         else:
             label_text = "Remote Mode"
@@ -576,6 +593,8 @@ class DrosophilaGUI:
             self.remote_connected = False
             self.remote_backend_busy = False
             self.remote_stop_allowed = False
+            self.remote_home_calibration_required = False
+            self.remote_home_prompt_scheduled = False
             self._last_remote_status_revision = None
 
         self.mode_var.set(label_text)
@@ -583,6 +602,50 @@ class DrosophilaGUI:
         if getattr(self, "connection_label", None) is not None:
             self.connection_label.config(bg=connection_color)
         self._update_control_interactivity()
+
+    def _schedule_remote_home_prompt(self) -> None:
+        if (
+            not self.is_remote_mode()
+            or not self.remote_connected
+            or self.remote_home_prompt_scheduled
+            or self.remote_controller is None
+        ):
+            return
+
+        self.remote_home_calibration_required = True
+        self.remote_home_prompt_scheduled = True
+        self.connection_var.set("Connected. Waiting for home calibration approval.")
+        self.set_status("waiting", "Remote calibration must be sent Home before controls unlock.")
+        self._update_control_interactivity()
+        self.root.after(50, self._prompt_remote_home_calibration)
+
+    def _prompt_remote_home_calibration(self) -> None:
+        self.remote_home_prompt_scheduled = False
+
+        if not self.is_remote_mode() or not self.remote_connected or self.remote_controller is None:
+            return
+
+        approved = messagebox.askyesno(
+            "Remote Calibration",
+            "The remote calibration should be sent to Home before use.\n\nSend Home now?",
+        )
+
+        if not approved:
+            self.remote_home_calibration_required = True
+            self.connection_var.set("Connected. Waiting for home calibration approval.")
+            self.set_status("waiting", "Waiting for home calibration approval.")
+            self._update_control_interactivity()
+            return
+
+        self.connection_var.set("Connected. Sending remote home calibration.")
+        self.set_status("moving", "Sending remote home calibration.")
+        self._start_remote_command(
+            "home calibration",
+            "moving",
+            "Sending remote home calibration.",
+            self.remote_controller.home,
+            allow_calibration_bypass=True,
+        )
 
     def _backend_busy_from_status(self, status: dict) -> bool:
         current_task = status.get("current_task")
@@ -626,6 +689,7 @@ class DrosophilaGUI:
         source_path = detection_summary.get("source_path")
         if source_path:
             self.output_dir_var.set(str(source_path))
+        self._request_remote_preview_if_needed(detection_summary)
 
         self.update_actuator_state("vacuum", bool(status.get("vacuum_on", False)))
         self.update_actuator_state("vibration", bool(status.get("vibration_on", False)))
@@ -694,7 +758,63 @@ class DrosophilaGUI:
         }
         self.show_classification_result(normalized_result)
 
-    def _start_remote_command(self, label: str, status_state: str, message: str, command_callable) -> None:
+    def _request_remote_preview_if_needed(self, detection_summary: dict) -> None:
+        if not self.is_remote_mode() or not self.remote_connected or self.remote_controller is None:
+            return
+
+        source_exists = bool(detection_summary.get("source_exists", False))
+        source_mtime = detection_summary.get("source_mtime")
+        if not source_exists:
+            self._last_remote_preview_source_mtime = None
+            self.preview_image = None
+            self.set_preview_placeholder("Waiting for remote channel detection image...")
+            return
+
+        if self._remote_preview_fetch_in_flight:
+            return
+
+        if source_mtime is not None and source_mtime == self._last_remote_preview_source_mtime and self.preview_image is not None:
+            return
+
+        self._remote_preview_fetch_in_flight = True
+        threading.Thread(
+            target=self._remote_preview_worker,
+            args=(float(source_mtime) if source_mtime is not None else None,),
+            daemon=True,
+        ).start()
+
+    def _remote_preview_worker(self, source_mtime: float | None) -> None:
+        try:
+            image_bytes = self.remote_controller.get_channel_preview_image() if self.remote_controller is not None else None
+            self.ui_queue.put(("remote_preview", image_bytes, source_mtime))
+        except (ControllerConnectionError, ControllerError) as exc:
+            self.ui_queue.put(("remote_preview_error", str(exc)))
+
+    def _apply_remote_preview(self, image_bytes: bytes | None, source_mtime: float | None) -> None:
+        self._remote_preview_fetch_in_flight = False
+        if image_bytes is None:
+            self.preview_image = None
+            self._last_remote_preview_source_mtime = None
+            self.set_preview_placeholder("Remote channel detection image not available yet.")
+            return
+
+        self.load_channel_preview_bytes(image_bytes)
+        self._last_remote_preview_source_mtime = source_mtime
+
+    def _fail_remote_preview(self, message: str) -> None:
+        self._remote_preview_fetch_in_flight = False
+        self.preview_image = None
+        self.set_preview_placeholder(f"Remote preview unavailable:\n{message}")
+
+    def _start_remote_command(
+        self,
+        label: str,
+        status_state: str,
+        message: str,
+        command_callable,
+        *,
+        allow_calibration_bypass: bool = False,
+    ) -> None:
         if not self.is_remote_mode():
             return
         if self.remote_request_in_flight:
@@ -702,6 +822,9 @@ class DrosophilaGUI:
             return
         if not self.remote_connected or self.remote_controller is None:
             messagebox.showwarning("Disconnected", "Connect to the Pi backend before sending commands.")
+            return
+        if self.remote_home_calibration_required and not allow_calibration_bypass:
+            self._schedule_remote_home_prompt()
             return
 
         self.remote_request_in_flight = True
@@ -726,6 +849,9 @@ class DrosophilaGUI:
 
     def _complete_remote_command(self, label: str, response: dict) -> None:
         self.remote_request_in_flight = False
+        if label == "home calibration":
+            self.remote_home_calibration_required = False
+            self.connection_var.set("Connected to Pi backend.")
         message = str(response.get("message", f"Remote {label} request completed."))
         self.log_message(f"Remote {label}: {message}")
         self.set_status("running", message)
@@ -735,6 +861,9 @@ class DrosophilaGUI:
 
     def _fail_remote_command(self, label: str, message: str, payload: dict | None) -> None:
         self.remote_request_in_flight = False
+        if label == "home calibration":
+            self.remote_home_calibration_required = True
+            self.connection_var.set("Connected. Waiting for home calibration approval.")
         self.log_message(f"Remote {label} failed: {message}")
         self.set_status("error", message)
         self._update_control_interactivity()
@@ -744,12 +873,19 @@ class DrosophilaGUI:
     def _update_control_interactivity(self) -> None:
         busy = self.local_task_busy or self.remote_request_in_flight or (self.is_remote_mode() and self.remote_backend_busy)
         entry_state = "disabled" if busy else "normal"
-        controls_enabled = not busy and (not self.is_remote_mode() or self.remote_connected)
+        remote_calibration_locked = self.is_remote_mode() and self.remote_home_calibration_required
+        controls_enabled = not busy and (not self.is_remote_mode() or self.remote_connected) and not remote_calibration_locked
 
         for widget in self.control_widgets:
             if widget in (self.stop_button, self.reset_button):
                 continue
             if getattr(self, "clear_log_button", None) is widget:
+                if remote_calibration_locked:
+                    try:
+                        widget.config(state=tk.DISABLED)
+                    except tk.TclError:
+                        pass
+                    continue
                 try:
                     widget.config(state=tk.NORMAL)
                 except tk.TclError:
@@ -1055,19 +1191,7 @@ class DrosophilaGUI:
         )
         self.state_label.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
-        ttk.Label(status_frame, text="Position:", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky=tk.W, pady=2)
-        self.pos_label = tk.Label(
-            status_frame,
-            textvariable=self.position_var,
-            bg="white",
-            relief="sunken",
-            font=("Arial", 10),
-            padx=5,
-            pady=2,
-        )
-        self.pos_label.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
-
-        ttk.Label(status_frame, text="Message:", font=("Arial", 10, "bold")).grid(row=2, column=0, sticky=tk.W, pady=2)
+        ttk.Label(status_frame, text="Message:", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky=tk.W, pady=2)
         self.message_label = tk.Label(
             status_frame,
             textvariable=self.message_var,
@@ -1079,9 +1203,9 @@ class DrosophilaGUI:
             pady=2,
             anchor="w",
         )
-        self.message_label.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
+        self.message_label.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
-        ttk.Label(status_frame, text="Mode:", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky=tk.W, pady=2)
+        ttk.Label(status_frame, text="Mode:", font=("Arial", 10, "bold")).grid(row=2, column=0, sticky=tk.W, pady=2)
         _, mode_color = self._local_mode_presentation()
         self.mode_label = tk.Label(
             status_frame,
@@ -1093,11 +1217,11 @@ class DrosophilaGUI:
             padx=5,
             pady=2,
         )
-        self.mode_label.grid(row=3, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
+        self.mode_label.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
-        ttk.Label(status_frame, text="Controller:", font=("Arial", 10, "bold")).grid(row=4, column=0, sticky=tk.W, pady=2)
+        ttk.Label(status_frame, text="Controller:", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky=tk.W, pady=2)
         controller_row = ttk.Frame(status_frame)
-        controller_row.grid(row=4, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
+        controller_row.grid(row=3, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
         controller_row.columnconfigure(0, weight=1)
         self.controller_mode_combo = ttk.Combobox(
             controller_row,
@@ -1112,15 +1236,15 @@ class DrosophilaGUI:
         self.reconnect_button = ttk.Button(controller_row, text="Reconnect", command=self.reconnect_remote)
         self.reconnect_button.grid(row=0, column=1, padx=(8, 0))
 
-        ttk.Label(status_frame, text="Remote URL:", font=("Arial", 10, "bold")).grid(row=5, column=0, sticky=tk.W, pady=2)
+        ttk.Label(status_frame, text="Remote URL:", font=("Arial", 10, "bold")).grid(row=4, column=0, sticky=tk.W, pady=2)
         self.remote_url_entry = ttk.Entry(status_frame, textvariable=self.remote_url_var)
-        self.remote_url_entry.grid(row=5, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
+        self.remote_url_entry.grid(row=4, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
-        ttk.Label(status_frame, text="API Key:", font=("Arial", 10, "bold")).grid(row=6, column=0, sticky=tk.W, pady=2)
+        ttk.Label(status_frame, text="API Key:", font=("Arial", 10, "bold")).grid(row=5, column=0, sticky=tk.W, pady=2)
         self.remote_api_key_entry = ttk.Entry(status_frame, textvariable=self.remote_api_key_var, show="*")
-        self.remote_api_key_entry.grid(row=6, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
+        self.remote_api_key_entry.grid(row=5, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
-        ttk.Label(status_frame, text="Connection:", font=("Arial", 10, "bold")).grid(row=7, column=0, sticky=tk.W, pady=2)
+        ttk.Label(status_frame, text="Connection:", font=("Arial", 10, "bold")).grid(row=6, column=0, sticky=tk.W, pady=2)
         self.connection_label = tk.Label(
             status_frame,
             textvariable=self.connection_var,
@@ -1132,23 +1256,9 @@ class DrosophilaGUI:
             pady=2,
             anchor="w",
         )
-        self.connection_label.grid(row=7, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
+        self.connection_label.grid(row=6, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
-        ttk.Label(status_frame, text="Detection:", font=("Arial", 10, "bold")).grid(row=8, column=0, sticky=tk.W, pady=2)
-        self.detection_label = tk.Label(
-            status_frame,
-            textvariable=self.detection_var,
-            bg="#F7F7F7",
-            relief="sunken",
-            font=("Arial", 10),
-            padx=5,
-            pady=2,
-            anchor="w",
-            justify="left",
-        )
-        self.detection_label.grid(row=8, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
-
-        ttk.Label(status_frame, text="Output Dir:", font=("Arial", 10, "bold")).grid(row=9, column=0, sticky=tk.W, pady=2)
+        ttk.Label(status_frame, text="Output Dir:", font=("Arial", 10, "bold")).grid(row=7, column=0, sticky=tk.W, pady=2)
         self.output_dir_label = tk.Label(
             status_frame,
             textvariable=self.output_dir_var,
@@ -1160,7 +1270,7 @@ class DrosophilaGUI:
             anchor="w",
             justify="left",
         )
-        self.output_dir_label.grid(row=9, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
+        self.output_dir_label.grid(row=7, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
     def create_main_content(self, parent):
         content_frame = ttk.Frame(parent)
@@ -1203,15 +1313,38 @@ class DrosophilaGUI:
             self.motion_widgets.append(button)
 
         ttk.Separator(motion_frame, orient="horizontal").grid(row=8, column=0, sticky=(tk.W, tk.E), pady=8)
-        ttk.Label(motion_frame, text="Manual Move (mm):", font=("Arial", 9, "bold")).grid(row=9, column=0, pady=(5, 2), sticky=tk.W)
+        ttk.Label(motion_frame, text="Manual Position (mm):", font=("Arial", 9, "bold")).grid(
+            row=9,
+            column=0,
+            pady=(5, 2),
+            sticky=tk.W,
+        )
         self.manual_move_entry = ttk.Entry(motion_frame, width=12, font=("Arial", 10))
         self.manual_move_entry.grid(row=10, column=0, pady=2, sticky=(tk.W, tk.E))
         self.register_control(self.manual_move_entry)
         self.motion_widgets.append(self.manual_move_entry)
 
-        manual_button = self.make_button(motion_frame, "Move Relative", "#607D8B", self.manual_move)
+        manual_button = self.make_button(motion_frame, "Move Absolute", "#607D8B", self.manual_move)
         manual_button.grid(row=11, column=0, pady=3, sticky=(tk.W, tk.E))
         self.motion_widgets.append(manual_button)
+
+        ttk.Label(motion_frame, text="Current Position:", font=("Arial", 9, "bold")).grid(
+            row=12,
+            column=0,
+            pady=(10, 2),
+            sticky=tk.W,
+        )
+        self.motion_position_label = tk.Label(
+            motion_frame,
+            textvariable=self.position_var,
+            bg="white",
+            relief="sunken",
+            font=("Arial", 10),
+            padx=5,
+            pady=2,
+            anchor="w",
+        )
+        self.motion_position_label.grid(row=13, column=0, sticky=(tk.W, tk.E))
 
     def create_channel_preview(self, parent):
         preview_frame = ttk.LabelFrame(parent, text="Channel Detection Preview", style="Log.TLabelframe", padding="10")
@@ -1521,9 +1654,16 @@ class DrosophilaGUI:
                 elif kind == "clear_stop":
                     self.stop_requested.clear()
                 elif kind == "remote_connection":
-                    self._apply_connection_state(ConnectionState(item[1]), item[2])
+                    connection_state = ConnectionState(item[1])
+                    self._apply_connection_state(connection_state, item[2])
+                    if connection_state in {ConnectionState.CLIENT_CONNECTED, ConnectionState.CLIENT_RECONNECTED}:
+                        self._schedule_remote_home_prompt()
                 elif kind == "remote_status":
                     self._apply_remote_status(item[1])
+                elif kind == "remote_preview":
+                    self._apply_remote_preview(item[1], item[2])
+                elif kind == "remote_preview_error":
+                    self._fail_remote_preview(item[1])
                 elif kind == "remote_command_result":
                     self._complete_remote_command(item[1], item[2])
                 elif kind == "remote_command_error":
@@ -1719,8 +1859,8 @@ class DrosophilaGUI:
         if self.is_remote_mode():
             if not self.remote_connected:
                 self.set_preview_placeholder("Remote mode preview unavailable while disconnected.")
-            else:
-                self.set_preview_placeholder("Remote mode preview not available over API.")
+            elif self.preview_image is None and not self._remote_preview_fetch_in_flight:
+                self.set_preview_placeholder("Waiting for remote channel detection image...")
             self.root.after(1000, self.update_channel_preview)
             return
 
@@ -1767,6 +1907,20 @@ class DrosophilaGUI:
         except Exception:
             self.preview_image = None
             self.set_preview_placeholder(f"Preview unavailable:\n{path.name}")
+
+    def load_channel_preview_bytes(self, image_bytes: bytes):
+        try:
+            from PIL import Image, ImageTk
+
+            image = Image.open(io.BytesIO(image_bytes))
+            image = image.convert("RGB")
+            resample = getattr(Image, "Resampling", Image)
+            image.thumbnail((420, 300), resample.LANCZOS)
+            self.preview_image = ImageTk.PhotoImage(image)
+            self.preview_label.config(image=self.preview_image, text="")
+        except Exception as exc:
+            self.preview_image = None
+            self.set_preview_placeholder(f"Remote preview unavailable:\n{exc}")
 
     def set_preview_placeholder(self, message: str):
         self.preview_label.config(image="", text=message, bg="black", fg="white")
@@ -2017,7 +2171,7 @@ class DrosophilaGUI:
     def manual_move(self):
         assert self.manual_move_entry is not None
         try:
-            distance = float(self.manual_move_entry.get())
+            target_position = float(self.manual_move_entry.get())
         except ValueError:
             messagebox.showerror("Error", "Invalid distance value.")
             self.manual_move_entry.delete(0, tk.END)
@@ -2025,10 +2179,10 @@ class DrosophilaGUI:
 
         if self.is_remote_mode():
             self._start_remote_command(
-                "manual move",
+                "manual absolute move",
                 "moving",
-                f"Sending remote relative move by {distance:.2f} mm.",
-                lambda: self.remote_controller.move_relative(distance),
+                f"Sending remote absolute move to {target_position:.2f} mm.",
+                lambda: self.remote_controller.move_absolute(target_position),
             )
             self.manual_move_entry.delete(0, tk.END)
             return
@@ -2037,9 +2191,14 @@ class DrosophilaGUI:
             return
 
         def task():
-            runtime["motion"].move_relative(distance)
+            runtime["motion"].move_to_absolute(target_position)
 
-        if self.start_task("manual move", "moving", f"Moving relative by {distance:.2f} mm.", task):
+        if self.start_task(
+            "manual absolute move",
+            "moving",
+            f"Moving to {target_position:.2f} mm.",
+            task,
+        ):
             self.manual_move_entry.delete(0, tk.END)
 
     def set_vacuum_from_ui(self, enabled: bool):
