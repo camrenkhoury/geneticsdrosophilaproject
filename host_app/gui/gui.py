@@ -45,7 +45,7 @@ from shared.config.network_config import (
     load_remote_connection_settings,
     save_remote_connection_settings,
 )
-from shared.config.project_paths import CHANNEL_OUTPUT_DIR
+from shared.config.project_paths import CHANNEL_OUTPUT_DIR, FIN6_DIR
 
 
 class TaskCancelled(Exception):
@@ -2203,7 +2203,7 @@ class DrosophilaGUI:
         return CHANNEL_OUTPUT_DIR
 
     def _settings_channel_output_dir(self) -> Path | None:
-        settings_path = self.repo_root / "fin6" / ".fly_tracking_gui_settings.json"
+        settings_path = FIN6_DIR / ".fly_tracking_gui_settings.json"
         if not settings_path.exists():
             return None
 

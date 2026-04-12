@@ -183,14 +183,6 @@ geneticsdrosophilaproject/
 |  |- launch_gui.bat
 |  |- launch_gui.sh
 |  `- launcher/support files
-|- fin6/
-|  |- fly_tracking_gui.py
-|  |- brio_channel_cli.py
-|  |- fly_x_detector.py
-|  |- run_detection_once.py
-|  |- assay_tracking.py
-|  |- camera_sources.py
-|  `- outputs/
 |- host_app/
 |  |- controllers/
 |  `- sync/
@@ -202,6 +194,15 @@ geneticsdrosophilaproject/
 |- shared/
 |  |- config/
 |  `- state/
+|- vision/
+|  `- fin6/
+|     |- fly_tracking_gui.py
+|     |- brio_channel_cli.py
+|     |- fly_x_detector.py
+|     |- run_detection_once.py
+|     |- assay_tracking.py
+|     |- camera_sources.py
+|     `- outputs/
 |- deployment/
 |  `- pi/
 |     `- config/
@@ -292,7 +293,7 @@ Shared project definitions used by both sides.
 - Network config
 - Shared state enums
 
-### **`fin6/`**
+### **`vision/fin6/`**
 
 Computer vision and channel-detection code.
 
@@ -316,9 +317,9 @@ This area handles:
 
 Important generated files include:
 
-- **`fin6/outputs/channel/last_channel_result.json`**
-- **`fin6/outputs/channel/last_channel_annotated.png`**
-- **`fin6/outputs/channel/last_channel_mask.png`**
+- **`vision/fin6/outputs/channel/last_channel_result.json`**
+- **`vision/fin6/outputs/channel/last_channel_annotated.png`**
+- **`vision/fin6/outputs/channel/last_channel_mask.png`**
 
 These are used for:
 
@@ -376,7 +377,7 @@ The dependency list below is based on the project code under:
 - `pi_backend/`
 - `host_app/`
 - `shared/`
-- `fin6/`
+- `vision/fin6/`
 
 It excludes unrelated one-off scripts and notebooks outside the main Drosophila system flow.
 
@@ -407,7 +408,7 @@ It excludes unrelated one-off scripts and notebooks outside the main Drosophila 
 
 ### **Vision / Analysis Utilities**
 
-Used by the `fin6/` tooling and analysis flows:
+Used by the `vision/fin6/` tooling and analysis flows:
 
 - **pandas**
 - **scipy**
@@ -418,7 +419,7 @@ Used by the `fin6/` tooling and analysis flows:
 - The **Pi backend** requires hardware-facing dependencies.
 - The **host remote GUI** should not require Pi GPIO libraries.
 - **Local mode / simulation** uses a broader local dependency stack than pure remote host mode.
-- Some `fin6/` workflows use a wider scientific Python stack than the minimal remote GUI path.
+- Some `vision/fin6/` workflows use a wider scientific Python stack than the minimal remote GUI path.
 
 ## **Safety Notes**
 

@@ -8,11 +8,11 @@ If the operator says "prep this for Pi" or asks for a one-click Pi conversion, u
 
 1. Keep the repo layout the same:
    - `geneticsdrosophilaproject/CodeDirectory`
-   - `geneticsdrosophilaproject/fin6`
+   - `geneticsdrosophilaproject/vision/fin6`
    - `geneticsdrosophilaproject/start_backend.sh`
 
 2. Install the Pi GUI/tracking dependencies:
-   - Run `fin6/install_pi.sh`
+   - Run `vision/fin6/install_pi.sh`
 
 3. Install `gpiozero` on the Pi:
    - `sudo apt install -y python3-gpiozero`
@@ -32,8 +32,8 @@ If the operator says "prep this for Pi" or asks for a one-click Pi conversion, u
 7. Verify the hardware pin mapping matches the real wiring:
    - `CodeDirectory/config.py`
 
-8. Verify the `fin6` camera settings match the actual Pi camera devices:
-   - `fin6/.fly_tracking_gui_settings.json`
+8. Verify the vision camera settings match the actual Pi camera devices:
+   - `vision/fin6/.fly_tracking_gui_settings.json`
    - Especially:
      - `channel_device_var`
      - `assay_camera_backend_var`
@@ -44,7 +44,7 @@ If the operator says "prep this for Pi" or asks for a one-click Pi conversion, u
 
 1. The main GUI channel output path is already Pi-friendly if the repo layout is preserved.
 
-2. `fin6/.fly_tracking_gui_settings.json` is a local runtime settings file when present and is not tracked in git.
+2. `vision/fin6/.fly_tracking_gui_settings.json` is a local runtime settings file when present and is not tracked in git.
 
 3. `CodeDirectory/fly_classifier.py` assumes:
    - model path defaults to the repo-root `best.pt`
@@ -61,13 +61,13 @@ If the operator says "prep this for Pi" or asks for a one-click Pi conversion, u
 
 3. Move to Tube 1 or Channel and confirm the log does not say `Simulated move`.
 
-4. Run the `fin6` GUI and confirm the output folder updates under the Pi path.
+4. Run the vision GUI and confirm the output folder updates under the Pi path.
 
 5. If classification is needed, run one classification and confirm it does not report simulation mode.
 
 ## Current gaps to fix before calling it fully plug-and-play
 
-1. `fin6/install_pi.sh` should also install `python3-gpiozero`.
+1. `vision/fin6/install_pi.sh` should also install `python3-gpiozero`.
 
 2. Backend and GUI config should be copied from the tracked example files into local override files where machine-specific values are needed.
 

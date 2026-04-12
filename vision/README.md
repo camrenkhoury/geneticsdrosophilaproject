@@ -1,11 +1,11 @@
 # Vision Layout
 
-The current vision pipeline still lives in the top-level `fin6/` directory.
+`vision/fin6/` is now the canonical vision pipeline location.
 
-It has not been moved in this pass because:
-- detection/result paths are already runtime-critical
-- preview/status wiring depends on the current layout
-- moving it safely requires a dedicated compatibility migration
+The top-level `fin6/` directory remains in the repo as a compatibility layer for older entrypoints and existing habits.
 
-This `vision/` directory exists to make the future packaging target explicit.
-
+This area now owns:
+- channel detection code
+- assay tracking code
+- camera integration helpers
+- vision-side runtime outputs and local settings
