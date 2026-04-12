@@ -48,9 +48,7 @@ The hardware stack includes:
 
 - **Raspberry Pi 5** or similar Pi-class controller
 - **X-axis gantry**
-- **NEMA stepper motor**
-- **TMC2208 stepper driver**
-- **Vacuum pickup system**
+- **Motor systems:** NEMA stepper motor, TMC2208 stepper driver, and vacuum pickup system
 - **Eccentric vibration motor**
 - **Limit switches** for homing/reference
 - **Top-down camera**
