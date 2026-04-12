@@ -1366,15 +1366,30 @@ class DrosophilaGUI:
         return stage_image
 
     def _display_entry_photo(self):
-        source_image = self._load_entry_fly_source_image()
-        if source_image is None:
-            self.entry_fly_display_image = None
-            self.entry_fly_label.config(image="", text="Fly preview unavailable")
-            return
-
         try:
             from PIL import Image, ImageTk
         except ImportError:
+            image_path = self._resolve_asset_path(
+                "3DDrosophilaFrontView.png",
+                "drosophilafly.png",
+                "drosophila.png",
+                "drosphoila.png",
+            )
+            if image_path is None:
+                self.entry_fly_display_image = None
+                self.entry_fly_label.config(image="", text="Fly preview unavailable")
+                return
+            try:
+                fallback_photo = tk.PhotoImage(file=str(image_path))
+                self.entry_fly_display_image = fallback_photo
+                self.entry_fly_label.config(image=self.entry_fly_display_image, text="", bg="#FFFFFF")
+            except tk.TclError:
+                self.entry_fly_display_image = None
+                self.entry_fly_label.config(image="", text="Fly preview unavailable")
+            return
+
+        source_image = self._load_entry_fly_source_image()
+        if source_image is None:
             self.entry_fly_display_image = None
             self.entry_fly_label.config(image="", text="Fly preview unavailable")
             return
@@ -1873,7 +1888,15 @@ class DrosophilaGUI:
                 self.footer_banner_images.append(banner_photo)
                 banner_label.config(image=banner_photo)
             except Exception:
-                banner_label.config(text="")
+                try:
+                    if banner_path.suffix.lower() == ".png":
+                        banner_photo = tk.PhotoImage(file=str(banner_path))
+                        self.footer_banner_images.append(banner_photo)
+                        banner_label.config(image=banner_photo)
+                    else:
+                        banner_label.config(text="")
+                except tk.TclError:
+                    banner_label.config(text="")
 
     def make_button(self, parent, text: str, color: str, command):
         button = tk.Button(
@@ -2012,12 +2035,23 @@ class DrosophilaGUI:
                 anchor="center",
             )
         except Exception:
-            self.operations_logo_image = None
-            self.operations_logo_label.config(
-                image="",
-                text="Team fly logo unavailable",
-                bg="#F8E8F0",
-            )
+            try:
+                fallback_logo = tk.PhotoImage(file=str(logo_path))
+                self.operations_logo_image = fallback_logo
+                self.operations_logo_label.config(
+                    image=self.operations_logo_image,
+                    text="",
+                    bg="#F8E8F0",
+                    compound="center",
+                    anchor="center",
+                )
+            except tk.TclError:
+                self.operations_logo_image = None
+                self.operations_logo_label.config(
+                    image="",
+                    text="Team fly logo unavailable",
+                    bg="#F8E8F0",
+                )
 
     def register_control(self, widget):
         self.control_widgets.append(widget)
