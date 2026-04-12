@@ -26,6 +26,7 @@ class RemoteController(BaseController):
         self.api_key = api_key
         self.timeout_s = timeout_s
         self.session = session or requests.Session()
+        self._status_etag: str | None = None
 
     def home(self) -> ControllerPayload:
         return self._command_request("POST", "/home")
@@ -51,8 +52,30 @@ class RemoteController(BaseController):
     def run_assay(self) -> ControllerPayload:
         return self._command_request("POST", "/run_assay")
 
-    def get_status(self) -> ControllerPayload:
-        return self._request_json("GET", "/status")
+    def get_status(self) -> ControllerPayload | None:
+        url = f"{self.base_url}/status"
+        headers = {"X-API-Key": self.api_key}
+        if self._status_etag:
+            headers["If-None-Match"] = self._status_etag
+
+        try:
+            response = self.session.request(
+                method="GET",
+                url=url,
+                headers=headers,
+                timeout=self.timeout_s,
+            )
+        except requests.RequestException as exc:
+            raise ControllerConnectionError(f"Failed to reach Pi backend at {self.base_url}: {exc}") from exc
+
+        if response.status_code == 304:
+            return None
+
+        payload = self._decode_json_response(response, "/status")
+        etag = response.headers.get("ETag")
+        if etag:
+            self._status_etag = etag
+        return payload
 
     def get_health(self) -> ControllerPayload:
         return self._request_json("GET", "/health")
@@ -93,19 +116,7 @@ class RemoteController(BaseController):
         except requests.RequestException as exc:
             raise ControllerConnectionError(f"Failed to reach Pi backend at {self.base_url}: {exc}") from exc
 
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise ControllerError(f"Pi backend returned non-JSON response for {path}.") from exc
-
-        if response.status_code == 401:
-            raise ControllerConnectionError(str(payload.get("detail", "Remote authentication failed.")))
-
-        if response.status_code >= 400:
-            detail = payload.get("detail") or payload.get("message") or response.text
-            raise ControllerError(f"Pi backend returned HTTP {response.status_code}: {detail}")
-
-        return payload
+        return self._decode_json_response(response, path)
 
     def _request_bytes(
         self,
@@ -146,3 +157,19 @@ class RemoteController(BaseController):
             raise ControllerError(f"Pi backend returned HTTP {response.status_code}: {detail}")
 
         return response.content
+
+    def _decode_json_response(self, response: requests.Response, path: str) -> ControllerPayload:
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ControllerError(f"Pi backend returned non-JSON response for {path}.") from exc
+
+        if response.status_code == 401:
+            self._status_etag = None
+            raise ControllerConnectionError(str(payload.get("detail", "Remote authentication failed.")))
+
+        if response.status_code >= 400:
+            detail = payload.get("detail") or payload.get("message") or response.text
+            raise ControllerError(f"Pi backend returned HTTP {response.status_code}: {detail}")
+
+        return payload

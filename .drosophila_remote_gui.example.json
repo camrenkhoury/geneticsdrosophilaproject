@@ -1,6 +1,6 @@
 {
   "base_url": "http://127.0.0.1:8000",
   "api_key": "",
-  "poll_interval_s": 1.5,
+  "poll_interval_s": 2.5,
   "request_timeout_s": 5.0
 }

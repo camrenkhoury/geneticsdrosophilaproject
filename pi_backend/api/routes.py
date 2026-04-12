@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import FileResponse, JSONResponse
 
 from pi_backend.api.auth import require_api_key
 from pi_backend.api.models import (
@@ -18,6 +19,10 @@ from pi_backend.api.models import (
 router = APIRouter()
 
 
+def _status_etag(status_revision: int) -> str:
+    return f'W/"status-{status_revision}"'
+
+
 @router.get("/health", response_model=HealthResponse, dependencies=[Depends(require_api_key)])
 def get_health(request: Request) -> HealthResponse:
     context = request.app.state.backend_context
@@ -26,11 +31,19 @@ def get_health(request: Request) -> HealthResponse:
 
 
 @router.get("/status", response_model=StatusResponse, dependencies=[Depends(require_api_key)])
-def get_status(request: Request) -> StatusResponse:
+def get_status(request: Request) -> Response:
     context = request.app.state.backend_context
     context.machine_service.refresh_detection_summary()
     snapshot = context.runtime_state.snapshot()
-    return StatusResponse.from_snapshot(snapshot)
+    etag = _status_etag(snapshot.status_revision)
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "private, no-cache"})
+
+    payload = StatusResponse.from_snapshot(snapshot)
+    return JSONResponse(
+        content=jsonable_encoder(payload),
+        headers={"ETag": etag, "Cache-Control": "private, no-cache"},
+    )
 
 
 @router.get("/artifacts/channel/annotated", dependencies=[Depends(require_api_key)])

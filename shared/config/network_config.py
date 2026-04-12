@@ -12,7 +12,7 @@ from shared.config.project_paths import REMOTE_GUI_SETTINGS_EXAMPLE_PATH, REMOTE
 class RemoteConnectionSettings:
     base_url: str = "http://127.0.0.1:8000"
     api_key: str = ""
-    poll_interval_s: float = 1.5
+    poll_interval_s: float = 2.5
     request_timeout_s: float = 5.0
     config_path: Path | None = None
 
@@ -39,7 +39,7 @@ def load_remote_connection_settings(repo_root: Path) -> RemoteConnectionSettings
 
     base_url = str(payload.get("base_url", "")).strip() or "http://127.0.0.1:8000"
     api_key = str(payload.get("api_key", "")).strip()
-    poll_interval_s = _coerce_positive_float(payload.get("poll_interval_s"), 1.5)
+    poll_interval_s = _coerce_positive_float(payload.get("poll_interval_s"), 2.5)
     request_timeout_s = _coerce_positive_float(payload.get("request_timeout_s"), 5.0)
 
     base_url = os.getenv("DROSOPHILA_REMOTE_URL", base_url).strip() or base_url

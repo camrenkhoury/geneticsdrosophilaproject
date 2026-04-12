@@ -17,7 +17,7 @@ class BackendRuntimeConfig:
     detection_result_path: Path = DETECTION_RESULT_PATH
     channel_output_directory: Path = CHANNEL_OUTPUT_DIR
     annotated_preview_path: Path = CHANNEL_ANNOTATED_IMAGE_PATH
-    recent_log_limit: int = 200
+    recent_log_limit: int = 50
     api_key_header_name: str = "X-API-Key"
     api_key_env_var: str = "DROSOPHILA_API_KEY"
     expected_api_key: str | None = None

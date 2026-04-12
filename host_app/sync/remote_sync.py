@@ -9,6 +9,10 @@ from host_app.sync.connection_state import ConnectionState
 
 
 class RemoteSyncManager:
+    LEGACY_DEFAULT_IDLE_POLL_INTERVAL_S = 1.5
+    DEFAULT_IDLE_POLL_INTERVAL_S = 2.5
+    DEFAULT_ACTIVE_POLL_INTERVAL_S = 0.5
+
     def __init__(
         self,
         controller: RemoteController,
@@ -22,10 +26,13 @@ class RemoteSyncManager:
         self.ui_queue = ui_queue
         base_idle_interval = idle_poll_interval_s if idle_poll_interval_s is not None else poll_interval_s
         if base_idle_interval is None:
-            base_idle_interval = 1.5
+            base_idle_interval = self.DEFAULT_IDLE_POLL_INTERVAL_S
+        elif abs(float(base_idle_interval) - self.LEGACY_DEFAULT_IDLE_POLL_INTERVAL_S) < 1e-9:
+            # Upgrade the historical default to a less aggressive idle poll rate.
+            base_idle_interval = self.DEFAULT_IDLE_POLL_INTERVAL_S
         self.idle_poll_interval_s = max(0.25, float(base_idle_interval))
         if active_poll_interval_s is None:
-            active_poll_interval_s = min(0.4, self.idle_poll_interval_s)
+            active_poll_interval_s = min(self.DEFAULT_ACTIVE_POLL_INTERVAL_S, self.idle_poll_interval_s)
         self.active_poll_interval_s = max(0.25, min(float(active_poll_interval_s), self.idle_poll_interval_s))
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
@@ -35,6 +42,7 @@ class RemoteSyncManager:
         self._has_connected_once = False
         self._reconnect_pending = False
         self._last_status_revision: int | None = None
+        self._last_status_active = False
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -77,6 +85,7 @@ class RemoteSyncManager:
                 if self._has_connected_once:
                     self._reconnect_pending = True
                 self._last_status_revision = None
+                self._last_status_active = False
                 self._emit_connection(ConnectionState.CLIENT_DISCONNECTED, str(exc))
                 if self._wait_for_retry():
                     return
@@ -85,6 +94,7 @@ class RemoteSyncManager:
                 if self._has_connected_once:
                     self._reconnect_pending = True
                 self._last_status_revision = None
+                self._last_status_active = False
                 self._emit_connection(ConnectionState.CLIENT_DISCONNECTED, str(exc))
                 if self._wait_for_retry():
                     return
@@ -95,7 +105,9 @@ class RemoteSyncManager:
                 self._reconnect_pending = False
             self._has_connected_once = True
             self._emit_connection(ConnectionState.CLIENT_CONNECTED, "Connected to Pi backend.")
-            if self._should_publish_status(status_payload):
+            if status_payload is not None:
+                self._last_status_active = self._status_is_active(status_payload)
+            if status_payload is not None and self._should_publish_status(status_payload):
                 self.ui_queue.put(("remote_status", status_payload))
 
             if self._wait_for_next_poll(self._poll_interval_for_status(status_payload)):
@@ -113,8 +125,10 @@ class RemoteSyncManager:
         self._wake_event.wait(interval_s)
         return self._stop_event.is_set()
 
-    def _poll_interval_for_status(self, status_payload: dict) -> float:
-        return self.active_poll_interval_s if self._status_is_active(status_payload) else self.idle_poll_interval_s
+    def _poll_interval_for_status(self, status_payload: dict | None) -> float:
+        if status_payload is not None:
+            return self.active_poll_interval_s if self._status_is_active(status_payload) else self.idle_poll_interval_s
+        return self.active_poll_interval_s if self._last_status_active else self.idle_poll_interval_s
 
     def _status_is_active(self, status_payload: dict) -> bool:
         if status_payload.get("current_task"):
