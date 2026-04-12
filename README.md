@@ -1,4 +1,4 @@
-# <img src=".github/assets/drosophila.png" width="28" style="vertical-align: middle;"/> Automated Drosophila Sorting System
+# Automated Drosophila Sorting System <img src=".github/assets/drosophila.png" width="56" style="vertical-align: middle;"/>
 
 **Automated Drosophila Sorting System** is a mixed hardware, embedded-control, computer-vision, and desktop-software project for detecting, picking, classifying, and sorting **Drosophila melanogaster** with minimal operator intervention.
 
@@ -381,6 +381,18 @@ Code changes should respect the following:
 ## **Physical System Reference**
 
 The images below provide physical context for the hardware and mechanical system represented by the codebase.
+
+### **Wiring Diagram**
+
+<p align="center">
+  <img src=".github/assets/FlySorter_PCBDiagram_final.drawio.png" alt="Fly sorter wiring diagram" width="920">
+</p>
+<p align="center">
+  <em>System wiring diagram showing the Raspberry Pi, PCB implementation, motor driver, vacuum and vibration drivers, cameras, and limit-switch connections.</em>
+</p>
+
+- **Important note:** the limit switches are shown as `GND`, but they are connected to **3V3** because the system uses a **logic-high** limit-switch input.
+- The limit-switch wiring lands on the right-side Phoenix terminal labeled **LimitSwitches**.
 
 ### **Core PCB**
 
