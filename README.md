@@ -399,77 +399,26 @@ Code changes should respect the following:
 
 ## **Project Team**
 
-### **Primary Developer / System Integration**
+**Repository Ownership**
 
-**Camren J. Khoury**
+Primary GitHub Contributor/Owner: Camren J. Khoury
 
-Primary developer of the repository and overall system integration lead, including:
+**Contributions**
 
-- Repository ownership and GitHub management
-- Raspberry Pi ownership and backend integration
-- Networking and automation
-- PCB design
-- Core software integration
-
-### **Technical Contributions**
-
-**Computer Vision Code**
-
-- Avi Patel
-- Dylan Britch
-
-**3D Printing**
-
-- Rivers Henderson
-- Dylan Britch
-- Ainara Garcia
-
-**PCB Design**
-
-- Camren Khoury
-
-**Wiring and Schematics**
-
-- William McGlone
-- Megan McNuer
-- Camren Khoury
-
-**Motor Control**
-
-- Camren Khoury
-- William McGlone
-- Megan McNuer
-- Dylan Britch
-
-**Vacuum Nozzle Development**
-
-- Dylan Britch
-- Rivers Henderson
-- William McGlone
-- Megan McNuer
-- Ainara Garcia
-
-**Database Creation**
-
-- Ainara Garcia
-- Dylan Britch
-- Avi Patel
-
-**Logistics**
-
-- Megan McNuer
-- William McGlone
-
-**Integration**
-
-- Camren Khoury
-- William McGlone
-
-### **Project Leadership**
-
-**Student Project Manager**
-
-- Ainara Garcia
+- 3D Printing: Rivers Henderson, Dylan Britch, Ainara Garcia
+- Computer Vision Code: Avi Patel, Dylan Britch
+- Database Creation: Ainara Garcia, Dylan Britch, Avi Patel
+- GitHub Ownership: Camren J. Khoury
+- Integration: Camren J. Khoury, William McGlone
+- Logistics: Megan McNuer, William McGlone
+- Motor Control: Camren J. Khoury, William McGlone, Megan McNuer, Dylan Britch
+- Networking and Automation: Camren J. Khoury
+- PCB Design: Camren J. Khoury
+- Primary Development: Camren J. Khoury
+- Raspberry Pi Ownership: Camren J. Khoury
+- Student Project Manager: Ainara Garcia
+- Vacuum Nozzle Development: Dylan Britch, Rivers Henderson, William McGlone, Megan McNuer, Ainara Garcia
+- Wiring and Schematics: William McGlone, Megan McNuer, Camren J. Khoury
 
 ### **Academic / Institutional Associations**
 
