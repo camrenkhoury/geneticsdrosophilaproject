@@ -955,12 +955,14 @@ class DrosophilaGUI:
         self.remote_backend_degraded = bool(status.get("backend_boot_degraded", False))
         subsystem_health = status.get("subsystem_health", {}) or {}
         subsystem_errors = status.get("subsystem_errors", {}) or {}
+        vacuum_status = self._remote_subsystem_status(subsystem_health, "vacuum")
+        vibration_status = self._remote_subsystem_status(subsystem_health, "vibration")
 
-        self.remote_motion_available = bool(subsystem_health.get("motion_available", False))
-        self.remote_vacuum_available = bool(subsystem_health.get("vacuum_available", False))
-        self.remote_vibration_available = bool(subsystem_health.get("vibration_available", False))
-        self.remote_classifier_available = bool(subsystem_health.get("classifier_available", False))
-        self.remote_assay_available = bool(subsystem_health.get("assay_available", False))
+        self.remote_motion_available = self._remote_subsystem_is_usable(subsystem_health, "motion")
+        self.remote_vacuum_available = self._remote_subsystem_is_usable(subsystem_health, "vacuum")
+        self.remote_vibration_available = self._remote_subsystem_is_usable(subsystem_health, "vibration")
+        self.remote_classifier_available = self._remote_subsystem_is_usable(subsystem_health, "classifier")
+        self.remote_assay_available = self._remote_subsystem_is_usable(subsystem_health, "assay")
         self.remote_backend_busy = self._backend_busy_from_status(status)
         self.remote_stop_allowed = self.remote_connected and self.remote_backend_busy
 
@@ -979,8 +981,8 @@ class DrosophilaGUI:
 
         self.update_actuator_state("vacuum", bool(status.get("vacuum_on", False)))
         self.update_actuator_state("vibration", bool(status.get("vibration_on", False)))
-        self._update_device_availability("vacuum", self.remote_vacuum_available, subsystem_errors.get("vacuum"))
-        self._update_device_availability("vibration", self.remote_vibration_available, subsystem_errors.get("vibration"))
+        self._update_device_availability("vacuum", vacuum_status, subsystem_errors.get("vacuum"))
+        self._update_device_availability("vibration", vibration_status, subsystem_errors.get("vibration"))
         self._handle_remote_classification_result(status)
 
         recent_logs = status.get("recent_logs", []) or []
@@ -1004,6 +1006,16 @@ class DrosophilaGUI:
         if fly_remaining is None:
             return f"status={status_text} count={count}"
         return f"status={status_text} remaining={bool(fly_remaining)} count={count}"
+
+    @staticmethod
+    def _remote_subsystem_status(subsystem_health: dict, subsystem: str) -> str:
+        return str(subsystem_health.get(f"{subsystem}_status", "unavailable")).strip().lower()
+
+    def _remote_subsystem_is_usable(self, subsystem_health: dict, subsystem: str) -> bool:
+        status = self._remote_subsystem_status(subsystem_health, subsystem)
+        if status == "deferred":
+            return True
+        return bool(subsystem_health.get(f"{subsystem}_available", False))
 
     def _append_remote_logs(self, recent_logs: list[dict]) -> None:
         for entry in recent_logs:
@@ -1220,14 +1232,25 @@ class DrosophilaGUI:
         self.stop_button.config(state=tk.NORMAL if stop_enabled else tk.DISABLED)
         self.reset_button.config(state=tk.DISABLED if busy or (self.is_remote_mode() and not self.remote_connected) else tk.NORMAL)
 
-    def _update_device_availability(self, actuator: str, available: bool, error_detail: str | None) -> None:
-        if available:
+    def _update_device_availability(self, actuator: str, status: str, error_detail: str | None) -> None:
+        if status in {"available", "simulation"}:
             current_on = False
             if actuator == "vacuum":
                 current_on = self.vacuum_switch.value
             elif actuator == "vibration":
                 current_on = self.vibration_switch.value
             self.update_device_card_state(actuator, current_on)
+            return
+
+        if status == "deferred":
+            state_var = self.device_state_text.get(actuator)
+            detail_var = self.device_detail_text.get(actuator)
+            state_label = self.device_state_labels.get(actuator)
+            if state_var is None or detail_var is None or state_label is None:
+                return
+            state_var.set("DEFERRED")
+            detail_var.set("Will initialize on first use")
+            state_label.config(bg="#EEF2F6", fg="#344054")
             return
 
         state_var = self.device_state_text.get(actuator)

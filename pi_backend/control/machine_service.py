@@ -11,6 +11,7 @@ from pi_backend.control.classify_service import ClassifyService
 from pi_backend.core.config_runtime import BackendRuntimeConfig
 from pi_backend.core.logging_bridge import attach_runtime_log_handler
 from pi_backend.core.runtime_state import DetectionSummary, RuntimeStateStore
+from pi_backend.core.subsystem_support import SubsystemUnavailableError
 from shared.state.state_enums import (
     BackendLifecycleState,
     ClientControllerState,
@@ -45,10 +46,7 @@ class MachineService:
             "Initializing Pi machine service.",
         )
         self._initialize_subsystems()
-        if self.motion.available:
-            self.runtime_state.set_current_position_mm(self.motion.get_current_position())
-        else:
-            self.runtime_state.set_current_position_mm(0.0)
+        self.runtime_state.set_current_position_mm(0.0)
         self.runtime_state.set_controller_state(
             ClientControllerState.CLIENT_DISCONNECTED,
             "Waiting for remote client.",
@@ -62,30 +60,11 @@ class MachineService:
         self.logger.info("Machine service initialized.")
 
     def _initialize_subsystems(self) -> None:
-        self.motion.initialize()
-        self.vacuum.initialize()
-        self.vibration.initialize()
+        self._record_component_state("motion", deferred=True)
+        self._record_component_state("vacuum", deferred=True)
+        self._record_component_state("vibration", deferred=True)
         self.classify_service.initialize()
         self.assay_service.initialize()
-
-        self._record_component_state(
-            "motion",
-            available=self.motion.available,
-            simulation_enabled=self.motion.simulation_enabled,
-            last_error=self.motion.last_error,
-        )
-        self._record_component_state(
-            "vacuum",
-            available=self.vacuum.available,
-            simulation_enabled=self.vacuum.simulation_enabled,
-            last_error=self.vacuum.last_error,
-        )
-        self._record_component_state(
-            "vibration",
-            available=self.vibration.available,
-            simulation_enabled=self.vibration.simulation_enabled,
-            last_error=self.vibration.last_error,
-        )
         self._record_component_state(
             "classifier",
             available=self.classify_service.available,
@@ -103,18 +82,29 @@ class MachineService:
         self,
         name: str,
         *,
-        available: bool,
-        simulation_enabled: bool,
-        last_error: str | None,
+        available: bool = False,
+        simulation_enabled: bool = False,
+        last_error: str | None = None,
+        deferred: bool = False,
     ) -> None:
-        status = "unavailable"
-        if available:
-            status = "simulation" if simulation_enabled else "available"
+        if deferred:
+            status = "deferred"
+            available = False
+            simulation_enabled = False
+            last_error = None
+        else:
+            status = "unavailable"
+            if available:
+                status = "simulation" if simulation_enabled else "available"
 
+        self.runtime_state.set_subsystem_health(f"{name}_deferred", deferred)
         self.runtime_state.set_subsystem_health(f"{name}_available", available)
         self.runtime_state.set_subsystem_health(f"{name}_simulation", simulation_enabled)
         self.runtime_state.set_subsystem_health(f"{name}_status", status)
         self.runtime_state.set_subsystem_error(name, last_error)
+
+        if deferred:
+            return
 
         boot_degraded = self.runtime_state.snapshot().backend_boot_degraded
         if simulation_enabled or not available:
@@ -126,6 +116,70 @@ class MachineService:
             return
 
         self.runtime_state.set_backend_boot_degraded(boot_degraded)
+
+    def _subsystem_status(self, subsystem: str) -> str:
+        snapshot = self.runtime_state.snapshot()
+        return str(snapshot.subsystem_health.get(f"{subsystem}_status", "unavailable"))
+
+    def _ensure_motion_ready(self) -> None:
+        if self._subsystem_status("motion") == "deferred":
+            self.motion.initialize()
+            self._record_component_state(
+                "motion",
+                available=self.motion.available,
+                simulation_enabled=self.motion.simulation_enabled,
+                last_error=self.motion.last_error,
+            )
+            if self.motion.available:
+                self.runtime_state.set_current_position_mm(self.motion.get_current_position())
+        error = self._unavailable_message("motion")
+        if error is not None:
+            raise SubsystemUnavailableError("motion", self._unavailable_detail(error, "motion"))
+
+    def _ensure_vacuum_ready(self) -> None:
+        if self._subsystem_status("vacuum") == "deferred":
+            self.vacuum.initialize()
+            self._record_component_state(
+                "vacuum",
+                available=self.vacuum.available,
+                simulation_enabled=self.vacuum.simulation_enabled,
+                last_error=self.vacuum.last_error,
+            )
+        error = self._unavailable_message("vacuum")
+        if error is not None:
+            raise SubsystemUnavailableError("vacuum", self._unavailable_detail(error, "vacuum"))
+
+    def _ensure_vibration_ready(self) -> None:
+        if self._subsystem_status("vibration") == "deferred":
+            self.vibration.initialize()
+            self._record_component_state(
+                "vibration",
+                available=self.vibration.available,
+                simulation_enabled=self.vibration.simulation_enabled,
+                last_error=self.vibration.last_error,
+            )
+        error = self._unavailable_message("vibration")
+        if error is not None:
+            raise SubsystemUnavailableError("vibration", self._unavailable_detail(error, "vibration"))
+
+    def _ensure_assay_ready(self) -> None:
+        self._ensure_vibration_ready()
+        error = self._unavailable_message("assay")
+        if error is not None:
+            raise SubsystemUnavailableError("assay", self._unavailable_detail(error, "assay"))
+
+    def _skip_deferred_safe_off(self, subsystem: str, enabled: bool) -> bool:
+        return not enabled and self._subsystem_status(subsystem) == "deferred"
+
+    @staticmethod
+    def _unavailable_detail(message: str, subsystem: str) -> str:
+        prefix = f"{subsystem} subsystem unavailable: "
+        if message.startswith(prefix):
+            return message[len(prefix) :]
+        fallback = f"{subsystem} subsystem unavailable."
+        if message == fallback:
+            return "no additional detail"
+        return message
 
     def _unavailable_message(self, subsystem: str) -> str | None:
         snapshot = self.runtime_state.snapshot()
@@ -139,24 +193,38 @@ class MachineService:
         return f"{subsystem} subsystem unavailable."
 
     def validate_motion_command(self) -> str | None:
-        return self._unavailable_message("motion")
+        try:
+            self._ensure_motion_ready()
+        except SubsystemUnavailableError as exc:
+            return str(exc)
+        return None
 
     def validate_vacuum_command(self) -> str | None:
-        return self._unavailable_message("vacuum")
+        try:
+            self._ensure_vacuum_ready()
+        except SubsystemUnavailableError as exc:
+            return str(exc)
+        return None
 
     def validate_vibration_command(self) -> str | None:
-        return self._unavailable_message("vibration")
+        try:
+            self._ensure_vibration_ready()
+        except SubsystemUnavailableError as exc:
+            return str(exc)
+        return None
 
     def validate_classifier_command(self) -> str | None:
         return self._unavailable_message("classifier")
 
     def validate_assay_command(self) -> str | None:
-        assay_message = self._unavailable_message("assay")
-        if assay_message is not None:
-            return assay_message
-        return self._unavailable_message("vibration")
+        try:
+            self._ensure_assay_ready()
+        except SubsystemUnavailableError as exc:
+            return str(exc)
+        return None
 
     def home(self) -> float:
+        self._ensure_motion_ready()
         self.runtime_state.begin_task("home", TaskState.HOMING_RUNNING, "Homing gantry.")
         self.runtime_state.set_orchestrator_state(OrchestratorState.TASK_STARTING, "Starting home task.")
         self.logger.info("Home command received.")
@@ -176,6 +244,7 @@ class MachineService:
         return position
 
     def move_absolute(self, target_mm: float, move_time: float | None = None) -> float:
+        self._ensure_motion_ready()
         self.runtime_state.begin_task("move_absolute", TaskState.MOVE_RUNNING, f"Moving to {target_mm:.2f} mm.")
         self.runtime_state.set_orchestrator_state(OrchestratorState.TASK_STARTING, "Starting absolute move.")
         self.logger.info("Absolute move requested to %.2f mm.", target_mm)
@@ -195,6 +264,7 @@ class MachineService:
         return position
 
     def move_relative(self, delta_mm: float, move_time: float | None = None) -> float:
+        self._ensure_motion_ready()
         self.runtime_state.begin_task("move_relative", TaskState.MOVE_RUNNING, f"Moving by {delta_mm:.2f} mm.")
         self.runtime_state.set_orchestrator_state(OrchestratorState.TASK_STARTING, "Starting relative move.")
         self.logger.info("Relative move requested by %.2f mm.", delta_mm)
@@ -214,6 +284,9 @@ class MachineService:
         return position
 
     def set_vacuum(self, enabled: bool) -> bool:
+        if self._skip_deferred_safe_off("vacuum", enabled):
+            return False
+        self._ensure_vacuum_ready()
         request_state = OrchestratorState.VACUUM_ON_REQUESTED if enabled else OrchestratorState.VACUUM_OFF_REQUESTED
         self.runtime_state.set_orchestrator_state(request_state, "Applying vacuum output.")
         self.logger.info("Setting vacuum to %s.", "ON" if enabled else "OFF")
@@ -229,6 +302,9 @@ class MachineService:
         return enabled
 
     def set_vibration(self, enabled: bool) -> bool:
+        if self._skip_deferred_safe_off("vibration", enabled):
+            return False
+        self._ensure_vibration_ready()
         request_state = OrchestratorState.VIBRATION_ON_REQUESTED if enabled else OrchestratorState.VIBRATION_OFF_REQUESTED
         self.runtime_state.set_orchestrator_state(request_state, "Applying vibration output.")
         self.logger.info("Setting vibration to %s.", "ON" if enabled else "OFF")
@@ -244,6 +320,7 @@ class MachineService:
         return enabled
 
     def run_assay(self) -> None:
+        self._ensure_assay_ready()
         self.assay_service.run()
 
     def classify_fly(self) -> dict[str, object]:

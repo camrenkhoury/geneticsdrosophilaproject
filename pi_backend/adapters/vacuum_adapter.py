@@ -37,22 +37,29 @@ class VacuumAdapter:
         self._last_error = None
 
     @property
+    def initialized(self) -> bool:
+        return self._initialized
+
+    @property
+    def deferred(self) -> bool:
+        return not self._initialized
+
+    @property
     def available(self) -> bool:
-        self.initialize()
         return self._available
 
     @property
     def simulation_enabled(self) -> bool:
-        self.initialize()
         return self._simulation_enabled
 
     @property
     def last_error(self) -> str | None:
-        self.initialize()
         return self._last_error
 
     @property
     def status(self) -> str:
+        if self.deferred:
+            return "deferred"
         if not self.available:
             return "unavailable"
         if self.simulation_enabled:

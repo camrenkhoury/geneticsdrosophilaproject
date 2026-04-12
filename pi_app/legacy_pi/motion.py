@@ -39,39 +39,63 @@ except ImportError:
 
 import config
 
-
-STEP = OutputDevice(config.STEP_PIN)
-DIR = OutputDevice(config.DIR_PIN)
-EN = OutputDevice(config.EN_PIN)
-
-Limit_Min = DigitalInputDevice(config.LIMIT_MIN_PIN)
-Limit_Max = DigitalInputDevice(config.LIMIT_MAX_PIN)
+STEP = None
+DIR = None
+EN = None
+Limit_Min = None
+Limit_Max = None
 
 current_position_mm = 0.0
 
 
+def _ensure_devices():
+    global STEP, DIR, EN, Limit_Min, Limit_Max
+    if STEP is not None and DIR is not None and EN is not None and Limit_Min is not None and Limit_Max is not None:
+        return STEP, DIR, EN, Limit_Min, Limit_Max
+
+    STEP = OutputDevice(config.STEP_PIN)
+    DIR = OutputDevice(config.DIR_PIN)
+    EN = OutputDevice(config.EN_PIN)
+    Limit_Min = DigitalInputDevice(config.LIMIT_MIN_PIN)
+    Limit_Max = DigitalInputDevice(config.LIMIT_MAX_PIN)
+    return STEP, DIR, EN, Limit_Min, Limit_Max
+
+
 def enable_motor():
-    EN.off()
+    if not GPIO_AVAILABLE:
+        return
+    _, _, enable_device, _, _ = _ensure_devices()
+    enable_device.off()
     sleep(0.01)
 
 
 def disable_motor():
-    EN.on()
+    if not GPIO_AVAILABLE:
+        return
+    _, _, enable_device, _, _ = _ensure_devices()
+    enable_device.on()
     sleep(0.01)
 
 
 def set_direction(forward: bool):
+    if not GPIO_AVAILABLE:
+        return
+    _, direction_device, _, _, _ = _ensure_devices()
     if forward:
-        DIR.on()
+        direction_device.on()
     else:
-        DIR.off()
+        direction_device.off()
     sleep(0.005)
 
 
 def step_once(step_delay):
-    STEP.on()
+    if not GPIO_AVAILABLE:
+        sleep(step_delay * 2)
+        return
+    step_device, _, _, _, _ = _ensure_devices()
+    step_device.on()
     sleep(step_delay)
-    STEP.off()
+    step_device.off()
     sleep(step_delay)
 
 
@@ -103,6 +127,8 @@ def move_relative(distance_mm, move_time=None):
         print(f"Simulated move to {current_position_mm:.2f} mm")
         return
 
+    _, _, _, limit_min_device, limit_max_device = _ensure_devices()
+
     forward = actual_distance > 0
     total_steps = int(abs(actual_distance) / config.MM_PER_STEP)
 
@@ -123,12 +149,12 @@ def move_relative(distance_mm, move_time=None):
 
     try:
         for _ in range(total_steps):
-            if not forward and Limit_Min.value:
+            if not forward and limit_min_device.value:
                 print("Minimum physical limit reached.")
                 final_position = 0.0
                 break
 
-            if forward and Limit_Max.value:
+            if forward and limit_max_device.value:
                 print("Maximum physical limit reached.")
                 final_position = get_operational_max_mm()
                 break
@@ -166,9 +192,10 @@ def home_to_zero(max_steps=50000):
     set_direction(False)
 
     steps_taken = 0
+    _, _, _, limit_min_device, _ = _ensure_devices()
 
     try:
-        while not Limit_Min.value:
+        while not limit_min_device.value:
             step_once(config.HOME_STEP_DELAY)
             steps_taken += 1
 
@@ -176,7 +203,7 @@ def home_to_zero(max_steps=50000):
                 print("Homing aborted: max steps reached.")
                 break
 
-        if Limit_Min.value:
+        if limit_min_device.value:
             current_position_mm = 0.0
             print("Homed. Usable position set to 0.0 mm.")
         else:
@@ -191,4 +218,3 @@ def get_current_position():
 
 def print_position():
     print(f"Current usable vacuum position: {current_position_mm:.2f} mm")
-

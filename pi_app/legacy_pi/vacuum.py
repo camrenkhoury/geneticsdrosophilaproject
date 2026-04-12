@@ -30,21 +30,32 @@ except ImportError:
 PWM_PIN = 13
 DIR_PIN = 25
 
-motor_pwm = PWMOutputDevice(PWM_PIN, frequency=1000)
-motor_dir = OutputDevice(DIR_PIN)
+motor_pwm = None
+motor_dir = None
 
-motor_dir.on()
+
+def _ensure_devices():
+    global motor_pwm, motor_dir
+    if motor_pwm is not None and motor_dir is not None:
+        return motor_pwm, motor_dir
+
+    motor_pwm = PWMOutputDevice(PWM_PIN, frequency=1000)
+    motor_dir = OutputDevice(DIR_PIN)
+    motor_dir.on()
+    return motor_pwm, motor_dir
 
 
 def vacuum_on():
     if GPIO_AVAILABLE:
-        motor_pwm.value = 1.0
+        pwm_device, _ = _ensure_devices()
+        pwm_device.value = 1.0
     print("Vacuum ON")
 
 
 def vacuum_off():
     if GPIO_AVAILABLE:
-        motor_pwm.value = 0.0
+        pwm_device, _ = _ensure_devices()
+        pwm_device.value = 0.0
     print("Vacuum OFF")
 
 
@@ -61,4 +72,3 @@ if __name__ == "__main__":
                 break
     finally:
         vacuum_off()
-
