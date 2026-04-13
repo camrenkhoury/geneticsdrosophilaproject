@@ -1896,7 +1896,7 @@ class DrosophilaGUI:
         content_frame = ttk.Frame(parent)
         content_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.N, tk.S, tk.W, tk.E), pady=(0, 10))
         content_frame.columnconfigure(0, weight=0)
-        content_frame.columnconfigure(1, weight=1)
+        content_frame.columnconfigure(1, weight=1, minsize=520 if self.gui_profile.is_macos else 0)
         content_frame.columnconfigure(2, weight=0)
         content_frame.rowconfigure(0, weight=1)
 
@@ -2020,10 +2020,11 @@ class DrosophilaGUI:
 
         operations_content = tk.Frame(ops_frame, bg="#F8E8F0")
         operations_content.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E))
-        operations_content.columnconfigure(0, minsize=126)
         if self.gui_profile.operations_layout == "stacked":
-            operations_content.columnconfigure(1, weight=0, minsize=self.gui_profile.operations_logo_column_min)
+            operations_content.columnconfigure(0, weight=1, minsize=126)
+            operations_content.columnconfigure(1, weight=0, minsize=0)
         else:
+            operations_content.columnconfigure(0, weight=0, minsize=126)
             operations_content.columnconfigure(1, weight=0, minsize=self.gui_profile.operations_logo_column_min)
         operations_content.rowconfigure(0, weight=0)
         operations_content.rowconfigure(1, weight=0)
@@ -2031,11 +2032,11 @@ class DrosophilaGUI:
         button_gap = self.gui_profile.operations_button_gap
         button_margin = self.gui_profile.operations_button_margin
 
-        action_frame = tk.Frame(operations_content, bg="#F8E8F0", width=126)
+        action_frame = tk.Frame(operations_content, bg="#F8E8F0", width=138 if self.gui_profile.operations_layout == "stacked" else 126)
         action_frame.grid(
             row=0,
             column=0,
-            sticky=(tk.N, tk.W),
+            sticky=(tk.N, tk.W, tk.E),
             padx=(0, 12 if self.gui_profile.operations_layout == "side_by_side" else 0),
             pady=(0, 8 if self.gui_profile.operations_layout == "stacked" else 0),
         )
@@ -2260,7 +2261,11 @@ class DrosophilaGUI:
             sticky=(tk.N, tk.W, tk.E),
             padx=(12, 0) if self.gui_profile.operations_layout == "side_by_side" else (0, 0),
         )
-        logo_area.columnconfigure(0, weight=1, minsize=self.gui_profile.operations_logo_column_min)
+        logo_area.columnconfigure(
+            0,
+            weight=1,
+            minsize=self.gui_profile.operations_logo_column_min if self.gui_profile.operations_layout == "side_by_side" else 0,
+        )
         logo_area.rowconfigure(1, weight=1)
         logo_margin = 6 if self.gui_profile.is_macos else 10
         tk.Frame(logo_area, bg="#F8E8F0", height=logo_margin).grid(row=0, column=0, sticky=(tk.W, tk.E))
@@ -2314,6 +2319,10 @@ class DrosophilaGUI:
         except Exception:
             try:
                 fallback_logo = tk.PhotoImage(file=str(logo_path))
+                max_logo_size = self.gui_profile.operations_logo_size
+                scale = max(1, int(max(fallback_logo.width(), fallback_logo.height()) / max_logo_size))
+                if scale > 1:
+                    fallback_logo = fallback_logo.subsample(scale, scale)
                 self.operations_logo_image = fallback_logo
                 self.operations_logo_label.config(
                     image=self.operations_logo_image,
