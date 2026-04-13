@@ -65,12 +65,15 @@ class GUIPlatformProfile:
     entry_page_scale: float
     entry_fly_column_min: int
     entry_fly_column_pad: int
+    entry_fly_max: int
     operations_layout: str
     operations_logo_column_min: int
     operations_logo_size: int
     operations_button_gap: int
     operations_button_margin: int
     standard_button_pady: int
+    footer_banner_width: int
+    footer_banner_height: int
 
 
 def build_gui_platform_profile() -> GUIPlatformProfile:
@@ -86,12 +89,15 @@ def build_gui_platform_profile() -> GUIPlatformProfile:
             entry_page_scale=1.48,
             entry_fly_column_min=308,
             entry_fly_column_pad=4,
+            entry_fly_max=300,
             operations_layout="stacked",
             operations_logo_column_min=142,
             operations_logo_size=112,
             operations_button_gap=8,
             operations_button_margin=8,
             standard_button_pady=5,
+            footer_banner_width=260,
+            footer_banner_height=74,
         )
     return GUIPlatformProfile(
         is_macos=False,
@@ -103,12 +109,15 @@ def build_gui_platform_profile() -> GUIPlatformProfile:
         entry_page_scale=1.54,
         entry_fly_column_min=300,
         entry_fly_column_pad=8,
+        entry_fly_max=372,
         operations_layout="side_by_side",
         operations_logo_column_min=160,
         operations_logo_size=152,
         operations_button_gap=12,
         operations_button_margin=20,
         standard_button_pady=7,
+        footer_banner_width=312,
+        footer_banner_height=88,
     )
 
 
@@ -666,6 +675,18 @@ class DrosophilaGUI:
             for channel in range(3)
         )
         return f"#{blended[0]:02X}{blended[1]:02X}{blended[2]:02X}"
+
+    def _fit_photoimage(self, photo: tk.PhotoImage, max_size: int) -> tk.PhotoImage:
+        if max_size <= 0:
+            return photo
+        width = photo.width()
+        height = photo.height()
+        if width <= max_size and height <= max_size:
+            return photo
+        scale = max(1, int(max(width, height) / max_size))
+        if scale <= 1:
+            return photo
+        return photo.subsample(scale, scale)
 
     def create_widgets(self):
         style = ttk.Style()
@@ -1639,6 +1660,7 @@ class DrosophilaGUI:
                 return
             try:
                 fallback_photo = tk.PhotoImage(file=str(image_path))
+                fallback_photo = self._fit_photoimage(fallback_photo, self.gui_profile.entry_fly_max)
                 self.entry_fly_display_image = fallback_photo
                 self.entry_fly_label.config(image=self.entry_fly_display_image, text="", bg="#FFFFFF")
             except tk.TclError:
@@ -1653,7 +1675,7 @@ class DrosophilaGUI:
             return
 
         image = self._build_entry_photo_stage(source_image)
-        max_bound = self._entry_scale(372)
+        max_bound = self._entry_scale(self.gui_profile.entry_fly_max)
         max_bounds = (max_bound, max_bound)
         resample = getattr(Image, "Resampling", Image)
         image.thumbnail(max_bounds, resample.LANCZOS)
@@ -2106,8 +2128,8 @@ class DrosophilaGUI:
         footer_frame = tk.Frame(parent, bg=background)
         footer_frame.grid(row=row, column=column, columnspan=3, sticky=(tk.W, tk.E), pady=pady)
 
-        banner_box_width = 312
-        banner_box_height = 88
+        banner_box_width = self.gui_profile.footer_banner_width
+        banner_box_height = self.gui_profile.footer_banner_height
         for gap_column in (0, 2, 4, 6):
             footer_frame.columnconfigure(gap_column, weight=1)
         for banner_column in (1, 3, 5):
@@ -2162,6 +2184,7 @@ class DrosophilaGUI:
                 try:
                     if banner_path.suffix.lower() == ".png":
                         banner_photo = tk.PhotoImage(file=str(banner_path))
+                        banner_photo = self._fit_photoimage(banner_photo, banner_box_width)
                         self.footer_banner_images.append(banner_photo)
                         banner_label.config(image=banner_photo)
                     else:
@@ -2319,10 +2342,7 @@ class DrosophilaGUI:
         except Exception:
             try:
                 fallback_logo = tk.PhotoImage(file=str(logo_path))
-                max_logo_size = self.gui_profile.operations_logo_size
-                scale = max(1, int(max(fallback_logo.width(), fallback_logo.height()) / max_logo_size))
-                if scale > 1:
-                    fallback_logo = fallback_logo.subsample(scale, scale)
+                fallback_logo = self._fit_photoimage(fallback_logo, self.gui_profile.operations_logo_size)
                 self.operations_logo_image = fallback_logo
                 self.operations_logo_label.config(
                     image=self.operations_logo_image,
