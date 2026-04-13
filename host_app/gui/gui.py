@@ -740,7 +740,9 @@ class DrosophilaGUI:
     def _apply_screen_constraints(self) -> None:
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        self.ui_scale = min(1.0, screen_width / 1366.0, screen_height / 768.0)
+        aspect_ratio = screen_width / max(1.0, float(screen_height))
+        aspect_scale = min(1.0, max(0.75, aspect_ratio / 1.6))
+        self.ui_scale = min(1.0, screen_width / 1366.0, screen_height / 768.0, aspect_scale)
         if self.ui_scale > 0.98:
             self.ui_scale = 1.0
         is_tiny = (
@@ -751,8 +753,7 @@ class DrosophilaGUI:
             screen_width <= self.gui_profile.small_screen_threshold_w
             or screen_height <= self.gui_profile.small_screen_threshold_h
         )
-        if not (is_small or is_tiny):
-            return
+        is_squareish = aspect_ratio < 1.35
 
         if is_tiny:
             self.gui_profile = replace(
@@ -785,6 +786,13 @@ class DrosophilaGUI:
                 operations_button_gap=self.gui_profile.small_operations_button_gap,
                 operations_button_margin=self.gui_profile.small_operations_button_margin,
                 standard_button_pady=self.gui_profile.small_standard_button_pady,
+            )
+
+        if is_squareish:
+            self.gui_profile = replace(
+                self.gui_profile,
+                use_zoomed_window=False,
+                operations_layout="stacked",
             )
 
         if self.ui_scale < 1.0:
