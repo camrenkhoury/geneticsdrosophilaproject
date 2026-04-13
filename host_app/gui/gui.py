@@ -755,6 +755,8 @@ class DrosophilaGUI:
             "footer_w": scaled(self.gui_profile.footer_banner_width, 180),
             "footer_h": scaled(self.gui_profile.footer_banner_height, 50),
         }
+        if self.screen_aspect < 1.35 or self.screen_height <= 800:
+            self.entry_profile["fly_max"] = max(160, int(self.entry_profile["fly_max"] * 0.9))
 
     def _fit_window_to_screen(self) -> None:
         screen_width = self.root.winfo_screenwidth()
