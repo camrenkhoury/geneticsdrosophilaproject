@@ -227,7 +227,16 @@ The desktop GUI currently includes a dedicated loading / landing page that serve
   <em>Loading / landing page of the desktop GUI.</em>
 </p>
 
-Additional GUI surfaces, including the control panel and assay-specific views, are part of the overall application and can be documented alongside this section as those screens are finalized.
+The current application also includes the primary operator control panel used for status monitoring, manual gantry movement, device toggling, preview inspection, and direct operation access.
+
+<p align="center">
+  <img src=".github/assets/GUI-Control-Panel-V1.png" alt="GUI control panel v1" width="900">
+</p>
+<p align="center">
+  <em>Control Panel V1 model of the desktop GUI.</em>
+</p>
+
+Additional GUI surfaces, including assay-specific views, are part of the overall application and can be documented alongside this section as those screens are finalized.
 
 **Important files:**
 
