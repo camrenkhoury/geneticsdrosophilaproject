@@ -504,6 +504,7 @@ class DrosophilaGUI:
         self.gui_profile = build_gui_platform_profile()
         self.is_macos = self.gui_profile.is_macos
         self._capture_screen_metrics()
+        self._configure_entry_profile()
         if self.gui_profile.use_zoomed_window:
             try:
                 self.root.state("zoomed")
@@ -572,7 +573,7 @@ class DrosophilaGUI:
         self.remote_sync: RemoteSyncManager | None = None
         self._local_runtime_cache: dict[str, object] | None = None
         self._local_runtime_error: str | None = None
-        self.entry_page_scale = self.gui_profile.entry_page_scale
+        self.entry_page_scale = self.entry_profile["scale"]
 
         self.state_var = tk.StringVar(value="IDLE")
         self.position_var = tk.StringVar(value="0.00 mm")
@@ -735,6 +736,26 @@ class DrosophilaGUI:
         self.screen_height = self.root.winfo_screenheight()
         self.screen_aspect = self.screen_width / max(1.0, float(self.screen_height))
 
+    def _configure_entry_profile(self) -> None:
+        scale = min(1.0, self.screen_width / 1366.0, self.screen_height / 768.0)
+        if self.screen_aspect < 1.35:
+            scale *= max(0.75, self.screen_aspect / 1.35)
+        if scale > 0.98:
+            scale = 1.0
+        scale = max(0.7, scale)
+
+        def scaled(value: int, minimum: int) -> int:
+            return max(minimum, int(round(value * scale)))
+
+        self.entry_profile = {
+            "scale": round(self.gui_profile.entry_page_scale * scale, 3),
+            "fly_max": scaled(self.gui_profile.entry_fly_max, 180),
+            "fly_column_min": scaled(self.gui_profile.entry_fly_column_min, 200),
+            "fly_column_pad": scaled(self.gui_profile.entry_fly_column_pad, 2),
+            "footer_w": scaled(self.gui_profile.footer_banner_width, 180),
+            "footer_h": scaled(self.gui_profile.footer_banner_height, 50),
+        }
+
     def _fit_window_to_screen(self) -> None:
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
@@ -862,7 +883,7 @@ class DrosophilaGUI:
         )
         entry_card.grid(row=0, column=0)
         entry_card.columnconfigure(0, weight=1)
-        entry_card.columnconfigure(1, weight=0, minsize=self._entry_scale(self.gui_profile.entry_fly_column_min))
+        entry_card.columnconfigure(1, weight=0, minsize=self._entry_scale(self.entry_profile["fly_column_min"]))
 
         left_panel = tk.Frame(entry_card, bg="#686766")
         left_panel.grid(row=0, column=0, sticky=(tk.N, tk.W), padx=(0, self._entry_scale(47)))
@@ -923,7 +944,7 @@ class DrosophilaGUI:
             row=0,
             column=1,
             sticky=(tk.N, tk.W),
-            padx=(self._entry_scale(self.gui_profile.entry_fly_column_pad), 0),
+            padx=(self._entry_scale(self.entry_profile["fly_column_pad"]), 0),
         )
         fly_panel.columnconfigure(0, weight=1)
         fly_panel.rowconfigure(0, weight=1)
@@ -1756,7 +1777,7 @@ class DrosophilaGUI:
                 return
             try:
                 fallback_photo = tk.PhotoImage(file=str(image_path))
-                fallback_photo = self._fit_photoimage(fallback_photo, self.gui_profile.entry_fly_max)
+                fallback_photo = self._fit_photoimage(fallback_photo, self.entry_profile["fly_max"])
                 self.entry_fly_display_image = fallback_photo
                 self.entry_fly_label.config(image=self.entry_fly_display_image, text="", bg="#FFFFFF")
             except tk.TclError:
@@ -1771,7 +1792,7 @@ class DrosophilaGUI:
             return
 
         image = self._build_entry_photo_stage(source_image)
-        max_bound = self._entry_scale(self.gui_profile.entry_fly_max)
+        max_bound = self._entry_scale(self.entry_profile["fly_max"])
         max_bounds = (max_bound, max_bound)
         resample = getattr(Image, "Resampling", Image)
         image.thumbnail(max_bounds, resample.LANCZOS)
@@ -2229,8 +2250,8 @@ class DrosophilaGUI:
         footer_frame = tk.Frame(parent, bg=background)
         footer_frame.grid(row=row, column=column, columnspan=3, sticky=(tk.W, tk.E), pady=pady)
 
-        banner_box_width = self.gui_profile.footer_banner_width
-        banner_box_height = self.gui_profile.footer_banner_height
+        banner_box_width = self.entry_profile["footer_w"]
+        banner_box_height = self.entry_profile["footer_h"]
         for gap_column in (0, 2, 4, 6):
             footer_frame.columnconfigure(gap_column, weight=1)
         for banner_column in (1, 3, 5):
