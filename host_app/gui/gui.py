@@ -2225,14 +2225,15 @@ class DrosophilaGUI:
         top_button_spacer.grid(row=0, column=0, sticky=(tk.W, tk.E))
 
         self.run_button = self.make_button(action_frame, "Run Automated", "#9C27B0", self.run_automated)
-        self.run_button.grid(row=1, column=0, sticky=(tk.W, tk.E))
+        op_button_pady = 2 if self.gui_profile.operations_layout == "stacked" else 0
+        self.run_button.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, op_button_pady))
         self.remote_unsupported_widgets.append(self.run_button)
 
         self.assay_button = self.make_button(action_frame, "Run Assay", "#9C27B0", self.run_assay)
-        self.assay_button.grid(row=3, column=0, sticky=(tk.W, tk.E))
+        self.assay_button.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, op_button_pady))
 
         self.classify_button = self.make_button(action_frame, "Classify Fly", "#9C27B0", self.classify_fly_gui)
-        self.classify_button.grid(row=5, column=0, sticky=(tk.W, tk.E))
+        self.classify_button.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=(0, op_button_pady))
 
         tk.Frame(action_frame, bg="#F8E8F0", height=button_gap).grid(row=2, column=0, sticky=(tk.W, tk.E))
         tk.Frame(action_frame, bg="#F8E8F0", height=button_gap).grid(row=4, column=0, sticky=(tk.W, tk.E))
@@ -2242,6 +2243,7 @@ class DrosophilaGUI:
             operations_content,
             row=1 if self.gui_profile.operations_layout == "stacked" else 0,
             column=0 if self.gui_profile.operations_layout == "stacked" else 1,
+            shift_up=self.gui_profile.operations_layout == "stacked",
         )
 
     def create_system_controls(self, parent):
@@ -2434,7 +2436,7 @@ class DrosophilaGUI:
         self.update_device_card_state(actuator, False)
         return switch
 
-    def create_operations_logo(self, parent, row: int, column: int):
+    def create_operations_logo(self, parent, row: int, column: int, shift_up: bool = False):
         logo_area = tk.Frame(parent, bg="#F8E8F0")
         logo_area.grid(
             row=row,
@@ -2447,8 +2449,8 @@ class DrosophilaGUI:
             weight=1,
             minsize=self.gui_profile.operations_logo_column_min if self.gui_profile.operations_layout == "side_by_side" else 0,
         )
-        logo_area.rowconfigure(1, weight=1)
-        logo_margin = 6 if self.gui_profile.is_macos else 10
+        logo_area.rowconfigure(1, weight=0)
+        logo_margin = 2 if shift_up else (6 if self.gui_profile.is_macos else 10)
         tk.Frame(logo_area, bg="#F8E8F0", height=logo_margin).grid(row=0, column=0, sticky=(tk.W, tk.E))
 
         self.operations_logo_label = tk.Label(
@@ -2463,7 +2465,7 @@ class DrosophilaGUI:
             bd=0,
             highlightthickness=0,
         )
-        self.operations_logo_label.grid(row=1, column=0, sticky="")
+        self.operations_logo_label.grid(row=1, column=0, sticky=tk.N)
         tk.Frame(logo_area, bg="#F8E8F0", height=logo_margin).grid(row=2, column=0, sticky=(tk.W, tk.E))
         self.load_operations_logo()
 
