@@ -515,7 +515,8 @@ Primary GitHub Contributor/Owner: Camren J. Khoury
 - Raspberry Pi and GPIO Control: **Camren J. Khoury**
 
 **Software & Computational Systems**
-- Computer Vision Code: **Avi Patel**, Dylan Britch
+- Computer Vision Implementation (Channel + Assay): **Avi Patel**, Dylan Britch
+- Machine Learning (Classification) Model Development + Deployment: **Avi Patel**, Dylan Britch, Ainara Garcia
 - Database Creation: **Ainara Garcia**, Dylan Britch, Avi Patel
 - Networking and Automation: **Camren J. Khoury**
 
