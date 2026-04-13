@@ -503,8 +503,7 @@ class DrosophilaGUI:
         self.root.minsize(960, 680)
         self.gui_profile = build_gui_platform_profile()
         self.is_macos = self.gui_profile.is_macos
-        self.ui_scale = 1.0
-        self._apply_screen_constraints()
+        self._capture_screen_metrics()
         if self.gui_profile.use_zoomed_window:
             try:
                 self.root.state("zoomed")
@@ -555,6 +554,15 @@ class DrosophilaGUI:
         self.entry_fly_job: str | None = None
         self.entry_fly_frame_index = 0
         self.entry_fly_source_image = None
+        self.operations_logo_source = None
+        self.operations_logo_photo_base = None
+        self.operations_logo_hidden = False
+        self._ops_resize_job: str | None = None
+        self._ops_layout_mode: str | None = None
+        self._ops_top_spacer = None
+        self._ops_gap1 = None
+        self._ops_gap2 = None
+        self._ops_bottom_spacer = None
         self.last_preview_mtime: float | None = None
         self.last_result_mtime: float | None = None
         self.last_used_detection_mtime: float | None = None
@@ -722,6 +730,11 @@ class DrosophilaGUI:
         except Exception:
             pass
 
+    def _capture_screen_metrics(self) -> None:
+        self.screen_width = self.root.winfo_screenwidth()
+        self.screen_height = self.root.winfo_screenheight()
+        self.screen_aspect = self.screen_width / max(1.0, float(self.screen_height))
+
     def _fit_window_to_screen(self) -> None:
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
@@ -737,82 +750,6 @@ class DrosophilaGUI:
         y_offset = max(14, (screen_height - target_height) // 4)
         self.root.geometry(f"{target_width}x{target_height}+{x_offset}+{y_offset}")
 
-    def _apply_screen_constraints(self) -> None:
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        aspect_ratio = screen_width / max(1.0, float(screen_height))
-        aspect_scale = min(1.0, max(0.75, aspect_ratio / 1.6))
-        self.ui_scale = min(1.0, screen_width / 1366.0, screen_height / 768.0, aspect_scale)
-        if self.ui_scale > 0.98:
-            self.ui_scale = 1.0
-        is_tiny = (
-            screen_width <= self.gui_profile.tiny_screen_threshold_w
-            or screen_height <= self.gui_profile.tiny_screen_threshold_h
-        )
-        is_small = (
-            screen_width <= self.gui_profile.small_screen_threshold_w
-            or screen_height <= self.gui_profile.small_screen_threshold_h
-        )
-        is_squareish = aspect_ratio < 1.35
-
-        if is_tiny:
-            self.gui_profile = replace(
-                self.gui_profile,
-                use_zoomed_window=False,
-                entry_page_scale=self.gui_profile.tiny_entry_scale,
-                entry_fly_max=self.gui_profile.tiny_entry_fly_max,
-                entry_fly_column_min=self.gui_profile.tiny_entry_fly_column_min,
-                footer_banner_width=self.gui_profile.tiny_footer_banner_width,
-                footer_banner_height=self.gui_profile.tiny_footer_banner_height,
-                operations_layout="stacked",
-                operations_logo_size=self.gui_profile.tiny_operations_logo_size,
-                operations_logo_column_min=self.gui_profile.tiny_operations_logo_column_min,
-                operations_button_gap=self.gui_profile.tiny_operations_button_gap,
-                operations_button_margin=self.gui_profile.tiny_operations_button_margin,
-                standard_button_pady=self.gui_profile.tiny_standard_button_pady,
-            )
-        else:
-            self.gui_profile = replace(
-                self.gui_profile,
-                use_zoomed_window=False,
-                entry_page_scale=self.gui_profile.small_entry_scale,
-                entry_fly_max=self.gui_profile.small_entry_fly_max,
-                entry_fly_column_min=self.gui_profile.small_entry_fly_column_min,
-                footer_banner_width=self.gui_profile.small_footer_banner_width,
-                footer_banner_height=self.gui_profile.small_footer_banner_height,
-                operations_layout="stacked",
-                operations_logo_size=self.gui_profile.small_operations_logo_size,
-                operations_logo_column_min=self.gui_profile.small_operations_logo_column_min,
-                operations_button_gap=self.gui_profile.small_operations_button_gap,
-                operations_button_margin=self.gui_profile.small_operations_button_margin,
-                standard_button_pady=self.gui_profile.small_standard_button_pady,
-            )
-
-        if is_squareish:
-            self.gui_profile = replace(
-                self.gui_profile,
-                use_zoomed_window=False,
-                operations_layout="stacked",
-            )
-
-        if self.ui_scale < 1.0:
-            def scale_int(value: int) -> int:
-                return max(1, int(round(value * self.ui_scale)))
-
-            self.gui_profile = replace(
-                self.gui_profile,
-                entry_page_scale=round(self.gui_profile.entry_page_scale * self.ui_scale, 3),
-                entry_fly_max=scale_int(self.gui_profile.entry_fly_max),
-                entry_fly_column_min=scale_int(self.gui_profile.entry_fly_column_min),
-                footer_banner_width=scale_int(self.gui_profile.footer_banner_width),
-                footer_banner_height=scale_int(self.gui_profile.footer_banner_height),
-                operations_logo_size=scale_int(self.gui_profile.operations_logo_size),
-                operations_logo_column_min=scale_int(self.gui_profile.operations_logo_column_min),
-                operations_button_gap=scale_int(self.gui_profile.operations_button_gap),
-                operations_button_margin=scale_int(self.gui_profile.operations_button_margin),
-                standard_button_pady=scale_int(self.gui_profile.standard_button_pady),
-            )
-
     def _entry_scale(self, value: int) -> int:
         return max(1, math.ceil(value * self.entry_page_scale))
 
@@ -820,9 +757,7 @@ class DrosophilaGUI:
         return max(1, round(self._entry_scale(value) * 0.75))
 
     def _ui_scale_font(self, size: int) -> int:
-        if self.ui_scale <= 0:
-            return size
-        return max(8, int(round(size * self.ui_scale)))
+        return size
 
     def _blend_hex(self, start_hex: str, end_hex: str, ratio: float) -> str:
         ratio = max(0.0, min(1.0, ratio))
@@ -2200,51 +2135,48 @@ class DrosophilaGUI:
 
         operations_content = tk.Frame(ops_frame, bg="#F8E8F0")
         operations_content.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E))
-        if self.gui_profile.operations_layout == "stacked":
-            operations_content.columnconfigure(0, weight=1, minsize=126)
-            operations_content.columnconfigure(1, weight=0, minsize=0)
-        else:
-            operations_content.columnconfigure(0, weight=0, minsize=126)
-            operations_content.columnconfigure(1, weight=0, minsize=self.gui_profile.operations_logo_column_min)
+        operations_content.columnconfigure(0, weight=1)
+        operations_content.columnconfigure(1, weight=0)
         operations_content.rowconfigure(0, weight=0)
         operations_content.rowconfigure(1, weight=0)
 
-        button_gap = self.gui_profile.operations_button_gap
-        button_margin = self.gui_profile.operations_button_margin
-
-        action_frame = tk.Frame(operations_content, bg="#F8E8F0", width=138 if self.gui_profile.operations_layout == "stacked" else 126)
-        action_frame.grid(
-            row=0,
-            column=0,
-            sticky=(tk.N, tk.W, tk.E),
-            padx=(0, 12 if self.gui_profile.operations_layout == "side_by_side" else 0),
-            pady=(0, 8 if self.gui_profile.operations_layout == "stacked" else 0),
-        )
+        action_frame = tk.Frame(operations_content, bg="#F8E8F0")
+        action_frame.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E))
         action_frame.columnconfigure(0, weight=1)
-        top_button_spacer = tk.Frame(action_frame, bg="#F8E8F0", height=button_margin)
+        top_button_spacer = tk.Frame(action_frame, bg="#F8E8F0", height=self.gui_profile.operations_button_margin)
         top_button_spacer.grid(row=0, column=0, sticky=(tk.W, tk.E))
 
         self.run_button = self.make_button(action_frame, "Run Automated", "#9C27B0", self.run_automated)
-        op_button_pady = 2 if self.gui_profile.operations_layout == "stacked" else 0
-        self.run_button.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, op_button_pady))
+        self.run_button.grid(row=1, column=0, sticky=(tk.W, tk.E))
         self.remote_unsupported_widgets.append(self.run_button)
 
         self.assay_button = self.make_button(action_frame, "Run Assay", "#9C27B0", self.run_assay)
-        self.assay_button.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, op_button_pady))
+        self.assay_button.grid(row=3, column=0, sticky=(tk.W, tk.E))
 
         self.classify_button = self.make_button(action_frame, "Classify Fly", "#9C27B0", self.classify_fly_gui)
-        self.classify_button.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=(0, op_button_pady))
+        self.classify_button.grid(row=5, column=0, sticky=(tk.W, tk.E))
 
-        tk.Frame(action_frame, bg="#F8E8F0", height=button_gap).grid(row=2, column=0, sticky=(tk.W, tk.E))
-        tk.Frame(action_frame, bg="#F8E8F0", height=button_gap).grid(row=4, column=0, sticky=(tk.W, tk.E))
-        tk.Frame(action_frame, bg="#F8E8F0", height=button_margin).grid(row=6, column=0, sticky=(tk.W, tk.E))
+        gap1 = tk.Frame(action_frame, bg="#F8E8F0", height=self.gui_profile.operations_button_gap)
+        gap1.grid(row=2, column=0, sticky=(tk.W, tk.E))
+        gap2 = tk.Frame(action_frame, bg="#F8E8F0", height=self.gui_profile.operations_button_gap)
+        gap2.grid(row=4, column=0, sticky=(tk.W, tk.E))
+        bottom_spacer = tk.Frame(action_frame, bg="#F8E8F0", height=self.gui_profile.operations_button_margin)
+        bottom_spacer.grid(row=6, column=0, sticky=(tk.W, tk.E))
 
-        self.create_operations_logo(
-            operations_content,
-            row=1 if self.gui_profile.operations_layout == "stacked" else 0,
-            column=0 if self.gui_profile.operations_layout == "stacked" else 1,
-            shift_up=self.gui_profile.operations_layout == "stacked",
-        )
+        self._ops_top_spacer = top_button_spacer
+        self._ops_gap1 = gap1
+        self._ops_gap2 = gap2
+        self._ops_bottom_spacer = bottom_spacer
+
+        logo_area = self.create_operations_logo(operations_content)
+
+        self.operations_frame = ops_frame
+        self.operations_content = operations_content
+        self.operations_action_frame = action_frame
+        self.operations_logo_area = logo_area
+        self._ops_layout_mode = None
+        ops_frame.bind("<Configure>", self._on_operations_resize)
+        self.root.after(50, self._update_operations_layout)
 
     def create_system_controls(self, parent):
         system_frame = ttk.LabelFrame(parent, text="System Control", padding="10")
@@ -2357,7 +2289,7 @@ class DrosophilaGUI:
             parent,
             text=text,
             color=color,
-            font=("Arial", self._ui_scale_font(10), "bold"),
+            font=("Arial", 10, "bold"),
             command=command,
             active_color=self._blend_hex(color, "#111111", 0.18),
             padx=12,
@@ -2436,24 +2368,11 @@ class DrosophilaGUI:
         self.update_device_card_state(actuator, False)
         return switch
 
-    def create_operations_logo(self, parent, row: int, column: int, shift_up: bool = False):
+    def create_operations_logo(self, parent):
         logo_area = tk.Frame(parent, bg="#F8E8F0")
-        logo_area.grid(
-            row=row,
-            column=column,
-            sticky=(tk.N, tk.W, tk.E),
-            padx=(12, 0) if self.gui_profile.operations_layout == "side_by_side" else (0, 0),
-        )
-        logo_area.columnconfigure(
-            0,
-            weight=1,
-            minsize=self.gui_profile.operations_logo_column_min if self.gui_profile.operations_layout == "side_by_side" else 0,
-        )
-        logo_area.rowconfigure(1, weight=0)
-        logo_margin = 2 if shift_up else (6 if self.gui_profile.is_macos else 10)
-        logo_box_height = self.gui_profile.operations_logo_size + (logo_margin * 2)
-        logo_area.configure(height=logo_box_height)
-        logo_area.grid_propagate(False)
+        logo_area.columnconfigure(0, weight=1)
+        logo_area.rowconfigure(1, weight=1)
+        logo_margin = 6 if self.gui_profile.is_macos else 10
         tk.Frame(logo_area, bg="#F8E8F0", height=logo_margin).grid(row=0, column=0, sticky=(tk.W, tk.E))
 
         self.operations_logo_label = tk.Label(
@@ -2468,9 +2387,10 @@ class DrosophilaGUI:
             bd=0,
             highlightthickness=0,
         )
-        self.operations_logo_label.grid(row=1, column=0, sticky="n")
+        self.operations_logo_label.grid(row=1, column=0, sticky=tk.N)
         tk.Frame(logo_area, bg="#F8E8F0", height=logo_margin).grid(row=2, column=0, sticky=(tk.W, tk.E))
         self.load_operations_logo()
+        return logo_area
 
     def load_operations_logo(self):
         logo_path = self._resolve_asset_path(
@@ -2480,6 +2400,8 @@ class DrosophilaGUI:
         )
         if logo_path is None:
             self.operations_logo_image = None
+            self.operations_logo_source = None
+            self.operations_logo_photo_base = None
             self.operations_logo_label.config(
                 image="",
                 text="Team fly logo unavailable",
@@ -2489,24 +2411,40 @@ class DrosophilaGUI:
         try:
             from PIL import Image, ImageTk
 
-            image = Image.open(logo_path)
-            image = image.convert("RGBA")
-            resample = getattr(Image, "Resampling", Image)
-            max_logo_size = self.gui_profile.operations_logo_size
-            image.thumbnail((max_logo_size, max_logo_size), resample.LANCZOS)
-            self.operations_logo_image = ImageTk.PhotoImage(image)
-            self.operations_logo_label.config(
-                image=self.operations_logo_image,
-                text="",
-                bg="#F8E8F0",
-                compound="center",
-                anchor="center",
-            )
+            image = Image.open(logo_path).convert("RGBA")
+            self.operations_logo_source = image
+            self.operations_logo_photo_base = None
         except Exception:
             try:
                 fallback_logo = tk.PhotoImage(file=str(logo_path))
-                fallback_logo = self._fit_photoimage(fallback_logo, self.gui_profile.operations_logo_size)
-                self.operations_logo_image = fallback_logo
+                self.operations_logo_photo_base = fallback_logo
+                self.operations_logo_source = None
+            except tk.TclError:
+                self.operations_logo_image = None
+                self.operations_logo_source = None
+                self.operations_logo_photo_base = None
+                self.operations_logo_label.config(
+                    image="",
+                    text="Team fly logo unavailable",
+                    bg="#F8E8F0",
+                )
+                return
+
+        self._apply_operations_logo_size(self.gui_profile.operations_logo_size)
+
+    def _apply_operations_logo_size(self, max_logo_size: int) -> None:
+        if max_logo_size <= 0:
+            self.operations_logo_label.config(image="", text="")
+            return
+
+        if self.operations_logo_source is not None:
+            try:
+                from PIL import Image, ImageTk
+
+                image = self.operations_logo_source.copy()
+                resample = getattr(Image, "Resampling", Image)
+                image.thumbnail((max_logo_size, max_logo_size), resample.LANCZOS)
+                self.operations_logo_image = ImageTk.PhotoImage(image)
                 self.operations_logo_label.config(
                     image=self.operations_logo_image,
                     text="",
@@ -2514,13 +2452,106 @@ class DrosophilaGUI:
                     compound="center",
                     anchor="center",
                 )
-            except tk.TclError:
-                self.operations_logo_image = None
-                self.operations_logo_label.config(
-                    image="",
-                    text="Team fly logo unavailable",
-                    bg="#F8E8F0",
-                )
+                return
+            except Exception:
+                pass
+
+        if self.operations_logo_photo_base is not None:
+            fallback_logo = self._fit_photoimage(self.operations_logo_photo_base, max_logo_size)
+            self.operations_logo_image = fallback_logo
+            self.operations_logo_label.config(
+                image=self.operations_logo_image,
+                text="",
+                bg="#F8E8F0",
+                compound="center",
+                anchor="center",
+            )
+
+    def _on_operations_resize(self, _event=None) -> None:
+        if self._ops_resize_job is not None:
+            self.root.after_cancel(self._ops_resize_job)
+        self._ops_resize_job = self.root.after(50, self._update_operations_layout)
+
+    def _update_operations_layout(self) -> None:
+        self._ops_resize_job = None
+        if not hasattr(self, "operations_frame"):
+            return
+
+        frame = self.operations_frame
+        content = self.operations_content
+        action_frame = self.operations_action_frame
+        logo_area = self.operations_logo_area
+
+        width = max(1, frame.winfo_width())
+        height = max(1, frame.winfo_height())
+        if width <= 1 or height <= 1:
+            return
+
+        # Estimate available height after label frame padding.
+        available_height = max(1, height - 32)
+
+        base_font = 10
+        base_pady = self.gui_profile.standard_button_pady
+        base_gap = self.gui_profile.operations_button_gap
+        base_margin = self.gui_profile.operations_button_margin
+        base_logo = self.gui_profile.operations_logo_size
+
+        font_obj = tkfont.Font(font=("Arial", base_font, "bold"))
+        button_height = font_obj.metrics("linespace") + (base_pady * 2) + 4
+        buttons_height = (button_height * 3) + (base_gap * 2) + (base_margin * 2)
+
+        # Decide layout mode based on width budget.
+        min_side_by_side = 140 + base_logo + 32
+        layout = "side_by_side" if width >= min_side_by_side else "stacked"
+
+        if layout == "stacked":
+            desired_height = buttons_height + base_logo + base_gap
+        else:
+            desired_height = max(buttons_height, base_logo + (base_margin * 2))
+
+        scale = min(1.0, available_height / desired_height) if desired_height > 0 else 1.0
+        scale = max(0.6, scale)
+
+        # Linux: hide logo if the panel is too small.
+        hide_logo = sys.platform.startswith("linux") and scale < 0.72
+
+        if layout != self._ops_layout_mode:
+            if layout == "stacked":
+                content.columnconfigure(0, weight=1, minsize=126)
+                content.columnconfigure(1, weight=0, minsize=0)
+                action_frame.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E), padx=(0, 0), pady=(0, 8))
+                logo_area.grid(row=1, column=0, sticky=(tk.N, tk.W, tk.E), padx=(0, 0))
+            else:
+                content.columnconfigure(0, weight=0, minsize=126)
+                content.columnconfigure(1, weight=0, minsize=self.gui_profile.operations_logo_column_min)
+                action_frame.grid(row=0, column=0, sticky=(tk.N, tk.W), padx=(0, 12), pady=(0, 0))
+                logo_area.grid(row=0, column=1, sticky=(tk.N, tk.W, tk.E), padx=(0, 0))
+            self._ops_layout_mode = layout
+
+        # Update spacing and button sizing.
+        scaled_pady = max(2, int(round(base_pady * scale)))
+        scaled_gap = max(2, int(round(base_gap * scale)))
+        scaled_margin = max(2, int(round(base_margin * scale)))
+        scaled_font = max(8, int(round(base_font * scale)))
+
+        self._ops_top_spacer.configure(height=scaled_margin)
+        self._ops_gap1.configure(height=scaled_gap)
+        self._ops_gap2.configure(height=scaled_gap)
+        self._ops_bottom_spacer.configure(height=scaled_margin)
+
+        for button in (self.run_button, self.assay_button, self.classify_button):
+            button.configure(font=("Arial", scaled_font, "bold"), pady=scaled_pady)
+
+        scaled_logo = max(40, int(round(base_logo * scale)))
+        if hide_logo:
+            if not self.operations_logo_hidden:
+                logo_area.grid_remove()
+                self.operations_logo_hidden = True
+        else:
+            if self.operations_logo_hidden:
+                logo_area.grid()
+                self.operations_logo_hidden = False
+            self._apply_operations_logo_size(scaled_logo)
 
     def register_control(self, widget):
         self.control_widgets.append(widget)
