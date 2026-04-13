@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 import tkinter as tk
 import tkinter.font as tkfont
@@ -51,6 +52,64 @@ from shared.config.project_paths import CHANNEL_OUTPUT_DIR, FIN6_DIR
 
 class TaskCancelled(Exception):
     """Raised when the operator stops an automated run."""
+
+
+@dataclass(frozen=True)
+class GUIPlatformProfile:
+    is_macos: bool
+    use_zoomed_window: bool
+    window_width_ratio: float
+    window_height_ratio: float
+    window_margin_x: int
+    window_margin_y: int
+    entry_page_scale: float
+    entry_fly_column_min: int
+    entry_fly_column_pad: int
+    operations_layout: str
+    operations_logo_column_min: int
+    operations_logo_size: int
+    operations_button_gap: int
+    operations_button_margin: int
+    standard_button_pady: int
+
+
+def build_gui_platform_profile() -> GUIPlatformProfile:
+    is_macos = sys.platform == "darwin"
+    if is_macos:
+        return GUIPlatformProfile(
+            is_macos=True,
+            use_zoomed_window=False,
+            window_width_ratio=0.94,
+            window_height_ratio=0.92,
+            window_margin_x=40,
+            window_margin_y=70,
+            entry_page_scale=1.48,
+            entry_fly_column_min=308,
+            entry_fly_column_pad=4,
+            operations_layout="stacked",
+            operations_logo_column_min=142,
+            operations_logo_size=112,
+            operations_button_gap=8,
+            operations_button_margin=8,
+            standard_button_pady=5,
+        )
+    return GUIPlatformProfile(
+        is_macos=False,
+        use_zoomed_window=True,
+        window_width_ratio=0.94,
+        window_height_ratio=0.92,
+        window_margin_x=40,
+        window_margin_y=70,
+        entry_page_scale=1.54,
+        entry_fly_column_min=300,
+        entry_fly_column_pad=8,
+        operations_layout="side_by_side",
+        operations_logo_column_min=160,
+        operations_logo_size=152,
+        operations_button_gap=12,
+        operations_button_margin=20,
+        standard_button_pady=7,
+    )
 
 
 class QueueWriter:
@@ -361,12 +420,13 @@ class DrosophilaGUI:
         self.root.title("Drosophila Genetics Control Panel")
         self.root.geometry("1100x760")
         self.root.minsize(960, 680)
-        if sys.platform.startswith("win"):
+        self.gui_profile = build_gui_platform_profile()
+        self.is_macos = self.gui_profile.is_macos
+        if self.gui_profile.use_zoomed_window:
             self.root.state("zoomed")
         else:
             self.root.after(10, self._fit_window_to_screen)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
-        self.is_macos = sys.platform == "darwin"
 
         self.gui_dir = GUI_DIR
         self.host_app_dir = HOST_APP_DIR
@@ -418,7 +478,7 @@ class DrosophilaGUI:
         self.remote_sync: RemoteSyncManager | None = None
         self._local_runtime_cache: dict[str, object] | None = None
         self._local_runtime_error: str | None = None
-        self.entry_page_scale = 1.54
+        self.entry_page_scale = self.gui_profile.entry_page_scale
 
         self.state_var = tk.StringVar(value="IDLE")
         self.position_var = tk.StringVar(value="0.00 mm")
@@ -579,8 +639,14 @@ class DrosophilaGUI:
     def _fit_window_to_screen(self) -> None:
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        target_width = min(max(1100, int(screen_width * 0.94)), screen_width - 40)
-        target_height = min(max(760, int(screen_height * 0.92)), screen_height - 70)
+        target_width = min(
+            max(1100, int(screen_width * self.gui_profile.window_width_ratio)),
+            screen_width - self.gui_profile.window_margin_x,
+        )
+        target_height = min(
+            max(760, int(screen_height * self.gui_profile.window_height_ratio)),
+            screen_height - self.gui_profile.window_margin_y,
+        )
         x_offset = max(20, (screen_width - target_width) // 2)
         y_offset = max(14, (screen_height - target_height) // 4)
         self.root.geometry(f"{target_width}x{target_height}+{x_offset}+{y_offset}")
@@ -679,7 +745,7 @@ class DrosophilaGUI:
         )
         entry_card.grid(row=0, column=0)
         entry_card.columnconfigure(0, weight=1)
-        entry_card.columnconfigure(1, weight=0, minsize=self._entry_scale(320 if self.is_macos else 300))
+        entry_card.columnconfigure(1, weight=0, minsize=self._entry_scale(self.gui_profile.entry_fly_column_min))
 
         left_panel = tk.Frame(entry_card, bg="#686766")
         left_panel.grid(row=0, column=0, sticky=(tk.N, tk.W), padx=(0, self._entry_scale(47)))
@@ -736,7 +802,12 @@ class DrosophilaGUI:
             padx=self._entry_scale(10),
             pady=self._entry_scale(7),
         )
-        fly_panel.grid(row=0, column=1, sticky=(tk.N, tk.W), padx=(self._entry_scale(8), 0))
+        fly_panel.grid(
+            row=0,
+            column=1,
+            sticky=(tk.N, tk.W),
+            padx=(self._entry_scale(self.gui_profile.entry_fly_column_pad), 0),
+        )
         fly_panel.columnconfigure(0, weight=1)
         fly_panel.rowconfigure(0, weight=1)
 
@@ -1950,14 +2021,24 @@ class DrosophilaGUI:
         operations_content = tk.Frame(ops_frame, bg="#F8E8F0")
         operations_content.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E))
         operations_content.columnconfigure(0, minsize=126)
-        operations_content.columnconfigure(1, weight=0, minsize=148 if self.is_macos else 160)
+        if self.gui_profile.operations_layout == "stacked":
+            operations_content.columnconfigure(1, weight=0, minsize=self.gui_profile.operations_logo_column_min)
+        else:
+            operations_content.columnconfigure(1, weight=0, minsize=self.gui_profile.operations_logo_column_min)
         operations_content.rowconfigure(0, weight=0)
+        operations_content.rowconfigure(1, weight=0)
 
-        button_gap = 10 if self.is_macos else 12
-        button_margin = 12 if self.is_macos else 20
+        button_gap = self.gui_profile.operations_button_gap
+        button_margin = self.gui_profile.operations_button_margin
 
         action_frame = tk.Frame(operations_content, bg="#F8E8F0", width=126)
-        action_frame.grid(row=0, column=0, sticky=(tk.N, tk.W), padx=(0, 12))
+        action_frame.grid(
+            row=0,
+            column=0,
+            sticky=(tk.N, tk.W),
+            padx=(0, 12 if self.gui_profile.operations_layout == "side_by_side" else 0),
+            pady=(0, 8 if self.gui_profile.operations_layout == "stacked" else 0),
+        )
         action_frame.columnconfigure(0, weight=1)
         top_button_spacer = tk.Frame(action_frame, bg="#F8E8F0", height=button_margin)
         top_button_spacer.grid(row=0, column=0, sticky=(tk.W, tk.E))
@@ -1976,7 +2057,11 @@ class DrosophilaGUI:
         tk.Frame(action_frame, bg="#F8E8F0", height=button_gap).grid(row=4, column=0, sticky=(tk.W, tk.E))
         tk.Frame(action_frame, bg="#F8E8F0", height=button_margin).grid(row=6, column=0, sticky=(tk.W, tk.E))
 
-        self.create_operations_logo(operations_content)
+        self.create_operations_logo(
+            operations_content,
+            row=1 if self.gui_profile.operations_layout == "stacked" else 0,
+            column=0 if self.gui_profile.operations_layout == "stacked" else 1,
+        )
 
     def create_system_controls(self, parent):
         system_frame = ttk.LabelFrame(parent, text="System Control", padding="10")
@@ -2092,7 +2177,7 @@ class DrosophilaGUI:
             command=command,
             active_color=self._blend_hex(color, "#111111", 0.18),
             padx=12,
-            pady=5 if self.is_macos else 7,
+            pady=self.gui_profile.standard_button_pady,
         )
         self.register_control(button)
         return button
@@ -2167,12 +2252,17 @@ class DrosophilaGUI:
         self.update_device_card_state(actuator, False)
         return switch
 
-    def create_operations_logo(self, parent):
+    def create_operations_logo(self, parent, row: int, column: int):
         logo_area = tk.Frame(parent, bg="#F8E8F0")
-        logo_area.grid(row=0, column=1, sticky=(tk.N, tk.W, tk.E))
-        logo_area.columnconfigure(0, weight=1, minsize=148 if self.is_macos else 160)
+        logo_area.grid(
+            row=row,
+            column=column,
+            sticky=(tk.N, tk.W, tk.E),
+            padx=(12, 0) if self.gui_profile.operations_layout == "side_by_side" else (0, 0),
+        )
+        logo_area.columnconfigure(0, weight=1, minsize=self.gui_profile.operations_logo_column_min)
         logo_area.rowconfigure(1, weight=1)
-        logo_margin = 6 if self.is_macos else 10
+        logo_margin = 6 if self.gui_profile.is_macos else 10
         tk.Frame(logo_area, bg="#F8E8F0", height=logo_margin).grid(row=0, column=0, sticky=(tk.W, tk.E))
 
         self.operations_logo_label = tk.Label(
@@ -2211,7 +2301,7 @@ class DrosophilaGUI:
             image = Image.open(logo_path)
             image = image.convert("RGBA")
             resample = getattr(Image, "Resampling", Image)
-            max_logo_size = 116 if self.is_macos else 152
+            max_logo_size = self.gui_profile.operations_logo_size
             image.thumbnail((max_logo_size, max_logo_size), resample.LANCZOS)
             self.operations_logo_image = ImageTk.PhotoImage(image)
             self.operations_logo_label.config(
