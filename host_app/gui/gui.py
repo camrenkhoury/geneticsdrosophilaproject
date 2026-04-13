@@ -96,17 +96,39 @@ class SliderSwitch(tk.Canvas):
         self.enabled = True
         self.width = width
         self.height = height
+        self._pressed = False
         self.configure(cursor="hand2")
-        self.bind("<Button-1>", self.toggle)
+        self.bind("<ButtonPress-1>", self._on_press)
+        self.bind("<ButtonRelease-1>", self._on_release)
+        self.bind("<Leave>", self._on_leave)
         self.draw()
 
-    def toggle(self, _event=None):
+    def _toggle(self) -> None:
         if not self.enabled:
             return
         self.value = not self.value
         self.draw()
         if callable(self.command):
             self.command(self.value)
+
+    def _on_press(self, _event=None) -> None:
+        if not self.enabled:
+            return
+        self._pressed = True
+
+    def _on_release(self, event=None) -> None:
+        if not self.enabled:
+            self._pressed = False
+            return
+        was_pressed = self._pressed
+        self._pressed = False
+        if not was_pressed or event is None:
+            return
+        if 0 <= event.x <= self.width and 0 <= event.y <= self.height:
+            self._toggle()
+
+    def _on_leave(self, _event=None) -> None:
+        self._pressed = False
 
     def set_value(self, value: bool) -> None:
         self.value = bool(value)
@@ -656,8 +678,8 @@ class DrosophilaGUI:
             pady=self._entry_scale(61),
         )
         entry_card.grid(row=0, column=0)
-        entry_card.columnconfigure(0, weight=0)
-        entry_card.columnconfigure(1, weight=0)
+        entry_card.columnconfigure(0, weight=1)
+        entry_card.columnconfigure(1, weight=0, minsize=self._entry_scale(320 if self.is_macos else 300))
 
         left_panel = tk.Frame(entry_card, bg="#686766")
         left_panel.grid(row=0, column=0, sticky=(tk.N, tk.W), padx=(0, self._entry_scale(47)))
@@ -714,15 +736,19 @@ class DrosophilaGUI:
             padx=self._entry_scale(10),
             pady=self._entry_scale(7),
         )
-        fly_panel.grid(row=0, column=1, sticky=(tk.N, tk.E))
+        fly_panel.grid(row=0, column=1, sticky=(tk.N, tk.W), padx=(self._entry_scale(8), 0))
+        fly_panel.columnconfigure(0, weight=1)
+        fly_panel.rowconfigure(0, weight=1)
 
         self.entry_fly_label = tk.Label(
             fly_panel,
             bg="#686766",
             bd=0,
             highlightthickness=0,
+            anchor="center",
+            justify="center",
         )
-        self.entry_fly_label.grid(row=0, column=0)
+        self.entry_fly_label.grid(row=0, column=0, sticky="")
 
         self.create_entry_metadata(
             parent,
@@ -1924,7 +1950,7 @@ class DrosophilaGUI:
         operations_content = tk.Frame(ops_frame, bg="#F8E8F0")
         operations_content.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E))
         operations_content.columnconfigure(0, minsize=126)
-        operations_content.columnconfigure(1, weight=1)
+        operations_content.columnconfigure(1, weight=0, minsize=148 if self.is_macos else 160)
         operations_content.rowconfigure(0, weight=0)
 
         button_gap = 10 if self.is_macos else 12
@@ -2144,8 +2170,9 @@ class DrosophilaGUI:
     def create_operations_logo(self, parent):
         logo_area = tk.Frame(parent, bg="#F8E8F0")
         logo_area.grid(row=0, column=1, sticky=(tk.N, tk.W, tk.E))
-        logo_area.columnconfigure(0, weight=1)
-        logo_margin = 10
+        logo_area.columnconfigure(0, weight=1, minsize=148 if self.is_macos else 160)
+        logo_area.rowconfigure(1, weight=1)
+        logo_margin = 6 if self.is_macos else 10
         tk.Frame(logo_area, bg="#F8E8F0", height=logo_margin).grid(row=0, column=0, sticky=(tk.W, tk.E))
 
         self.operations_logo_label = tk.Label(
@@ -2160,7 +2187,7 @@ class DrosophilaGUI:
             bd=0,
             highlightthickness=0,
         )
-        self.operations_logo_label.grid(row=1, column=0)
+        self.operations_logo_label.grid(row=1, column=0, sticky="")
         tk.Frame(logo_area, bg="#F8E8F0", height=logo_margin).grid(row=2, column=0, sticky=(tk.W, tk.E))
         self.load_operations_logo()
 
@@ -2184,7 +2211,7 @@ class DrosophilaGUI:
             image = Image.open(logo_path)
             image = image.convert("RGBA")
             resample = getattr(Image, "Resampling", Image)
-            max_logo_size = 128 if self.is_macos else 152
+            max_logo_size = 116 if self.is_macos else 152
             image.thumbnail((max_logo_size, max_logo_size), resample.LANCZOS)
             self.operations_logo_image = ImageTk.PhotoImage(image)
             self.operations_logo_label.config(
