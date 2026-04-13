@@ -750,6 +750,9 @@ class DrosophilaGUI:
         y_offset = max(14, (screen_height - target_height) // 4)
         self.root.geometry(f"{target_width}x{target_height}+{x_offset}+{y_offset}")
 
+    def _is_compact_screen(self) -> bool:
+        return self.screen_height <= 800 or self.screen_aspect < 1.35
+
     def _entry_scale(self, value: int) -> int:
         return max(1, math.ceil(value * self.entry_page_scale))
 
@@ -2104,7 +2107,13 @@ class DrosophilaGUI:
         controls_frame.grid(row=0, column=2, sticky=(tk.N, tk.S))
         controls_frame.columnconfigure(0, weight=1)
 
-        device_frame = ttk.LabelFrame(controls_frame, text="Device Control", style="Device.TLabelframe", padding="10")
+        device_padding = (8, 6) if self._is_compact_screen() else (10, 8)
+        device_frame = ttk.LabelFrame(
+            controls_frame,
+            text="Device Control",
+            style="Device.TLabelframe",
+            padding=device_padding,
+        )
         device_frame.grid(row=0, column=0, sticky=(tk.W, tk.E))
         device_frame.columnconfigure(0, weight=1)
 
@@ -2299,16 +2308,26 @@ class DrosophilaGUI:
         return button
 
     def create_device_card(self, parent, row: int, actuator: str, title: str, description: str, command):
+        compact = self._is_compact_screen()
+        card_padx = 8 if compact else 10
+        card_pady = 6 if compact else 8
+        header_font_size = 10 if compact else 11
+        badge_font_size = 7 if compact else 8
+        desc_font_size = 7 if compact else 8
+        detail_font_size = 9 if compact else 10
+        wrap_length = 200 if compact else 220
+        switch_width = 70 if compact else 78
+        switch_height = 32 if compact else 38
         card = tk.Frame(
             parent,
             bg="#FFFFFF",
             highlightbackground="#D4DCE5",
             highlightthickness=1,
             bd=0,
-            padx=10,
-            pady=8,
+            padx=card_padx,
+            pady=card_pady,
         )
-        card.grid(row=row, column=0, pady=(0, 10 if row == 0 else 0), sticky=(tk.W, tk.E))
+        card.grid(row=row, column=0, pady=(0, 8 if row == 0 else 0), sticky=(tk.W, tk.E))
         card.columnconfigure(0, weight=1)
 
         header = tk.Frame(card, bg="#FFFFFF")
@@ -2320,7 +2339,7 @@ class DrosophilaGUI:
             text=title,
             bg="#FFFFFF",
             fg="#1F2933",
-            font=("Arial", 11, "bold"),
+            font=("Arial", header_font_size, "bold"),
         ).grid(row=0, column=0, sticky=tk.W)
 
         state_var = tk.StringVar(value="OFF")
@@ -2330,9 +2349,9 @@ class DrosophilaGUI:
             textvariable=state_var,
             bg="#EEF2F6",
             fg="#52606D",
-            font=("Arial", 8, "bold"),
-            padx=10,
-            pady=4,
+            font=("Arial", badge_font_size, "bold"),
+            padx=8 if compact else 10,
+            pady=3 if compact else 4,
         )
         state_label.grid(row=0, column=1, sticky=tk.E)
         self.device_state_labels[actuator] = state_label
@@ -2344,16 +2363,23 @@ class DrosophilaGUI:
             text=description,
             bg="#FFFFFF",
             fg="#52606D",
-            font=("Arial", 8),
+            font=("Arial", desc_font_size),
             justify="left",
-            wraplength=220,
+            wraplength=wrap_length,
         ).grid(row=1, column=0, pady=(4, 6), sticky=tk.W)
 
         control_row = tk.Frame(card, bg="#FFFFFF")
         control_row.grid(row=2, column=0, sticky=(tk.W, tk.E))
         control_row.columnconfigure(1, weight=1)
 
-        switch = SliderSwitch(control_row, command=command, initial=False, bg="#FFFFFF")
+        switch = SliderSwitch(
+            control_row,
+            command=command,
+            initial=False,
+            width=switch_width,
+            height=switch_height,
+            bg="#FFFFFF",
+        )
         switch.grid(row=0, column=0, sticky=tk.W)
 
         tk.Label(
@@ -2361,7 +2387,7 @@ class DrosophilaGUI:
             textvariable=detail_var,
             bg="#FFFFFF",
             fg="#1F2933",
-            font=("Arial", 10, "bold"),
+            font=("Arial", detail_font_size, "bold"),
             anchor="w",
         ).grid(row=0, column=1, padx=(10, 0), sticky=(tk.W, tk.E))
 
