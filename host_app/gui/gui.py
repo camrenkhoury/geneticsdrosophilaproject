@@ -432,7 +432,10 @@ class DrosophilaGUI:
         self.gui_profile = build_gui_platform_profile()
         self.is_macos = self.gui_profile.is_macos
         if self.gui_profile.use_zoomed_window:
-            self.root.state("zoomed")
+            try:
+                self.root.state("zoomed")
+            except tk.TclError:
+                self.root.after(10, self._fit_window_to_screen)
         else:
             self.root.after(10, self._fit_window_to_screen)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
