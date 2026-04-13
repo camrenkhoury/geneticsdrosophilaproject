@@ -159,8 +159,8 @@ def build_gui_platform_profile() -> GUIPlatformProfile:
         entry_fly_column_pad=8,
         entry_fly_max=372,
         operations_layout="side_by_side",
-        operations_logo_column_min=160,
-        operations_logo_size=152,
+        operations_logo_column_min=150,
+        operations_logo_size=120,
         operations_button_gap=12,
         operations_button_margin=20,
         standard_button_pady=7,
@@ -173,8 +173,8 @@ def build_gui_platform_profile() -> GUIPlatformProfile:
         small_entry_fly_column_min=260,
         small_footer_banner_width=240,
         small_footer_banner_height=68,
-        small_operations_logo_size=120,
-        small_operations_logo_column_min=140,
+        small_operations_logo_size=96,
+        small_operations_logo_column_min=130,
         small_operations_button_gap=8,
         small_operations_button_margin=8,
         small_standard_button_pady=5,
@@ -185,8 +185,8 @@ def build_gui_platform_profile() -> GUIPlatformProfile:
         tiny_entry_fly_column_min=240,
         tiny_footer_banner_width=200,
         tiny_footer_banner_height=56,
-        tiny_operations_logo_size=96,
-        tiny_operations_logo_column_min=124,
+        tiny_operations_logo_size=72,
+        tiny_operations_logo_column_min=110,
         tiny_operations_button_gap=6,
         tiny_operations_button_margin=6,
         tiny_standard_button_pady=4,
@@ -2451,6 +2451,9 @@ class DrosophilaGUI:
         )
         logo_area.rowconfigure(1, weight=0)
         logo_margin = 2 if shift_up else (6 if self.gui_profile.is_macos else 10)
+        logo_box_height = self.gui_profile.operations_logo_size + (logo_margin * 2)
+        logo_area.configure(height=logo_box_height)
+        logo_area.grid_propagate(False)
         tk.Frame(logo_area, bg="#F8E8F0", height=logo_margin).grid(row=0, column=0, sticky=(tk.W, tk.E))
 
         self.operations_logo_label = tk.Label(
@@ -2465,7 +2468,7 @@ class DrosophilaGUI:
             bd=0,
             highlightthickness=0,
         )
-        self.operations_logo_label.grid(row=1, column=0, sticky=tk.N)
+        self.operations_logo_label.grid(row=1, column=0, sticky="n")
         tk.Frame(logo_area, bg="#F8E8F0", height=logo_margin).grid(row=2, column=0, sticky=(tk.W, tk.E))
         self.load_operations_logo()
 
