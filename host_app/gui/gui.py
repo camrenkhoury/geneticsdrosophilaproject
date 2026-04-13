@@ -16,7 +16,7 @@ import sys
 import threading
 import time
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import tkinter as tk
 import tkinter.font as tkfont
@@ -74,6 +74,30 @@ class GUIPlatformProfile:
     standard_button_pady: int
     footer_banner_width: int
     footer_banner_height: int
+    small_screen_threshold_w: int
+    small_screen_threshold_h: int
+    small_entry_scale: float
+    small_entry_fly_max: int
+    small_entry_fly_column_min: int
+    small_footer_banner_width: int
+    small_footer_banner_height: int
+    small_operations_logo_size: int
+    small_operations_logo_column_min: int
+    small_operations_button_gap: int
+    small_operations_button_margin: int
+    small_standard_button_pady: int
+    tiny_screen_threshold_w: int
+    tiny_screen_threshold_h: int
+    tiny_entry_scale: float
+    tiny_entry_fly_max: int
+    tiny_entry_fly_column_min: int
+    tiny_footer_banner_width: int
+    tiny_footer_banner_height: int
+    tiny_operations_logo_size: int
+    tiny_operations_logo_column_min: int
+    tiny_operations_button_gap: int
+    tiny_operations_button_margin: int
+    tiny_standard_button_pady: int
 
 
 def build_gui_platform_profile() -> GUIPlatformProfile:
@@ -98,6 +122,30 @@ def build_gui_platform_profile() -> GUIPlatformProfile:
             standard_button_pady=5,
             footer_banner_width=260,
             footer_banner_height=74,
+            small_screen_threshold_w=1280,
+            small_screen_threshold_h=800,
+            small_entry_scale=1.28,
+            small_entry_fly_max=240,
+            small_entry_fly_column_min=256,
+            small_footer_banner_width=210,
+            small_footer_banner_height=58,
+            small_operations_logo_size=92,
+            small_operations_logo_column_min=124,
+            small_operations_button_gap=6,
+            small_operations_button_margin=6,
+            small_standard_button_pady=4,
+            tiny_screen_threshold_w=1100,
+            tiny_screen_threshold_h=650,
+            tiny_entry_scale=1.12,
+            tiny_entry_fly_max=200,
+            tiny_entry_fly_column_min=220,
+            tiny_footer_banner_width=180,
+            tiny_footer_banner_height=50,
+            tiny_operations_logo_size=72,
+            tiny_operations_logo_column_min=110,
+            tiny_operations_button_gap=4,
+            tiny_operations_button_margin=4,
+            tiny_standard_button_pady=3,
         )
     return GUIPlatformProfile(
         is_macos=False,
@@ -118,6 +166,30 @@ def build_gui_platform_profile() -> GUIPlatformProfile:
         standard_button_pady=7,
         footer_banner_width=312,
         footer_banner_height=88,
+        small_screen_threshold_w=1280,
+        small_screen_threshold_h=800,
+        small_entry_scale=1.35,
+        small_entry_fly_max=280,
+        small_entry_fly_column_min=260,
+        small_footer_banner_width=240,
+        small_footer_banner_height=68,
+        small_operations_logo_size=120,
+        small_operations_logo_column_min=140,
+        small_operations_button_gap=8,
+        small_operations_button_margin=8,
+        small_standard_button_pady=5,
+        tiny_screen_threshold_w=1100,
+        tiny_screen_threshold_h=650,
+        tiny_entry_scale=1.18,
+        tiny_entry_fly_max=230,
+        tiny_entry_fly_column_min=240,
+        tiny_footer_banner_width=200,
+        tiny_footer_banner_height=56,
+        tiny_operations_logo_size=96,
+        tiny_operations_logo_column_min=124,
+        tiny_operations_button_gap=6,
+        tiny_operations_button_margin=6,
+        tiny_standard_button_pady=4,
     )
 
 
@@ -431,6 +503,7 @@ class DrosophilaGUI:
         self.root.minsize(960, 680)
         self.gui_profile = build_gui_platform_profile()
         self.is_macos = self.gui_profile.is_macos
+        self._apply_screen_constraints()
         if self.gui_profile.use_zoomed_window:
             try:
                 self.root.state("zoomed")
@@ -662,6 +735,54 @@ class DrosophilaGUI:
         x_offset = max(20, (screen_width - target_width) // 2)
         y_offset = max(14, (screen_height - target_height) // 4)
         self.root.geometry(f"{target_width}x{target_height}+{x_offset}+{y_offset}")
+
+    def _apply_screen_constraints(self) -> None:
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        is_tiny = (
+            screen_width <= self.gui_profile.tiny_screen_threshold_w
+            or screen_height <= self.gui_profile.tiny_screen_threshold_h
+        )
+        is_small = (
+            screen_width <= self.gui_profile.small_screen_threshold_w
+            or screen_height <= self.gui_profile.small_screen_threshold_h
+        )
+        if not (is_small or is_tiny):
+            return
+
+        if is_tiny:
+            self.gui_profile = replace(
+                self.gui_profile,
+                use_zoomed_window=False,
+                entry_page_scale=self.gui_profile.tiny_entry_scale,
+                entry_fly_max=self.gui_profile.tiny_entry_fly_max,
+                entry_fly_column_min=self.gui_profile.tiny_entry_fly_column_min,
+                footer_banner_width=self.gui_profile.tiny_footer_banner_width,
+                footer_banner_height=self.gui_profile.tiny_footer_banner_height,
+                operations_layout="stacked",
+                operations_logo_size=self.gui_profile.tiny_operations_logo_size,
+                operations_logo_column_min=self.gui_profile.tiny_operations_logo_column_min,
+                operations_button_gap=self.gui_profile.tiny_operations_button_gap,
+                operations_button_margin=self.gui_profile.tiny_operations_button_margin,
+                standard_button_pady=self.gui_profile.tiny_standard_button_pady,
+            )
+            return
+
+        self.gui_profile = replace(
+            self.gui_profile,
+            use_zoomed_window=False,
+            entry_page_scale=self.gui_profile.small_entry_scale,
+            entry_fly_max=self.gui_profile.small_entry_fly_max,
+            entry_fly_column_min=self.gui_profile.small_entry_fly_column_min,
+            footer_banner_width=self.gui_profile.small_footer_banner_width,
+            footer_banner_height=self.gui_profile.small_footer_banner_height,
+            operations_layout="stacked",
+            operations_logo_size=self.gui_profile.small_operations_logo_size,
+            operations_logo_column_min=self.gui_profile.small_operations_logo_column_min,
+            operations_button_gap=self.gui_profile.small_operations_button_gap,
+            operations_button_margin=self.gui_profile.small_operations_button_margin,
+            standard_button_pady=self.gui_profile.small_standard_button_pady,
+        )
 
     def _entry_scale(self, value: int) -> int:
         return max(1, math.ceil(value * self.entry_page_scale))
