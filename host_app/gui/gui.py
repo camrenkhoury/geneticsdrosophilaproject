@@ -503,6 +503,7 @@ class DrosophilaGUI:
         self.root.minsize(960, 680)
         self.gui_profile = build_gui_platform_profile()
         self.is_macos = self.gui_profile.is_macos
+        self.ui_scale = 1.0
         self._apply_screen_constraints()
         if self.gui_profile.use_zoomed_window:
             try:
@@ -739,6 +740,9 @@ class DrosophilaGUI:
     def _apply_screen_constraints(self) -> None:
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
+        self.ui_scale = min(1.0, screen_width / 1366.0, screen_height / 768.0)
+        if self.ui_scale > 0.98:
+            self.ui_scale = 1.0
         is_tiny = (
             screen_width <= self.gui_profile.tiny_screen_threshold_w
             or screen_height <= self.gui_profile.tiny_screen_threshold_h
@@ -766,29 +770,51 @@ class DrosophilaGUI:
                 operations_button_margin=self.gui_profile.tiny_operations_button_margin,
                 standard_button_pady=self.gui_profile.tiny_standard_button_pady,
             )
-            return
+        else:
+            self.gui_profile = replace(
+                self.gui_profile,
+                use_zoomed_window=False,
+                entry_page_scale=self.gui_profile.small_entry_scale,
+                entry_fly_max=self.gui_profile.small_entry_fly_max,
+                entry_fly_column_min=self.gui_profile.small_entry_fly_column_min,
+                footer_banner_width=self.gui_profile.small_footer_banner_width,
+                footer_banner_height=self.gui_profile.small_footer_banner_height,
+                operations_layout="stacked",
+                operations_logo_size=self.gui_profile.small_operations_logo_size,
+                operations_logo_column_min=self.gui_profile.small_operations_logo_column_min,
+                operations_button_gap=self.gui_profile.small_operations_button_gap,
+                operations_button_margin=self.gui_profile.small_operations_button_margin,
+                standard_button_pady=self.gui_profile.small_standard_button_pady,
+            )
 
-        self.gui_profile = replace(
-            self.gui_profile,
-            use_zoomed_window=False,
-            entry_page_scale=self.gui_profile.small_entry_scale,
-            entry_fly_max=self.gui_profile.small_entry_fly_max,
-            entry_fly_column_min=self.gui_profile.small_entry_fly_column_min,
-            footer_banner_width=self.gui_profile.small_footer_banner_width,
-            footer_banner_height=self.gui_profile.small_footer_banner_height,
-            operations_layout="stacked",
-            operations_logo_size=self.gui_profile.small_operations_logo_size,
-            operations_logo_column_min=self.gui_profile.small_operations_logo_column_min,
-            operations_button_gap=self.gui_profile.small_operations_button_gap,
-            operations_button_margin=self.gui_profile.small_operations_button_margin,
-            standard_button_pady=self.gui_profile.small_standard_button_pady,
-        )
+        if self.ui_scale < 1.0:
+            def scale_int(value: int) -> int:
+                return max(1, int(round(value * self.ui_scale)))
+
+            self.gui_profile = replace(
+                self.gui_profile,
+                entry_page_scale=round(self.gui_profile.entry_page_scale * self.ui_scale, 3),
+                entry_fly_max=scale_int(self.gui_profile.entry_fly_max),
+                entry_fly_column_min=scale_int(self.gui_profile.entry_fly_column_min),
+                footer_banner_width=scale_int(self.gui_profile.footer_banner_width),
+                footer_banner_height=scale_int(self.gui_profile.footer_banner_height),
+                operations_logo_size=scale_int(self.gui_profile.operations_logo_size),
+                operations_logo_column_min=scale_int(self.gui_profile.operations_logo_column_min),
+                operations_button_gap=scale_int(self.gui_profile.operations_button_gap),
+                operations_button_margin=scale_int(self.gui_profile.operations_button_margin),
+                standard_button_pady=scale_int(self.gui_profile.standard_button_pady),
+            )
 
     def _entry_scale(self, value: int) -> int:
         return max(1, math.ceil(value * self.entry_page_scale))
 
     def _entry_button_scale(self, value: int) -> int:
         return max(1, round(self._entry_scale(value) * 0.75))
+
+    def _ui_scale_font(self, size: int) -> int:
+        if self.ui_scale <= 0:
+            return size
+        return max(8, int(round(size * self.ui_scale)))
 
     def _blend_hex(self, start_hex: str, end_hex: str, ratio: float) -> str:
         ratio = max(0.0, min(1.0, ratio))
@@ -2321,7 +2347,7 @@ class DrosophilaGUI:
             parent,
             text=text,
             color=color,
-            font=("Arial", 10, "bold"),
+            font=("Arial", self._ui_scale_font(10), "bold"),
             command=command,
             active_color=self._blend_hex(color, "#111111", 0.18),
             padx=12,
