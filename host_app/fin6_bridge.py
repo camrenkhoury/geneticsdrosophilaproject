@@ -7,12 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-import cv2
-
 from shared.config.project_paths import ASSAY_OUTPUT_DIR, CHANNEL_OUTPUT_DIR, FIN6_DIR
-from vision.fin6.assay_tracking import run_assay_session
-from vision.fin6.camera_sources import BrioCamera, BrioConfig
-from vision.fin6.fly_x_detector import process_fly_detection
 
 
 SETTINGS_PATH = FIN6_DIR / ".fly_tracking_gui_settings.json"
@@ -168,6 +163,11 @@ def get_setup_status() -> Fin6SetupStatus:
 
 
 def detect_channel_once_from_saved_settings() -> dict[str, Any]:
+    import cv2
+
+    from vision.fin6.camera_sources import BrioCamera, BrioConfig
+    from vision.fin6.fly_x_detector import process_fly_detection
+
     status = get_setup_status()
     if not status.channel_ready:
         missing = []
@@ -220,6 +220,8 @@ def run_assay_from_saved_settings(
     preview_callback: Callable[[dict[str, Any], list[dict[str, Any]], dict[str, Any]], None] | None = None,
     stop_event=None,
 ) -> dict[str, Any]:
+    from vision.fin6.assay_tracking import run_assay_session
+
     status = get_setup_status()
     if not status.assay_ready:
         missing = []

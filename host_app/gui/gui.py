@@ -588,6 +588,8 @@ class DrosophilaGUI:
         self.remote_api_key_var = tk.StringVar(value=self.remote_settings.api_key)
         self.detection_var = tk.StringVar(value="Waiting for channel detection output.")
         self.output_dir_var = tk.StringVar(value=str(self._default_channel_output_dir()))
+        self.channel_setup_var = tk.StringVar(value="Checking fin6 channel setup...")
+        self.assay_setup_var = tk.StringVar(value="Checking fin6 assay setup...")
         self.device_state_labels: dict[str, tk.Label] = {}
         self.device_state_text: dict[str, tk.StringVar] = {}
         self.device_detail_text: dict[str, tk.StringVar] = {}
@@ -602,6 +604,7 @@ class DrosophilaGUI:
         self._set_window_icon()
         self.set_status("idle", "Ready")
         self.log_message(f"Channel output directory: {self.output_dir_var.get()}")
+        self._refresh_fin6_setup_status_display()
         self.update_position()
         self.update_channel_preview()
         self.process_queue()
@@ -831,6 +834,39 @@ class DrosophilaGUI:
         while not prompt_state["event"].wait(0.1):
             self._check_stop()
         return bool(prompt_state["response"])
+
+    def _refresh_fin6_setup_status_display(self) -> None:
+        try:
+            fin6_bridge = self._load_fin6_bridge()
+            status = fin6_bridge.get_setup_status()
+        except Exception as exc:
+            message = f"Unavailable: {type(exc).__name__}"
+            self.channel_setup_var.set(message)
+            self.assay_setup_var.set(message)
+        else:
+            channel_parts = []
+            if status.channel_background_ready:
+                channel_parts.append("background ready")
+            else:
+                channel_parts.append("background missing")
+            if status.channel_calibration_ready:
+                channel_parts.append("calibration ready")
+            else:
+                channel_parts.append("calibration missing")
+            assay_parts = []
+            if status.assay_background_ready:
+                assay_parts.append("background ready")
+            else:
+                assay_parts.append("background missing")
+            if status.assay_calibration_ready:
+                assay_parts.append("calibration ready")
+            else:
+                assay_parts.append("calibration missing")
+            self.channel_setup_var.set("Channel: " + ", ".join(channel_parts))
+            self.assay_setup_var.set("Assay: " + ", ".join(assay_parts))
+
+        if getattr(self, "root", None) is not None:
+            self.root.after(2000, self._refresh_fin6_setup_status_display)
 
     def _resolve_asset_path(self, *candidate_names: str) -> Path | None:
         search_roots = (
@@ -2206,6 +2242,34 @@ class DrosophilaGUI:
         self.fin6_setup_button = self.make_button(vision_row, "Open fin6 Setup", "#607D8B", self.open_fin6_setup)
         self.fin6_setup_button.grid(row=0, column=1, sticky=tk.W)
         self.remote_unsupported_widgets.append(self.fin6_setup_button)
+
+        ttk.Label(status_frame, text="Channel Setup:", font=("Arial", 10, "bold")).grid(row=9, column=0, sticky=tk.W, pady=2)
+        self.channel_setup_label = tk.Label(
+            status_frame,
+            textvariable=self.channel_setup_var,
+            bg="#F7F7F7",
+            relief="sunken",
+            font=("Arial", 9),
+            padx=5,
+            pady=2,
+            anchor="w",
+            justify="left",
+        )
+        self.channel_setup_label.grid(row=9, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
+
+        ttk.Label(status_frame, text="Assay Setup:", font=("Arial", 10, "bold")).grid(row=10, column=0, sticky=tk.W, pady=2)
+        self.assay_setup_label = tk.Label(
+            status_frame,
+            textvariable=self.assay_setup_var,
+            bg="#F7F7F7",
+            relief="sunken",
+            font=("Arial", 9),
+            padx=5,
+            pady=2,
+            anchor="w",
+            justify="left",
+        )
+        self.assay_setup_label.grid(row=10, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
     def create_main_content(self, parent):
         content_frame = ttk.Frame(parent)
