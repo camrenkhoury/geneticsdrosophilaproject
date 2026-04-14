@@ -588,8 +588,6 @@ class DrosophilaGUI:
         self.remote_api_key_var = tk.StringVar(value=self.remote_settings.api_key)
         self.detection_var = tk.StringVar(value="Waiting for channel detection output.")
         self.output_dir_var = tk.StringVar(value=str(self._default_channel_output_dir()))
-        self.channel_setup_var = tk.StringVar(value="Not checked yet")
-        self.assay_setup_var = tk.StringVar(value="Not checked yet")
         self.device_state_labels: dict[str, tk.Label] = {}
         self.device_state_text: dict[str, tk.StringVar] = {}
         self.device_detail_text: dict[str, tk.StringVar] = {}
@@ -669,9 +667,6 @@ class DrosophilaGUI:
             messagebox.showerror("fin6 Integration Unavailable", f"{action_label} requires the fin6 integration.\n\n{exc}")
             return None
 
-    def _get_fin6_bridge_if_loaded(self):
-        return self._fin6_bridge_cache
-
     def _get_local_gpio_available(self) -> bool | None:
         runtime = self._get_local_runtime_if_loaded()
         if runtime is None:
@@ -732,7 +727,6 @@ class DrosophilaGUI:
         else:
             self.log_message(f"Opened fin6 setup GUI (pid {pid_text}).")
         self.set_status("running", "Opened fin6 setup GUI.")
-        self._refresh_fin6_setup_status_display()
         return True
 
     def open_fin6_setup(self):
@@ -750,7 +744,6 @@ class DrosophilaGUI:
             return None
 
         fin6_status = fin6_bridge.get_setup_status()
-        self._refresh_fin6_setup_status_display()
         issues = self._collect_fin6_setup_issues(fin6_status, require_channel=require_channel, require_assay=require_assay)
         if not issues:
             return fin6_bridge
@@ -838,42 +831,6 @@ class DrosophilaGUI:
         while not prompt_state["event"].wait(0.1):
             self._check_stop()
         return bool(prompt_state["response"])
-
-    def _refresh_fin6_setup_status_display(self) -> None:
-        fin6_bridge = self._get_fin6_bridge_if_loaded()
-        if fin6_bridge is None:
-            self.channel_setup_var.set("Not checked yet")
-            self.assay_setup_var.set("Not checked yet")
-            return
-
-        try:
-            status = fin6_bridge.get_setup_status()
-        except Exception as exc:
-            message = f"Unavailable: {type(exc).__name__}"
-            self.channel_setup_var.set(message)
-            self.assay_setup_var.set(message)
-            return
-
-        channel_parts = []
-        if status.channel_background_ready:
-            channel_parts.append("background ready")
-        else:
-            channel_parts.append("background missing")
-        if status.channel_calibration_ready:
-            channel_parts.append("calibration ready")
-        else:
-            channel_parts.append("calibration missing")
-        assay_parts = []
-        if status.assay_background_ready:
-            assay_parts.append("background ready")
-        else:
-            assay_parts.append("background missing")
-        if status.assay_calibration_ready:
-            assay_parts.append("calibration ready")
-        else:
-            assay_parts.append("calibration missing")
-        self.channel_setup_var.set("Channel: " + ", ".join(channel_parts))
-        self.assay_setup_var.set("Assay: " + ", ".join(assay_parts))
 
     def _resolve_asset_path(self, *candidate_names: str) -> Path | None:
         search_roots = (
@@ -2236,47 +2193,6 @@ class DrosophilaGUI:
             justify="left",
         )
         self.output_dir_label.grid(row=7, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
-
-        ttk.Label(status_frame, text="Vision Setup:", font=("Arial", 10, "bold")).grid(row=8, column=0, sticky=tk.W, pady=2)
-        vision_row = ttk.Frame(status_frame)
-        vision_row.grid(row=8, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
-        vision_row.columnconfigure(2, weight=1)
-
-        self.detect_channel_button = self.make_button(vision_row, "Detect Channel", "#2196F3", self.run_channel_detection)
-        self.detect_channel_button.grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
-        self.remote_unsupported_widgets.append(self.detect_channel_button)
-
-        self.fin6_setup_button = self.make_button(vision_row, "Open fin6 Setup", "#607D8B", self.open_fin6_setup)
-        self.fin6_setup_button.grid(row=0, column=1, sticky=tk.W)
-        self.remote_unsupported_widgets.append(self.fin6_setup_button)
-
-        ttk.Label(status_frame, text="Channel Setup:", font=("Arial", 10, "bold")).grid(row=9, column=0, sticky=tk.W, pady=2)
-        self.channel_setup_label = tk.Label(
-            status_frame,
-            textvariable=self.channel_setup_var,
-            bg="#F7F7F7",
-            relief="sunken",
-            font=("Arial", 9),
-            padx=5,
-            pady=2,
-            anchor="w",
-            justify="left",
-        )
-        self.channel_setup_label.grid(row=9, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
-
-        ttk.Label(status_frame, text="Assay Setup:", font=("Arial", 10, "bold")).grid(row=10, column=0, sticky=tk.W, pady=2)
-        self.assay_setup_label = tk.Label(
-            status_frame,
-            textvariable=self.assay_setup_var,
-            bg="#F7F7F7",
-            relief="sunken",
-            font=("Arial", 9),
-            padx=5,
-            pady=2,
-            anchor="w",
-            justify="left",
-        )
-        self.assay_setup_label.grid(row=10, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
     def create_main_content(self, parent):
         content_frame = ttk.Frame(parent)
