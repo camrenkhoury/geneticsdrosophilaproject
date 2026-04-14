@@ -588,6 +588,21 @@ class DrosophilaGUI:
         self.remote_api_key_var = tk.StringVar(value=self.remote_settings.api_key)
         self.detection_var = tk.StringVar(value="Waiting for channel detection output.")
         self.output_dir_var = tk.StringVar(value=str(self._default_channel_output_dir()))
+        self.sort_stage_var = tk.StringVar(value="Waiting for START.")
+        self.sort_cycle_var = tk.StringVar(value="0")
+        self.sort_detected_var = tk.StringVar(value="--")
+        self.sort_pickup_var = tk.StringVar(value="--")
+        self.sort_last_sex_var = tk.StringVar(value="--")
+        self.sort_confidence_var = tk.StringVar(value="--")
+        self.sort_destination_var = tk.StringVar(value="--")
+        self.sort_notes_var = tk.StringVar(value="Tube counts and classifier output will appear here during automated loading.")
+        self.sort_tube_count_vars = {
+            "T1": tk.StringVar(value="0 / 10"),
+            "T2": tk.StringVar(value="0 / 10"),
+            "T3": tk.StringVar(value="0 / 10"),
+            "T4": tk.StringVar(value="0 / 10"),
+            "T5": tk.StringVar(value="0 / 10"),
+        }
         self.device_state_labels: dict[str, tk.Label] = {}
         self.device_state_text: dict[str, tk.StringVar] = {}
         self.device_detail_text: dict[str, tk.StringVar] = {}
@@ -600,6 +615,7 @@ class DrosophilaGUI:
 
         self.create_widgets()
         self._set_window_icon()
+        self._reset_sorting_status_display()
         self.set_status("idle", "Ready")
         self.log_message(f"Channel output directory: {self.output_dir_var.get()}")
         self.update_position()
@@ -2194,6 +2210,21 @@ class DrosophilaGUI:
         )
         self.output_dir_label.grid(row=7, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
+        ttk.Label(status_frame, text="Vision Setup:", font=("Arial", 10, "bold")).grid(row=8, column=0, sticky=tk.W, pady=2)
+        vision_row = ttk.Frame(status_frame)
+        vision_row.grid(row=8, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
+        vision_row.columnconfigure(0, weight=0)
+        vision_row.columnconfigure(1, weight=0)
+        vision_row.columnconfigure(2, weight=1)
+
+        self.detect_channel_button = self.make_button(vision_row, "Detect Channel", "#9C27B0", self.run_channel_detection)
+        self.detect_channel_button.grid(row=0, column=0, sticky=tk.W)
+        self.remote_unsupported_widgets.append(self.detect_channel_button)
+
+        self.fin6_setup_button = self.make_button(vision_row, "Open fin6 Setup", "#607D8B", self.open_fin6_setup)
+        self.fin6_setup_button.grid(row=0, column=1, sticky=tk.W, padx=(8, 0))
+        self.remote_unsupported_widgets.append(self.fin6_setup_button)
+
     def create_main_content(self, parent):
         content_frame = ttk.Frame(parent)
         content_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.N, tk.S, tk.W, tk.E), pady=(0, 10))
@@ -2321,55 +2352,88 @@ class DrosophilaGUI:
         )
         self.register_toggle(self.vibration_switch)
 
-        ops_frame = ttk.LabelFrame(controls_frame, text="Operations", style="Ops.TLabelframe", padding=(10, 6, 10, 8))
-        ops_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
-        ops_frame.columnconfigure(0, weight=1)
-        ops_frame.rowconfigure(0, weight=0)
+        status_frame = ttk.LabelFrame(controls_frame, text="Sorting Status", padding=(10, 8))
+        status_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
+        status_frame.columnconfigure(1, weight=1)
 
-        operations_content = tk.Frame(ops_frame, bg="#F8E8F0")
-        operations_content.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E))
-        operations_content.columnconfigure(0, weight=1)
-        operations_content.columnconfigure(1, weight=0)
-        operations_content.rowconfigure(0, weight=0)
-        operations_content.rowconfigure(1, weight=0)
+        metric_rows = [
+            ("Stage", self.sort_stage_var),
+            ("Cycle", self.sort_cycle_var),
+            ("Detected", self.sort_detected_var),
+            ("Pickup X", self.sort_pickup_var),
+            ("Last Sex", self.sort_last_sex_var),
+            ("Confidence", self.sort_confidence_var),
+            ("Destination", self.sort_destination_var),
+        ]
+        for row_index, (label_text, value_var) in enumerate(metric_rows):
+            ttk.Label(status_frame, text=f"{label_text}:", font=("Arial", 9, "bold")).grid(
+                row=row_index,
+                column=0,
+                sticky=tk.W,
+                pady=2,
+            )
+            tk.Label(
+                status_frame,
+                textvariable=value_var,
+                bg="#F7F7F7",
+                relief="sunken",
+                font=("Arial", 9),
+                padx=5,
+                pady=2,
+                anchor="w",
+                justify="left",
+            ).grid(row=row_index, column=1, sticky=(tk.W, tk.E), pady=2)
 
-        action_frame = tk.Frame(operations_content, bg="#F8E8F0")
-        action_frame.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E))
-        action_frame.columnconfigure(0, weight=1)
-        top_button_spacer = tk.Frame(action_frame, bg="#F8E8F0", height=self.gui_profile.operations_button_margin)
-        top_button_spacer.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        ttk.Separator(status_frame, orient="horizontal").grid(row=len(metric_rows), column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(8, 8))
 
-        self.run_button = self.make_button(action_frame, "Run Automated", "#9C27B0", self.run_automated)
-        self.run_button.grid(row=1, column=0, sticky=(tk.W, tk.E))
-        self.remote_unsupported_widgets.append(self.run_button)
+        tube_frame = tk.Frame(status_frame, bg=self.root.cget("bg"))
+        tube_frame.grid(row=len(metric_rows) + 1, column=0, columnspan=2, sticky=(tk.W, tk.E))
+        tube_frame.columnconfigure(1, weight=1)
+        tube_roles = {
+            "T1": "Damaged / Rejected",
+            "T2": "Male",
+            "T3": "Female",
+            "T4": "Male",
+            "T5": "Female",
+        }
+        for row_index, tube_key in enumerate(("T1", "T2", "T3", "T4", "T5")):
+            ttk.Label(tube_frame, text=f"{tube_key}:", font=("Arial", 9, "bold")).grid(row=row_index, column=0, sticky=tk.W, pady=2)
+            ttk.Label(
+                tube_frame,
+                text=f"{tube_roles[tube_key]}  ",
+                font=("Arial", 8),
+                foreground="#52606D",
+            ).grid(row=row_index, column=1, sticky=tk.W, pady=2)
+            tk.Label(
+                tube_frame,
+                textvariable=self.sort_tube_count_vars[tube_key],
+                bg="#FFFFFF",
+                relief="sunken",
+                font=("Arial", 9),
+                padx=5,
+                pady=2,
+                width=8,
+                anchor="center",
+            ).grid(row=row_index, column=2, sticky=tk.E, padx=(8, 0), pady=2)
 
-        self.assay_button = self.make_button(action_frame, "Run Assay", "#9C27B0", self.run_assay)
-        self.assay_button.grid(row=3, column=0, sticky=(tk.W, tk.E))
-
-        self.classify_button = self.make_button(action_frame, "Classify Fly", "#9C27B0", self.classify_fly_gui)
-        self.classify_button.grid(row=5, column=0, sticky=(tk.W, tk.E))
-
-        gap1 = tk.Frame(action_frame, bg="#F8E8F0", height=self.gui_profile.operations_button_gap)
-        gap1.grid(row=2, column=0, sticky=(tk.W, tk.E))
-        gap2 = tk.Frame(action_frame, bg="#F8E8F0", height=self.gui_profile.operations_button_gap)
-        gap2.grid(row=4, column=0, sticky=(tk.W, tk.E))
-        bottom_spacer = tk.Frame(action_frame, bg="#F8E8F0", height=self.gui_profile.operations_button_margin)
-        bottom_spacer.grid(row=6, column=0, sticky=(tk.W, tk.E))
-
-        self._ops_top_spacer = top_button_spacer
-        self._ops_gap1 = gap1
-        self._ops_gap2 = gap2
-        self._ops_bottom_spacer = bottom_spacer
-
-        logo_area = self.create_operations_logo(operations_content)
-
-        self.operations_frame = ops_frame
-        self.operations_content = operations_content
-        self.operations_action_frame = action_frame
-        self.operations_logo_area = logo_area
-        self._ops_layout_mode = None
-        ops_frame.bind("<Configure>", self._on_operations_resize)
-        self.root.after(50, self._update_operations_layout)
+        ttk.Label(status_frame, text="Notes:", font=("Arial", 9, "bold")).grid(
+            row=len(metric_rows) + 2,
+            column=0,
+            sticky=tk.NW,
+            pady=(8, 2),
+        )
+        tk.Label(
+            status_frame,
+            textvariable=self.sort_notes_var,
+            bg="#F7F7F7",
+            relief="sunken",
+            font=("Arial", 8),
+            padx=5,
+            pady=4,
+            anchor="w",
+            justify="left",
+            wraplength=220,
+        ).grid(row=len(metric_rows) + 2, column=1, sticky=(tk.W, tk.E), pady=(8, 2))
 
     def create_system_controls(self, parent):
         system_frame = ttk.LabelFrame(parent, text="System Control", padding="10")
@@ -2804,6 +2868,8 @@ class DrosophilaGUI:
                     self.show_classification_result(item[1])
                 elif kind == "local_channel_detection":
                     self._apply_local_channel_detection(item[1])
+                elif kind == "automation_snapshot":
+                    self._apply_automation_snapshot(item[1])
                 elif kind == "clear_stop":
                     self.stop_requested.clear()
                 elif kind == "prompt_yes_no":
@@ -2886,6 +2952,9 @@ class DrosophilaGUI:
         class_name = result.get("class", "UNCERTAIN")
         confidence = result.get("confidence", 0.0)
         errors = result.get("errors", [])
+        self.sort_last_sex_var.set(str(class_name).title() if str(class_name).lower() in {"male", "female"} else str(class_name))
+        self.sort_confidence_var.set(f"{float(confidence):.4f}")
+        self.sort_notes_var.set(", ".join(str(error) for error in errors) if errors else "Manual classification complete.")
         message = f"Class: {class_name}\nConfidence: {confidence:.4f}"
         if errors:
             message += f"\nErrors: {', '.join(errors)}"
@@ -3025,6 +3094,7 @@ class DrosophilaGUI:
         remaining = bool(result.get("fly_remaining", False))
         modified = time.strftime("%H:%M:%S", time.localtime(result_path.stat().st_mtime))
         self.detection_var.set(f"remaining={remaining} count={count} last_update={modified}")
+        self.sort_detected_var.set(str(count))
         self.last_result_mtime = result_path.stat().st_mtime
 
         if annotated_path.exists():
@@ -3032,6 +3102,54 @@ class DrosophilaGUI:
             self.last_preview_mtime = annotated_path.stat().st_mtime
         else:
             self.set_preview_placeholder("Waiting for channel detection image...")
+
+    def _reset_sorting_status_display(self) -> None:
+        self.sort_stage_var.set("Waiting for START.")
+        self.sort_cycle_var.set("0")
+        self.sort_detected_var.set("--")
+        self.sort_pickup_var.set("--")
+        self.sort_last_sex_var.set("--")
+        self.sort_confidence_var.set("--")
+        self.sort_destination_var.set("--")
+        self.sort_notes_var.set("Tube counts and classifier output will appear here during automated loading.")
+        for var in self.sort_tube_count_vars.values():
+            var.set("0 / 10")
+
+    def _apply_automation_snapshot(self, snapshot: dict[str, Any]) -> None:
+        stage = str(snapshot.get("stage") or "running").strip() or "running"
+        cycle_index = int(snapshot.get("cycle_index") or 0)
+        detection_count = snapshot.get("detection_count")
+        pickup_position = snapshot.get("pickup_position_mm")
+        destination_label = snapshot.get("destination_label")
+        classification = snapshot.get("classification") or {}
+
+        self.sort_stage_var.set(stage.replace("_", " ").title())
+        self.sort_cycle_var.set(str(cycle_index))
+        self.sort_detected_var.set("--" if detection_count is None else str(int(detection_count)))
+        self.sort_pickup_var.set("--" if pickup_position is None else f"{float(pickup_position):.2f} mm")
+        self.sort_destination_var.set(str(destination_label or "--"))
+
+        class_name = str(classification.get("class") or "--")
+        self.sort_last_sex_var.set(class_name.title() if class_name.lower() in {"male", "female"} else class_name)
+        if "confidence" in classification and classification.get("confidence") is not None:
+            self.sort_confidence_var.set(f"{float(classification.get('confidence', 0.0)):.4f}")
+        else:
+            self.sort_confidence_var.set("--")
+
+        errors = classification.get("errors") or []
+        if errors:
+            self.sort_notes_var.set(", ".join(str(error) for error in errors))
+        elif destination_label:
+            self.sort_notes_var.set(f"Routing to {destination_label}.")
+        else:
+            self.sort_notes_var.set("Awaiting the next automated step.")
+
+        tube_counts = snapshot.get("tube_counts") or {}
+        for key, var in self.sort_tube_count_vars.items():
+            tube_info = tube_counts.get(key) or {}
+            count = int(tube_info.get("count", 0) or 0)
+            capacity = int(tube_info.get("capacity", 10) or 10)
+            var.set(f"{count} / {capacity}")
 
     def update_channel_preview(self):
         if self.is_remote_mode():
@@ -3296,105 +3414,44 @@ class DrosophilaGUI:
         self._set_vibration(False)
         self.ui_queue.put(("clear_stop",))
 
+    def _launch_assay_gui_from_worker(self):
+        fin6_bridge = self._load_fin6_bridge()
+        process = fin6_bridge.launch_fin6_gui()
+        pid_text = getattr(process, "pid", None)
+        if pid_text is None:
+            self.worker_log("Opened the current fin6 assay GUI.")
+        else:
+            self.worker_log(f"Opened the current fin6 assay GUI (pid {pid_text}).")
+        return process
+
     def _run_automated_worker(self):
         runtime = self._load_local_runtime()
-        fin6_bridge = self._load_fin6_bridge()
-        motion = runtime["motion"]
+        final_operation = importlib.import_module("pi_app.legacy_pi.FinalOperation")
         classify_callable = runtime["classify_fly"]
-        chamber_drop_s = 2.0
-        chamber_settle_s = 6.0
-        chamber_pickup_s = 2.0
-        tube_drop_s = 2.0
-        camera_photo_position = self._clamp_operational(config.CHANNEL_LOCATION_END + 43.0)
 
-        cycle_index = 0
+        def detect_channel():
+            capture = self._run_local_channel_detection_capture()
+            result_path = Path(capture["result_path"])
+            if result_path.exists():
+                self.last_used_detection_mtime = result_path.stat().st_mtime
+            return capture
+
+        def publish_snapshot(snapshot: dict[str, Any]) -> None:
+            self.ui_queue.put(("automation_snapshot", snapshot))
 
         try:
-            while True:
-                self._check_stop()
-                cycle_index += 1
-
-                self.worker_status("running", f"Cycle {cycle_index}: homing gantry.")
-                self._set_vacuum(False)
-                motion.home_to_zero()
-
-                self.worker_status("moving", f"Cycle {cycle_index}: moving to channel photo position.")
-                motion.move_to_absolute(camera_photo_position)
-
-                self.worker_status("detecting", f"Cycle {cycle_index}: capturing channel detection image.")
-                detection_capture = self._run_local_channel_detection_capture()
-                result_path = Path(detection_capture["result_path"])
-                if result_path.exists():
-                    self.last_used_detection_mtime = result_path.stat().st_mtime
-
-                positions = self._load_positions_from_result(
-                    detection_capture.get("result"),
-                    str(result_path),
-                )
-
-                if positions == "done":
-                    self.worker_log("No more flies remaining. Ending automated run.")
-                    break
-                if positions is None:
-                    raise RuntimeError("Channel detection did not return a usable result.")
-
-                pickup_position = positions[0]
-                self.worker_log(f"Selected pickup position: {pickup_position:.2f} mm")
-
-                self.worker_status("running", f"Cycle {cycle_index}: accuracy reset home before pickup.")
-                self._set_vacuum(False)
-                motion.home_to_zero()
-
-                self.worker_status("moving", f"Cycle {cycle_index}: moving to pickup position.")
-                motion.move_to_absolute(pickup_position)
-
-                self.worker_status("picking", f"Cycle {cycle_index}: picking fly.")
-                self._set_vacuum(True)
-                self._sleep_with_stop(2.0)
-
-                self.worker_status("moving", "Moving to chamber center.")
-                motion.move_to_absolute(config.CHAMBER_CENTER)
-
-                self.worker_status("running", "Dropping fly in chamber.")
-                self._set_vacuum(False)
-                self._sleep_with_stop(chamber_drop_s)
-
-                self.worker_status("running", "Allowing the fly to settle in the chamber before classification.")
-                self._sleep_with_stop(chamber_settle_s)
-
-                classification_result = self._classify_for_automated_routing(classify_callable, cycle_index)
-                tube_label, tube_position = self._resolve_tube_for_classification(classification_result)
-                self.worker_log(f"Cycle {cycle_index}: routing {classification_result.get('class')} to {tube_label}.")
-
-                self.worker_status("picking", "Picking fly from chamber.")
-                self._set_vacuum(True)
-                self._sleep_with_stop(chamber_pickup_s)
-
-                self.worker_status("moving", f"Moving to {tube_label}.")
-                motion.move_to_absolute(tube_position)
-
-                self.worker_status("running", f"Dropping fly into {tube_label}.")
-                self._set_vacuum(False)
-                self._sleep_with_stop(tube_drop_s)
-
-                self.worker_status("running", f"Cycle {cycle_index}: returning home.")
-                motion.home_to_zero()
-
-            ready_for_assay = self._ask_user_yes_no_from_worker(
-                "Ready To Start Assay",
-                "Sorting is complete.\n\nConfirm that the assay arena is prepared and the saved fin6 calibration is ready.\n\nStart the fin6 assay now?",
+            final_operation.run_operation(
+                detect_channel=detect_channel,
+                classify_fly=classify_callable,
+                ask_yes_no=self._ask_user_yes_no_from_worker,
+                launch_assay_gui=self._launch_assay_gui_from_worker,
+                status_callback=self.worker_status,
+                log_callback=self.worker_log,
+                snapshot_callback=publish_snapshot,
+                stop_requested=self.stop_requested.is_set,
             )
-            if not ready_for_assay:
-                self.worker_log("Operator declined the final assay prompt. Automated run finished without starting assay.")
-                return
-
-            self.worker_status("assaying", "Running fin6 assay from saved settings.")
-            assay_result = fin6_bridge.run_assay_from_saved_settings()
-            output_dir = assay_result.get("output_dir")
-            if output_dir:
-                self.worker_log(f"Assay completed. Output: {output_dir}")
-        finally:
-            self._set_vacuum(False)
+        except getattr(final_operation, "OperationCancelled"):
+            raise TaskCancelled
 
     def home_gantry(self):
         if self.is_remote_mode():
@@ -3511,6 +3568,9 @@ class DrosophilaGUI:
             return
         if not self._prompt_fin6_preflight("Run Automated", require_channel=True, require_assay=True, automation=True):
             return
+        self._reset_sorting_status_display()
+        self.sort_stage_var.set("Preflight complete")
+        self.sort_notes_var.set("Automated loading is starting with saved fin6 calibration.")
         self.start_task(
             "automated run",
             "running",

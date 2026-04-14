@@ -1,0 +1,395 @@
+from __future__ import annotations
+
+import importlib
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from shared.config.project_paths import DETECTION_RESULT_PATH, ensure_code_directory_on_path
+
+CODE_DIR = ensure_code_directory_on_path()
+REPO_ROOT = CODE_DIR.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+import config
+
+
+class OperationCancelled(Exception):
+    """Raised when the operator stops the automated flow."""
+
+
+@dataclass
+class TubeState:
+    key: str
+    label: str
+    role: str
+    position_mm: float
+    capacity: int = 10
+    count: int = 0
+
+
+def _noop(*_args, **_kwargs) -> None:
+    return None
+
+
+def _console_yes_no(title: str, message: str) -> bool:
+    print(f"\n[{title}]")
+    print(message)
+    while True:
+        answer = input("Continue? (y/n): ").strip().lower()
+        if answer in {"y", "yes"}:
+            return True
+        if answer in {"n", "no"}:
+            return False
+
+
+def _sleep_with_stop(seconds: float, stop_requested: Callable[[], bool] | None) -> None:
+    end_time = time.monotonic() + seconds
+    while True:
+        if stop_requested is not None and stop_requested():
+            raise OperationCancelled
+        remaining = end_time - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(0.1, remaining))
+
+
+def _publish_snapshot(
+    tube_states: dict[str, TubeState],
+    *,
+    snapshot_callback: Callable[[dict[str, Any]], None] | None,
+    cycle_index: int = 0,
+    detection_count: int | None = None,
+    pickup_position_mm: float | None = None,
+    classification_result: dict[str, Any] | None = None,
+    destination_key: str | None = None,
+    destination_label: str | None = None,
+    stage: str | None = None,
+) -> None:
+    if snapshot_callback is None:
+        return
+    snapshot_callback(
+        {
+            "cycle_index": int(cycle_index),
+            "detection_count": None if detection_count is None else int(detection_count),
+            "pickup_position_mm": pickup_position_mm,
+            "stage": stage or "",
+            "classification": None
+            if classification_result is None
+            else {
+                "class": str(classification_result.get("class", "UNCERTAIN")),
+                "confidence": float(classification_result.get("confidence", 0.0)),
+                "errors": list(classification_result.get("errors", []) or []),
+            },
+            "destination_key": destination_key,
+            "destination_label": destination_label,
+            "tube_counts": {
+                key: {
+                    "label": tube.label,
+                    "role": tube.role,
+                    "count": int(tube.count),
+                    "capacity": int(tube.capacity),
+                }
+                for key, tube in tube_states.items()
+            },
+        }
+    )
+
+
+def _build_tube_states() -> dict[str, TubeState]:
+    return {
+        "T1": TubeState("T1", "Tube 1", "Damaged / Rejected", config.TUBE_1_CENTER),
+        "T2": TubeState("T2", "Tube 2", "Male", config.TUBE_2_CENTER),
+        "T3": TubeState("T3", "Tube 3", "Female", config.TUBE_3_CENTER),
+        "T4": TubeState("T4", "Tube 4", "Male", config.TUBE_4_CENTER),
+        "T5": TubeState("T5", "Tube 5", "Female", config.TUBE_5_CENTER),
+    }
+
+
+def _sorted_pickup_positions(result: dict[str, Any], clamp_operational: Callable[[float], float]) -> list[float] | str | None:
+    if not result.get("fly_remaining", False):
+        return "done"
+
+    raw_positions = result.get("x_positions_mm")
+    if raw_positions is None or not isinstance(raw_positions, list):
+        return None
+
+    try:
+        numeric_positions = [float(value) for value in raw_positions]
+    except (TypeError, ValueError):
+        return None
+
+    if not numeric_positions:
+        return "done"
+
+    adjusted = [clamp_operational(float(value) + config.PICKUP_POSITION_CORRECTION_MM) for value in numeric_positions]
+    return sorted(adjusted, reverse=True)
+
+
+def _load_detection_from_json_interactive(log_callback: Callable[[str], None]) -> dict[str, Any]:
+    while True:
+        ready = input("Channel Detection Finished (Y/N)? ").strip().upper()
+        if ready == "N":
+            log_callback("Waiting for channel detection to finish...")
+            continue
+        if ready != "Y":
+            log_callback("Invalid input. Enter Y or N.")
+            continue
+        try:
+            import json
+
+            with open(DETECTION_RESULT_PATH, "r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except FileNotFoundError:
+            log_callback(f"JSON file not found: {DETECTION_RESULT_PATH}")
+        except json.JSONDecodeError:
+            log_callback(f"Invalid JSON format in: {DETECTION_RESULT_PATH}")
+
+
+def _default_launch_assay_gui() -> Any:
+    try:
+        fin6_bridge = importlib.import_module("host_app.fin6_bridge")
+        return fin6_bridge.launch_fin6_gui()
+    except Exception:
+        script_path = REPO_ROOT / "vision" / "fin6" / "fly_tracking_gui.py"
+        return subprocess.Popen([sys.executable, str(script_path)], cwd=str(script_path.parent))
+
+
+def _default_detect_channel(log_callback: Callable[[str], None]) -> dict[str, Any]:
+    result = _load_detection_from_json_interactive(log_callback)
+    return {
+        "result": result,
+        "result_path": DETECTION_RESULT_PATH,
+    }
+
+
+def _resolve_destination(
+    classification_result: dict[str, Any],
+    tube_states: dict[str, TubeState],
+) -> tuple[TubeState, str]:
+    class_name = str(classification_result.get("class") or "UNCERTAIN").strip().lower()
+    errors = list(classification_result.get("errors", []) or [])
+
+    if class_name == "male":
+        candidates = ["T2", "T4"]
+        reject_reason = "male overflow"
+    elif class_name == "female":
+        candidates = ["T3", "T5"]
+        reject_reason = "female overflow"
+    else:
+        candidates = []
+        reject_reason = "damaged/rejected"
+
+    for key in candidates:
+        tube = tube_states[key]
+        if tube.count < tube.capacity:
+            return tube, tube.role
+
+    reject_tube = tube_states["T1"]
+    if reject_tube.count < reject_tube.capacity:
+        return reject_tube, reject_reason
+
+    raise RuntimeError("No destination tube with remaining capacity is available.")
+
+
+def run_operation(
+    *,
+    detect_channel: Callable[[], dict[str, Any]] | None = None,
+    classify_fly: Callable[[], dict[str, Any]] | None = None,
+    ask_yes_no: Callable[[str, str], bool] | None = None,
+    launch_assay_gui: Callable[[], Any] | None = None,
+    status_callback: Callable[[str, str], None] | None = None,
+    log_callback: Callable[[str], None] | None = None,
+    snapshot_callback: Callable[[dict[str, Any]], None] | None = None,
+    stop_requested: Callable[[], bool] | None = None,
+) -> dict[str, Any]:
+    motion = importlib.import_module("motion")
+    vacuum = importlib.import_module("vacuum")
+
+    classify_callable = classify_fly or importlib.import_module("fly_classifier").classify_fly
+    detect_callable = detect_channel or (lambda: _default_detect_channel(log))
+    ask_callable = ask_yes_no or _console_yes_no
+    launch_assay_callable = launch_assay_gui or _default_launch_assay_gui
+    status = status_callback or _noop
+    log = log_callback or print
+
+    chamber_drop_s = 2.0
+    chamber_settle_s = 6.0
+    chamber_pickup_s = 2.0
+    tube_drop_s = 2.0
+
+    tube_states = _build_tube_states()
+    cycle_index = 0
+    last_detection_count = 0
+    last_classification: dict[str, Any] | None = None
+    last_destination: TubeState | None = None
+
+    def check_stop() -> None:
+        if stop_requested is not None and stop_requested():
+            raise OperationCancelled
+
+    def clamp_operational(position_mm: float) -> float:
+        return max(0.0, min(float(position_mm), float(motion.get_operational_max_mm())))
+
+    camera_photo_position = clamp_operational(config.CHANNEL_LOCATION_END + 43.0)
+    _publish_snapshot(tube_states, snapshot_callback=snapshot_callback, stage="idle")
+
+    try:
+        while True:
+            check_stop()
+            cycle_index += 1
+
+            status("running", f"Cycle {cycle_index}: homing gantry.")
+            log(f"Cycle {cycle_index}: homing gantry.")
+            vacuum.vacuum_off()
+            motion.home_to_zero()
+
+            status("moving", f"Cycle {cycle_index}: moving to channel photo position.")
+            motion.move_to_absolute(camera_photo_position)
+
+            status("detecting", f"Cycle {cycle_index}: capturing channel detection image.")
+            log(f"Cycle {cycle_index}: running channel detection.")
+            detection_payload = detect_callable()
+            detection_result = dict(detection_payload.get("result") or {})
+            pickup_positions = _sorted_pickup_positions(detection_result, clamp_operational)
+            last_detection_count = int(detection_result.get("count", 0) or 0)
+            _publish_snapshot(
+                tube_states,
+                snapshot_callback=snapshot_callback,
+                cycle_index=cycle_index,
+                detection_count=last_detection_count,
+                stage="detecting",
+            )
+
+            if pickup_positions == "done":
+                log("Detection reported no flies remaining. Sorting run is complete.")
+                break
+            if pickup_positions is None:
+                raise RuntimeError("Channel detection did not return usable x_positions_mm data.")
+
+            pickup_position = float(pickup_positions[0])
+            log(f"Cycle {cycle_index}: selected pickup position {pickup_position:.2f} mm.")
+
+            status("running", f"Cycle {cycle_index}: reset home before pickup.")
+            vacuum.vacuum_off()
+            motion.home_to_zero()
+
+            status("moving", f"Cycle {cycle_index}: moving to pickup position.")
+            motion.move_to_absolute(pickup_position)
+
+            status("picking", f"Cycle {cycle_index}: picking fly.")
+            vacuum.vacuum_on()
+            _sleep_with_stop(2.0, stop_requested)
+
+            status("moving", f"Cycle {cycle_index}: moving to chamber.")
+            motion.move_to_absolute(config.CHAMBER_CENTER)
+
+            status("running", f"Cycle {cycle_index}: dropping in chamber.")
+            vacuum.vacuum_off()
+            _sleep_with_stop(chamber_drop_s, stop_requested)
+
+            status("running", f"Cycle {cycle_index}: waiting for chamber classification window.")
+            _sleep_with_stop(chamber_settle_s, stop_requested)
+
+            status("running", f"Cycle {cycle_index}: classifying fly.")
+            last_classification = dict(classify_callable() or {})
+            confidence = float(last_classification.get("confidence", 0.0) or 0.0)
+            log(
+                f"Cycle {cycle_index}: classification={last_classification.get('class', 'UNCERTAIN')} "
+                f"confidence={confidence:.4f} errors={last_classification.get('errors', [])}"
+            )
+
+            destination_tube, destination_reason = _resolve_destination(last_classification, tube_states)
+            last_destination = destination_tube
+            _publish_snapshot(
+                tube_states,
+                snapshot_callback=snapshot_callback,
+                cycle_index=cycle_index,
+                detection_count=last_detection_count,
+                pickup_position_mm=pickup_position,
+                classification_result=last_classification,
+                destination_key=destination_tube.key,
+                destination_label=destination_tube.label,
+                stage="classified",
+            )
+
+            status("picking", f"Cycle {cycle_index}: picking fly from chamber.")
+            vacuum.vacuum_on()
+            _sleep_with_stop(chamber_pickup_s, stop_requested)
+
+            status("moving", f"Cycle {cycle_index}: moving to {destination_tube.label}.")
+            motion.move_to_absolute(destination_tube.position_mm)
+
+            status("running", f"Cycle {cycle_index}: dropping into {destination_tube.label}.")
+            vacuum.vacuum_off()
+            _sleep_with_stop(tube_drop_s, stop_requested)
+            destination_tube.count += 1
+
+            log(
+                f"Cycle {cycle_index}: routed to {destination_tube.label} "
+                f"({destination_reason}). Count now {destination_tube.count}/{destination_tube.capacity}."
+            )
+            _publish_snapshot(
+                tube_states,
+                snapshot_callback=snapshot_callback,
+                cycle_index=cycle_index,
+                detection_count=last_detection_count,
+                pickup_position_mm=pickup_position,
+                classification_result=last_classification,
+                destination_key=destination_tube.key,
+                destination_label=destination_tube.label,
+                stage="routed",
+            )
+
+            status("running", f"Cycle {cycle_index}: returning home.")
+            motion.home_to_zero()
+
+        status("running", "No more flies detected. Awaiting assay confirmation.")
+        should_launch_assay = ask_callable(
+            "Start Assay",
+            "No more flies were detected in the channel.\n\nOpen the current assay GUI now?",
+        )
+        if should_launch_assay:
+            log("Opening assay GUI.")
+            status("assaying", "Opening assay GUI.")
+            launch_assay_callable()
+        else:
+            log("Operator declined assay GUI launch.")
+    finally:
+        vacuum.vacuum_off()
+
+    _publish_snapshot(
+        tube_states,
+        snapshot_callback=snapshot_callback,
+        cycle_index=cycle_index,
+        detection_count=last_detection_count,
+        classification_result=last_classification,
+        destination_key=None if last_destination is None else last_destination.key,
+        destination_label=None if last_destination is None else last_destination.label,
+        stage="complete",
+    )
+    status("idle", "Automated run complete.")
+    return {
+        "tube_counts": {
+            key: {"count": int(tube.count), "capacity": int(tube.capacity), "role": tube.role}
+            for key, tube in tube_states.items()
+        },
+        "last_classification": last_classification,
+        "last_destination": None if last_destination is None else last_destination.key,
+    }
+
+
+def main() -> None:
+    print("=== FinalOperation: automated gantry workflow ===")
+    print(f"Detection JSON path: {DETECTION_RESULT_PATH}")
+    try:
+        run_operation()
+    except OperationCancelled:
+        print("Automated run stopped by operator.")
+
+
+if __name__ == "__main__":
+    main()
