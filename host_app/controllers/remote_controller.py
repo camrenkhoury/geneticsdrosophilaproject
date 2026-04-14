@@ -14,6 +14,12 @@ from host_app.controllers.base_controller import (
 
 
 class RemoteController(BaseController):
+    _FEATURE_ROUTE_HINTS: dict[str, str] = {
+        "/fin6/setup_status": "Pi-side fin6 setup status",
+        "/fin6/launch_setup": "Pi-side fin6 setup launch",
+        "/detect_channel": "Pi-side channel detection",
+    }
+
     def __init__(
         self,
         *,
@@ -179,6 +185,14 @@ class RemoteController(BaseController):
         if response.status_code == 401:
             self._status_etag = None
             raise ControllerConnectionError(str(payload.get("detail", "Remote authentication failed.")))
+
+        if response.status_code == 404 and path in self._FEATURE_ROUTE_HINTS:
+            feature_name = self._FEATURE_ROUTE_HINTS[path]
+            raise ControllerError(
+                f"The connected Pi backend does not expose {feature_name} ({path}). "
+                "The host GUI is newer than the running backend. "
+                "Update/pull the repo copy the Pi service actually uses and restart the Pi backend service."
+            )
 
         if response.status_code >= 400:
             detail = payload.get("detail") or payload.get("message") or response.text
