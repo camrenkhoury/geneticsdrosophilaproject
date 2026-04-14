@@ -2558,11 +2558,13 @@ class DrosophilaGUI:
         else:
             desired_height = max(buttons_height, base_logo + (base_margin * 2))
 
-        scale = min(1.0, available_height / desired_height) if desired_height > 0 else 1.0
-        scale = max(0.6, scale)
+        # Linux: hide logo only when the panel is truly too short.
+        hide_logo = sys.platform.startswith("linux") and available_height < (buttons_height + 18)
+        if hide_logo and layout == "stacked":
+            desired_height = buttons_height
 
-        # Linux: hide logo if the panel is too small.
-        hide_logo = sys.platform.startswith("linux") and scale < 0.72
+        scale = 1.0 if available_height >= desired_height else (available_height / max(1, desired_height))
+        scale = max(0.75, min(1.0, scale))
 
         if layout != self._ops_layout_mode:
             if layout == "stacked":
