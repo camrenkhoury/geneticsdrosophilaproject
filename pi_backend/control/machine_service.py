@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import importlib
 import logging
+from typing import Any
 
 from pi_backend.adapters.detection_result_reader import DetectionResultReader
 from pi_backend.adapters.motion_adapter import MotionAdapter
@@ -38,6 +40,7 @@ class MachineService:
         self.detection_reader = DetectionResultReader(runtime_config.detection_result_path)
         self.assay_service = AssayService(runtime_state, self.vibration, self.logger)
         self.classify_service = ClassifyService(runtime_state, self.logger)
+        self._fin6_bridge = None
         self._initialize_runtime_state()
 
     def _initialize_runtime_state(self) -> None:
@@ -223,6 +226,51 @@ class MachineService:
             return str(exc)
         return None
 
+    def _load_fin6_bridge(self):
+        if self._fin6_bridge is not None:
+            return self._fin6_bridge
+        self._fin6_bridge = importlib.import_module("host_app.fin6_bridge")
+        return self._fin6_bridge
+
+    def get_fin6_setup_status(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        return fin6_bridge.setup_status_to_dict(fin6_bridge.get_setup_status())
+
+    def launch_fin6_setup(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        process = fin6_bridge.launch_fin6_gui()
+        pid = getattr(process, "pid", None)
+        message = "Opened fin6 setup GUI on the Pi."
+        if pid is not None:
+            message = f"Opened fin6 setup GUI on the Pi (pid {pid})."
+        self.runtime_state.append_log("INFO", message)
+        return {
+            "ok": True,
+            "message": message,
+            "pid": pid,
+        }
+
+    def validate_detect_channel_command(self) -> str | None:
+        fin6_bridge = self._load_fin6_bridge()
+        status = fin6_bridge.get_setup_status()
+        issues: list[str] = []
+        if not status.channel_background_ready:
+            issues.append(f"Channel background missing: {status.channel.background_path}")
+        if not status.channel_calibration_ready:
+            issues.append(f"Channel calibration missing: {status.channel.calibration_path}")
+        if not issues:
+            return None
+        return (
+            "Saved fin6 channel setup is missing on the Pi.\n"
+            "Preparation steps:\n"
+            "1. Empty the channel.\n"
+            "2. Move the nozzle out of the way.\n"
+            "3. Open fin6 Setup on the Pi.\n"
+            "4. Capture the channel background.\n"
+            "5. Calibrate the channel.\n\n"
+            + "\n".join(issues)
+        )
+
     def home(self) -> float:
         self._ensure_motion_ready()
         self.runtime_state.begin_task("home", TaskState.HOMING_RUNNING, "Homing gantry.")
@@ -325,6 +373,35 @@ class MachineService:
 
     def classify_fly(self) -> dict[str, object]:
         return self.classify_service.run()
+
+    def detect_channel(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        self.runtime_state.begin_task(
+            "detect_channel",
+            TaskState.AUTO_WAIT_FOR_DETECTION,
+            "Running fin6 channel detection on the Pi.",
+        )
+        self.runtime_state.set_orchestrator_state(
+            OrchestratorState.TASK_STARTING,
+            "Starting Pi-side fin6 channel detection.",
+        )
+        self.logger.info("Running fin6 channel detection on the Pi.")
+        try:
+            result = fin6_bridge.detect_channel_once_from_saved_settings()
+            summary = self.refresh_detection_summary()
+        except Exception:
+            self.runtime_state.fail_task(TaskState.AUTOMATED_ERROR, "Pi-side fin6 channel detection failed.")
+            self.logger.exception("Pi-side fin6 channel detection failed.")
+            raise
+
+        count = len(summary.corrected_positions_mm) or len(summary.x_positions_mm)
+        self.runtime_state.complete_task(
+            TaskState.AUTOMATED_COMPLETE,
+            f"Pi-side fin6 channel detection complete. count={count}.",
+        )
+        self.runtime_state.set_orchestrator_state(OrchestratorState.SYSTEM_IDLE, "Machine idle.")
+        self.logger.info("Pi-side fin6 channel detection complete with %d positions.", count)
+        return result
 
     def refresh_detection_summary(self) -> DetectionSummary:
         try:

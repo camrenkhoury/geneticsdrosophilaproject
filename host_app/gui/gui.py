@@ -18,6 +18,7 @@ import time
 import traceback
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 import tkinter as tk
 import tkinter.font as tkfont
@@ -596,6 +597,9 @@ class DrosophilaGUI:
         self.sort_confidence_var = tk.StringVar(value="--")
         self.sort_destination_var = tk.StringVar(value="--")
         self.sort_notes_var = tk.StringVar(value="Tube counts and classifier output will appear here during automated loading.")
+        self.channel_workspace_summary_var = tk.StringVar(value="")
+        self.sexing_workspace_summary_var = tk.StringVar(value="")
+        self.assay_workspace_summary_var = tk.StringVar(value="")
         self.sort_tube_count_vars = {
             "T1": tk.StringVar(value="0 / 10"),
             "T2": tk.StringVar(value="0 / 10"),
@@ -614,6 +618,7 @@ class DrosophilaGUI:
         self.local_vision_widgets = []
         self.manual_move_entry: ttk.Entry | None = None
 
+        self._refresh_workspace_copy()
         self.create_widgets()
         self._set_window_icon()
         self._reset_sorting_status_display()
@@ -726,6 +731,61 @@ class DrosophilaGUI:
                 issues.append(f"Assay calibration missing: {fin6_status.assay.calibration_path}")
         return issues
 
+    @staticmethod
+    def _to_namespace(value):
+        if isinstance(value, dict):
+            return SimpleNamespace(**{key: DrosophilaGUI._to_namespace(item) for key, item in value.items()})
+        if isinstance(value, list):
+            return [DrosophilaGUI._to_namespace(item) for item in value]
+        return value
+
+    def _fin6_setup_guidance_lines(self, require_channel: bool, require_assay: bool) -> list[str]:
+        location = "the Pi" if self.is_remote_mode() else "this machine"
+        lines: list[str] = [
+            f"Saved fin6 setup is required on {location}.",
+            "Automation and detect-once use the stored background/calibration files.",
+            "They do not capture a new background during runtime.",
+        ]
+        if require_channel:
+            lines.extend(
+                [
+                    "",
+                    "Channel setup steps:",
+                    f"1. On {location}, empty the channel.",
+                    "2. Move the nozzle out of the way.",
+                    "3. Open fin6 Setup.",
+                    "4. Press Capture background.",
+                    "5. Press Calibrate and save the result.",
+                ]
+            )
+        if require_assay:
+            lines.extend(
+                [
+                    "",
+                    "Assay setup steps:",
+                    f"1. On {location}, prepare the assay view for a clean background/calibration capture.",
+                    "2. Open fin6 Setup.",
+                    "3. Capture the assay background if it is missing.",
+                    "4. Run the assay calibration and save it.",
+                ]
+            )
+        return lines
+
+    def _refresh_workspace_copy(self) -> None:
+        location = "the Pi" if self.is_remote_mode() else "this machine"
+        self.channel_workspace_summary_var.set(
+            f"Channel detection uses the saved fin6 channel background and calibration on {location}. "
+            "Use Detect Channel here for a fresh annotated preview. Background capture is only needed when setup is missing."
+        )
+        self.sexing_workspace_summary_var.set(
+            "Sexing is driven by chamber classification during automated routing. "
+            "This tab shows the latest classification, confidence, routing destination, and live tube counts."
+        )
+        self.assay_workspace_summary_var.set(
+            f"Assay runs use the saved fin6 assay setup on {location}. "
+            "Use Run Assay here for a direct assay run, or START to run automation first and launch assay at the end."
+        )
+
     def _open_fin6_setup_with_bridge(self, fin6_bridge) -> bool:
         if self.worker_thread and self.worker_thread.is_alive():
             messagebox.showwarning("Busy", "Wait for the current task to finish before opening the fin6 setup GUI.")
@@ -746,46 +806,100 @@ class DrosophilaGUI:
         self.set_status("running", "Opened fin6 setup GUI.")
         return True
 
+    def _open_remote_fin6_setup(self) -> bool:
+        if self.worker_thread and self.worker_thread.is_alive():
+            messagebox.showwarning("Busy", "Wait for the current task to finish before opening the fin6 setup GUI.")
+            return False
+        if not self.is_remote_mode() or not self.remote_connected or self.remote_controller is None:
+            messagebox.showwarning("Disconnected", "Connect to the Pi backend before opening fin6 setup on the Pi.")
+            return False
+        try:
+            response = self.remote_controller.launch_fin6_setup()
+        except (ControllerConnectionError, ControllerError) as exc:
+            self.set_status("error", f"Could not open Pi fin6 setup: {exc}")
+            self.log_message(f"Could not open Pi fin6 setup GUI: {exc}")
+            messagebox.showerror("fin6 Setup Error", str(exc))
+            return False
+
+        ok = bool(response.get("ok", True))
+        message = str(response.get("message", "Opened fin6 setup GUI on the Pi."))
+        if not ok:
+            self.set_status("error", message)
+            self.log_message(f"Could not open Pi fin6 setup GUI: {message}")
+            messagebox.showerror("fin6 Setup Error", message)
+            return False
+
+        self.log_message(message)
+        self.set_status("running", message)
+        return True
+
+    def _get_remote_fin6_setup_status_or_warn(self, action_label: str):
+        if not self.is_remote_mode() or not self.remote_connected or self.remote_controller is None:
+            messagebox.showwarning("Disconnected", f"Connect to the Pi backend before using {action_label}.")
+            return None
+        try:
+            payload = self.remote_controller.get_fin6_setup_status()
+        except (ControllerConnectionError, ControllerError) as exc:
+            self.set_status("error", str(exc))
+            self.log_message(f"{action_label} unavailable: {exc}")
+            messagebox.showerror("fin6 Setup Error", f"{action_label} could not read the Pi fin6 setup.\n\n{exc}")
+            return None
+        return self._to_namespace(payload)
+
     def open_fin6_setup(self):
+        if self.is_remote_mode():
+            self._open_remote_fin6_setup()
+            return
         fin6_bridge = self._ensure_fin6_bridge_or_warn("Open fin6 Setup")
         if fin6_bridge is None:
             return
         self._open_fin6_setup_with_bridge(fin6_bridge)
 
     def _require_fin6_setup_ready(self, action_label: str, require_channel: bool, require_assay: bool):
-        fin6_bridge = self._ensure_fin6_bridge_or_warn(action_label)
-        if fin6_bridge is None:
-            return None
+        if self.is_remote_mode():
+            fin6_status = self._get_remote_fin6_setup_status_or_warn(action_label)
+            if fin6_status is None:
+                return None
+        else:
+            fin6_bridge = self._ensure_fin6_bridge_or_warn(action_label)
+            if fin6_bridge is None:
+                return None
+            fin6_status = fin6_bridge.get_setup_status()
 
-        fin6_status = fin6_bridge.get_setup_status()
         issues = self._collect_fin6_setup_issues(fin6_status, require_channel=require_channel, require_assay=require_assay)
         if not issues:
-            return fin6_bridge
+            return fin6_status
 
         message_lines = [
             f"{action_label} needs the saved fin6 setup to be ready.",
             "",
             *issues,
             "",
+            *self._fin6_setup_guidance_lines(require_channel, require_assay),
+            "",
             "Open the fin6 setup GUI now?",
         ]
         should_open = messagebox.askyesno("fin6 Setup Required", "\n".join(message_lines))
         if should_open:
-            self._open_fin6_setup_with_bridge(fin6_bridge)
+            if self.is_remote_mode():
+                self._open_remote_fin6_setup()
+            else:
+                self._open_fin6_setup_with_bridge(fin6_bridge)
         return None
 
     def _prompt_fin6_preflight(self, action_label: str, require_channel: bool, require_assay: bool, automation: bool = False) -> bool:
-        fin6_bridge = self._require_fin6_setup_ready(
+        fin6_status = self._require_fin6_setup_ready(
             action_label,
             require_channel=require_channel,
             require_assay=require_assay,
         )
-        if fin6_bridge is None:
+        if fin6_status is None:
             return False
 
-        fin6_status = fin6_bridge.get_setup_status()
+        location = "the Pi" if self.is_remote_mode() else "this machine"
         lines = [
-            f"{action_label} will use the saved fin6 settings.",
+            f"{action_label} will use the saved fin6 settings on {location}.",
+            "It will use the stored background/calibration files and will not capture a new background during runtime.",
             "",
         ]
         if require_channel:
@@ -807,14 +921,7 @@ class DrosophilaGUI:
                 ]
             )
 
-        lines.extend(
-            [
-                "Calibration steps:",
-                "1. Choose No to open the fin6 setup GUI if you need to capture or recalibrate backgrounds.",
-                "2. Use the fin6 GUI to adjust channel and assay settings, then close it.",
-                "3. Return here and start again when the setup looks correct.",
-            ]
-        )
+        lines.extend(self._fin6_setup_guidance_lines(require_channel, require_assay))
         if automation:
             lines.extend(
                 [
@@ -830,7 +937,12 @@ class DrosophilaGUI:
         if approved is None:
             return False
         if approved is False:
-            self._open_fin6_setup_with_bridge(fin6_bridge)
+            if self.is_remote_mode():
+                self._open_remote_fin6_setup()
+            else:
+                fin6_bridge = self._ensure_fin6_bridge_or_warn("Open fin6 Setup")
+                if fin6_bridge is not None:
+                    self._open_fin6_setup_with_bridge(fin6_bridge)
             return False
         return True
 
@@ -1460,6 +1572,7 @@ class DrosophilaGUI:
         self.mode_label.config(bg=label_color)
         if getattr(self, "connection_label", None) is not None:
             self.connection_label.config(bg=connection_color)
+        self._refresh_workspace_copy()
         self._update_control_interactivity()
 
     def _schedule_remote_home_prompt(self) -> None:
@@ -1544,15 +1657,13 @@ class DrosophilaGUI:
         self.position_var.set(f"{float(status.get('current_position_mm', 0.0)):.2f} mm")
         self.mode_var.set("Remote Mode (Degraded)" if self.remote_backend_degraded else "Remote Mode")
         self.mode_label.config(bg="#FF9800" if self.remote_backend_degraded else "#4CAF50")
-        automation_using_local_detection = self.current_task_name == "automated run"
-        if not automation_using_local_detection:
-            self.detection_var.set(self._format_remote_detection(status.get("detection_summary", {}) or {}))
+        self.detection_var.set(self._format_remote_detection(status.get("detection_summary", {}) or {}))
 
-            detection_summary = status.get("detection_summary", {}) or {}
-            source_path = detection_summary.get("source_path")
-            if source_path:
-                self.output_dir_var.set(str(source_path))
-            self._request_remote_preview_if_needed(detection_summary)
+        detection_summary = status.get("detection_summary", {}) or {}
+        source_path = detection_summary.get("source_path")
+        if source_path:
+            self.output_dir_var.set(str(source_path))
+        self._request_remote_preview_if_needed(detection_summary)
 
         self.update_actuator_state("vacuum", bool(status.get("vacuum_on", False)))
         self.update_actuator_state("vibration", bool(status.get("vibration_on", False)))
@@ -2317,20 +2428,19 @@ class DrosophilaGUI:
         )
         self.output_dir_label.grid(row=7, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
-        ttk.Label(status_frame, text="Vision Setup:", font=("Arial", 10, "bold")).grid(row=8, column=0, sticky=tk.W, pady=2)
-        vision_row = ttk.Frame(status_frame)
-        vision_row.grid(row=8, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
-        vision_row.columnconfigure(0, weight=0)
-        vision_row.columnconfigure(1, weight=0)
-        vision_row.columnconfigure(2, weight=1)
-
-        self.detect_channel_button = self.make_button(vision_row, "Detect Channel", "#9C27B0", self.run_channel_detection)
-        self.detect_channel_button.grid(row=0, column=0, sticky=tk.W)
-        self.local_vision_widgets.append(self.detect_channel_button)
-
-        self.fin6_setup_button = self.make_button(vision_row, "Open fin6 Setup", "#607D8B", self.open_fin6_setup)
-        self.fin6_setup_button.grid(row=0, column=1, sticky=tk.W, padx=(8, 0))
-        self.local_vision_widgets.append(self.fin6_setup_button)
+        ttk.Label(status_frame, text="Workspace:", font=("Arial", 10, "bold")).grid(row=8, column=0, sticky=tk.W, pady=2)
+        self.workspace_label = tk.Label(
+            status_frame,
+            text="Use the Channel, Sexing, and Assay tabs below for vision setup and results.",
+            bg="#F7F7F7",
+            relief="sunken",
+            font=("Arial", 9),
+            padx=5,
+            pady=2,
+            anchor="w",
+            justify="left",
+        )
+        self.workspace_label.grid(row=8, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
     def create_main_content(self, parent):
         content_frame = ttk.Frame(parent)
@@ -2341,7 +2451,7 @@ class DrosophilaGUI:
         content_frame.rowconfigure(0, weight=1)
 
         self.create_motion_control(content_frame)
-        self.create_channel_preview(content_frame)
+        self.create_workspace_tabs(content_frame)
         self.create_device_operations(content_frame)
 
     def create_motion_control(self, parent):
@@ -2406,11 +2516,91 @@ class DrosophilaGUI:
         )
         self.motion_position_label.grid(row=13, column=0, sticky=(tk.W, tk.E))
 
-    def create_channel_preview(self, parent):
-        preview_frame = ttk.LabelFrame(parent, text="Channel Detection Preview", style="Log.TLabelframe", padding="10")
-        preview_frame.grid(row=0, column=1, sticky=(tk.N, tk.S, tk.W, tk.E), padx=8)
+    def create_workspace_tabs(self, parent):
+        workspace_frame = ttk.LabelFrame(parent, text="Vision Workspace", style="Log.TLabelframe", padding="10")
+        workspace_frame.grid(row=0, column=1, sticky=(tk.N, tk.S, tk.W, tk.E), padx=8)
+        workspace_frame.columnconfigure(0, weight=1)
+        workspace_frame.rowconfigure(0, weight=1)
+
+        notebook = ttk.Notebook(workspace_frame)
+        notebook.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        self.workspace_notebook = notebook
+
+        channel_tab = ttk.Frame(notebook, padding="10")
+        channel_tab.columnconfigure(0, weight=1)
+        channel_tab.rowconfigure(2, weight=1)
+        notebook.add(channel_tab, text="Channel")
+        self.create_channel_tab(channel_tab)
+
+        sexing_tab = ttk.Frame(notebook, padding="10")
+        sexing_tab.columnconfigure(0, weight=1)
+        notebook.add(sexing_tab, text="Sexing")
+        self.create_sexing_tab(sexing_tab)
+
+        assay_tab = ttk.Frame(notebook, padding="10")
+        assay_tab.columnconfigure(0, weight=1)
+        notebook.add(assay_tab, text="Assay")
+        self.create_assay_tab(assay_tab)
+
+    def create_channel_tab(self, parent):
+        summary_card = ttk.LabelFrame(parent, text="Channel Detection", padding="10")
+        summary_card.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        summary_card.columnconfigure(0, weight=1)
+        tk.Label(
+            summary_card,
+            textvariable=self.channel_workspace_summary_var,
+            bg="#F7F7F7",
+            relief="sunken",
+            font=("Arial", 9),
+            padx=8,
+            pady=6,
+            anchor="w",
+            justify="left",
+            wraplength=520,
+        ).grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E))
+
+        ttk.Label(summary_card, text="Detection:", font=("Arial", 9, "bold")).grid(row=1, column=0, sticky=tk.W, pady=(8, 2))
+        tk.Label(
+            summary_card,
+            textvariable=self.detection_var,
+            bg="#FFFFFF",
+            relief="sunken",
+            font=("Arial", 9),
+            padx=5,
+            pady=2,
+            anchor="w",
+            justify="left",
+        ).grid(row=1, column=1, sticky=(tk.W, tk.E), pady=(8, 2))
+
+        ttk.Label(summary_card, text="Output Dir:", font=("Arial", 9, "bold")).grid(row=2, column=0, sticky=tk.W, pady=2)
+        tk.Label(
+            summary_card,
+            textvariable=self.output_dir_var,
+            bg="#FFFFFF",
+            relief="sunken",
+            font=("Arial", 9),
+            padx=5,
+            pady=2,
+            anchor="w",
+            justify="left",
+            wraplength=520,
+        ).grid(row=2, column=1, sticky=(tk.W, tk.E), pady=2)
+
+        actions = ttk.Frame(summary_card)
+        actions.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(10, 0))
+        self.detect_channel_button = self.make_button(actions, "Detect Channel", "#9C27B0", self.run_channel_detection)
+        self.detect_channel_button.grid(row=0, column=0, sticky=tk.W)
+        self.local_vision_widgets.append(self.detect_channel_button)
+
+        self.channel_setup_button = self.make_button(actions, "Open fin6 Setup", "#607D8B", self.open_fin6_setup)
+        self.channel_setup_button.grid(row=0, column=1, sticky=tk.W, padx=(8, 0))
+        self.local_vision_widgets.append(self.channel_setup_button)
+
+        preview_frame = ttk.LabelFrame(parent, text="Annotated Preview", padding="10")
+        preview_frame.grid(row=2, column=0, sticky=(tk.N, tk.S, tk.W, tk.E), pady=(10, 0))
         preview_frame.columnconfigure(0, weight=1)
         preview_frame.rowconfigure(0, weight=1)
+        parent.rowconfigure(2, weight=1)
 
         self.preview_label = tk.Label(
             preview_frame,
@@ -2424,10 +2614,119 @@ class DrosophilaGUI:
         self.preview_label.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
         self.preview_label.bind("<Configure>", self._refresh_preview_image)
 
+    def create_sexing_tab(self, parent):
+        summary_card = ttk.LabelFrame(parent, text="Sexing / Routing", padding="10")
+        summary_card.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        summary_card.columnconfigure(1, weight=1)
+
+        tk.Label(
+            summary_card,
+            textvariable=self.sexing_workspace_summary_var,
+            bg="#F7F7F7",
+            relief="sunken",
+            font=("Arial", 9),
+            padx=8,
+            pady=6,
+            anchor="w",
+            justify="left",
+            wraplength=560,
+        ).grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 8))
+
+        sexing_rows = [
+            ("Stage", self.sort_stage_var),
+            ("Cycle", self.sort_cycle_var),
+            ("Detected", self.sort_detected_var),
+            ("Pickup X", self.sort_pickup_var),
+            ("Last Sex", self.sort_last_sex_var),
+            ("Confidence", self.sort_confidence_var),
+            ("Destination", self.sort_destination_var),
+        ]
+        for row_index, (label_text, value_var) in enumerate(sexing_rows, start=1):
+            ttk.Label(summary_card, text=f"{label_text}:", font=("Arial", 9, "bold")).grid(row=row_index, column=0, sticky=tk.W, pady=2)
+            tk.Label(
+                summary_card,
+                textvariable=value_var,
+                bg="#FFFFFF",
+                relief="sunken",
+                font=("Arial", 9),
+                padx=5,
+                pady=2,
+                anchor="w",
+                justify="left",
+            ).grid(row=row_index, column=1, sticky=(tk.W, tk.E), pady=2)
+
+        tube_frame = ttk.LabelFrame(parent, text="Tube Counts", padding="10")
+        tube_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
+        tube_frame.columnconfigure(1, weight=1)
+        tube_roles = {
+            "T1": "Damaged / Rejected",
+            "T2": "Male",
+            "T3": "Female",
+            "T4": "Male",
+            "T5": "Female",
+        }
+        for row_index, tube_key in enumerate(("T1", "T2", "T3", "T4", "T5")):
+            ttk.Label(tube_frame, text=f"{tube_key}:", font=("Arial", 9, "bold")).grid(row=row_index, column=0, sticky=tk.W, pady=2)
+            ttk.Label(tube_frame, text=tube_roles[tube_key], font=("Arial", 8), foreground="#52606D").grid(row=row_index, column=1, sticky=tk.W, pady=2)
+            tk.Label(
+                tube_frame,
+                textvariable=self.sort_tube_count_vars[tube_key],
+                bg="#FFFFFF",
+                relief="sunken",
+                font=("Arial", 9),
+                padx=5,
+                pady=2,
+                width=8,
+                anchor="center",
+            ).grid(row=row_index, column=2, sticky=tk.E, padx=(8, 0), pady=2)
+
+        ttk.Label(summary_card, text="Notes:", font=("Arial", 9, "bold")).grid(row=len(sexing_rows) + 1, column=0, sticky=tk.NW, pady=(8, 2))
+        tk.Label(
+            summary_card,
+            textvariable=self.sort_notes_var,
+            bg="#F7F7F7",
+            relief="sunken",
+            font=("Arial", 8),
+            padx=5,
+            pady=4,
+            anchor="w",
+            justify="left",
+            wraplength=520,
+        ).grid(row=len(sexing_rows) + 1, column=1, sticky=(tk.W, tk.E), pady=(8, 2))
+
+    def create_assay_tab(self, parent):
+        assay_card = ttk.LabelFrame(parent, text="Assay", padding="10")
+        assay_card.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        assay_card.columnconfigure(0, weight=1)
+
+        tk.Label(
+            assay_card,
+            textvariable=self.assay_workspace_summary_var,
+            bg="#F7F7F7",
+            relief="sunken",
+            font=("Arial", 9),
+            padx=8,
+            pady=6,
+            anchor="w",
+            justify="left",
+            wraplength=560,
+        ).grid(row=0, column=0, sticky=(tk.W, tk.E))
+
+        button_row = ttk.Frame(assay_card)
+        button_row.grid(row=1, column=0, sticky=tk.W, pady=(10, 0))
+
+        self.assay_setup_button = self.make_button(button_row, "Open fin6 Setup", "#607D8B", self.open_fin6_setup)
+        self.assay_setup_button.grid(row=0, column=0, sticky=tk.W)
+        self.local_vision_widgets.append(self.assay_setup_button)
+
+        self.assay_button = self.make_button(button_row, "Run Assay", "#9C27B0", self.run_assay)
+        self.assay_button.grid(row=0, column=1, sticky=tk.W, padx=(8, 0))
+
     def create_device_operations(self, parent):
         controls_frame = ttk.Frame(parent)
         controls_frame.grid(row=0, column=2, sticky=(tk.N, tk.S))
         controls_frame.columnconfigure(0, weight=1)
+        controls_frame.rowconfigure(1, weight=1)
 
         device_padding = (8, 6) if self._is_compact_screen() else (10, 8)
         device_frame = ttk.LabelFrame(
@@ -2459,88 +2758,20 @@ class DrosophilaGUI:
         )
         self.register_toggle(self.vibration_switch)
 
-        status_frame = ttk.LabelFrame(controls_frame, text="Sorting Status", padding=(10, 8))
-        status_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
-        status_frame.columnconfigure(1, weight=1)
-
-        metric_rows = [
-            ("Stage", self.sort_stage_var),
-            ("Cycle", self.sort_cycle_var),
-            ("Detected", self.sort_detected_var),
-            ("Pickup X", self.sort_pickup_var),
-            ("Last Sex", self.sort_last_sex_var),
-            ("Confidence", self.sort_confidence_var),
-            ("Destination", self.sort_destination_var),
-        ]
-        for row_index, (label_text, value_var) in enumerate(metric_rows):
-            ttk.Label(status_frame, text=f"{label_text}:", font=("Arial", 9, "bold")).grid(
-                row=row_index,
-                column=0,
-                sticky=tk.W,
-                pady=2,
-            )
-            tk.Label(
-                status_frame,
-                textvariable=value_var,
-                bg="#F7F7F7",
-                relief="sunken",
-                font=("Arial", 9),
-                padx=5,
-                pady=2,
-                anchor="w",
-                justify="left",
-            ).grid(row=row_index, column=1, sticky=(tk.W, tk.E), pady=2)
-
-        ttk.Separator(status_frame, orient="horizontal").grid(row=len(metric_rows), column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(8, 8))
-
-        tube_frame = tk.Frame(status_frame, bg=self.root.cget("bg"))
-        tube_frame.grid(row=len(metric_rows) + 1, column=0, columnspan=2, sticky=(tk.W, tk.E))
-        tube_frame.columnconfigure(1, weight=1)
-        tube_roles = {
-            "T1": "Damaged / Rejected",
-            "T2": "Male",
-            "T3": "Female",
-            "T4": "Male",
-            "T5": "Female",
-        }
-        for row_index, tube_key in enumerate(("T1", "T2", "T3", "T4", "T5")):
-            ttk.Label(tube_frame, text=f"{tube_key}:", font=("Arial", 9, "bold")).grid(row=row_index, column=0, sticky=tk.W, pady=2)
-            ttk.Label(
-                tube_frame,
-                text=f"{tube_roles[tube_key]}  ",
-                font=("Arial", 8),
-                foreground="#52606D",
-            ).grid(row=row_index, column=1, sticky=tk.W, pady=2)
-            tk.Label(
-                tube_frame,
-                textvariable=self.sort_tube_count_vars[tube_key],
-                bg="#FFFFFF",
-                relief="sunken",
-                font=("Arial", 9),
-                padx=5,
-                pady=2,
-                width=8,
-                anchor="center",
-            ).grid(row=row_index, column=2, sticky=tk.E, padx=(8, 0), pady=2)
-
-        ttk.Label(status_frame, text="Notes:", font=("Arial", 9, "bold")).grid(
-            row=len(metric_rows) + 2,
-            column=0,
-            sticky=tk.NW,
-            pady=(8, 2),
-        )
+        note_frame = ttk.LabelFrame(controls_frame, text="Workspace Note", padding=(10, 8))
+        note_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.S), pady=(10, 0))
         tk.Label(
-            status_frame,
-            textvariable=self.sort_notes_var,
+            note_frame,
+            text="Live channel, sexing, routing, and assay actions are separated into the tabs in the Vision Workspace.",
             bg="#F7F7F7",
             relief="sunken",
             font=("Arial", 8),
-            padx=5,
-            pady=4,
+            padx=6,
+            pady=6,
             anchor="w",
             justify="left",
             wraplength=220,
-        ).grid(row=len(metric_rows) + 2, column=1, sticky=(tk.W, tk.E), pady=(8, 2))
+        ).grid(row=0, column=0, sticky=(tk.W, tk.E))
 
     def create_system_controls(self, parent):
         system_frame = ttk.LabelFrame(parent, text="System Control", padding="10")
@@ -2916,13 +3147,19 @@ class DrosophilaGUI:
         scaled_margin = max(2, int(round(base_margin * scale)))
         scaled_font = max(8, int(round(base_font * scale)))
 
-        self._ops_top_spacer.configure(height=scaled_margin)
-        self._ops_gap1.configure(height=scaled_gap)
-        self._ops_gap2.configure(height=scaled_gap)
-        self._ops_bottom_spacer.configure(height=scaled_margin)
+        if self._ops_top_spacer is not None:
+            self._ops_top_spacer.configure(height=scaled_margin)
+        if self._ops_gap1 is not None:
+            self._ops_gap1.configure(height=scaled_gap)
+        if self._ops_gap2 is not None:
+            self._ops_gap2.configure(height=scaled_gap)
+        if self._ops_bottom_spacer is not None:
+            self._ops_bottom_spacer.configure(height=scaled_margin)
 
-        for button in (self.run_button, self.assay_button, self.classify_button):
-            button.configure(font=("Arial", scaled_font, "bold"), pady=scaled_pady)
+        for button_name in ("run_button", "assay_button", "classify_button"):
+            button = getattr(self, button_name, None)
+            if button is not None:
+                button.configure(font=("Arial", scaled_font, "bold"), pady=scaled_pady)
 
         scaled_logo = max(40, int(round(base_logo * scale)))
         if hide_logo:
@@ -3435,6 +3672,26 @@ class DrosophilaGUI:
         self.ui_queue.put(("local_channel_detection", capture))
         return capture
 
+    def _run_remote_channel_detection_capture(self):
+        controller = self._get_remote_controller_for_automation()
+        status = self._run_remote_command_and_wait("channel detection", controller.detect_channel, timeout_s=60.0)
+        detection_summary = status.get("detection_summary", {}) or {}
+        positions_raw = detection_summary.get("corrected_positions_mm") or detection_summary.get("x_positions_mm") or []
+        positions = [float(position) for position in positions_raw]
+        source_path_text = str(detection_summary.get("source_path", "") or "")
+        source_mtime = detection_summary.get("source_mtime")
+        if source_mtime is not None:
+            self.last_used_detection_mtime = float(source_mtime)
+        return {
+            "result": {
+                "fly_remaining": bool(detection_summary.get("fly_remaining", False)),
+                "count": len(positions),
+                "x_positions_mm": positions,
+                "detections": [],
+            },
+            "result_path": Path(source_path_text) if source_path_text else None,
+        }
+
     def _resolve_tube_for_classification(self, classification_result: dict) -> tuple[str, float]:
         class_name = str(classification_result.get("class") or "UNCERTAIN").strip().lower()
         if class_name == "male":
@@ -3521,6 +3778,12 @@ class DrosophilaGUI:
         self.ui_queue.put(("clear_stop",))
 
     def _launch_assay_gui_from_worker(self):
+        if self.is_remote_mode():
+            controller = self._get_remote_controller_for_automation()
+            response = controller.launch_fin6_setup()
+            message = str(response.get("message", "Opened the current fin6 assay GUI on the Pi."))
+            self.worker_log(message)
+            return response
         fin6_bridge = self._load_fin6_bridge()
         process = fin6_bridge.launch_fin6_gui()
         pid_text = getattr(process, "pid", None)
@@ -3549,10 +3812,14 @@ class DrosophilaGUI:
             classify_callable = runtime["classify_fly"]
 
         def detect_channel():
-            capture = self._run_local_channel_detection_capture()
-            result_path = Path(capture["result_path"])
-            if result_path.exists():
-                self.last_used_detection_mtime = result_path.stat().st_mtime
+            if self.is_remote_mode():
+                capture = self._run_remote_channel_detection_capture()
+                result_path = capture.get("result_path")
+            else:
+                capture = self._run_local_channel_detection_capture()
+                result_path = Path(capture["result_path"])
+                if result_path.exists():
+                    self.last_used_detection_mtime = result_path.stat().st_mtime
             return capture
 
         def publish_snapshot(snapshot: dict[str, Any]) -> None:
@@ -3671,6 +3938,15 @@ class DrosophilaGUI:
 
     def run_channel_detection(self):
         if self._require_fin6_setup_ready("Detect Channel", require_channel=True, require_assay=False) is None:
+            return
+        if self.is_remote_mode():
+            self._start_remote_command(
+                "channel detection",
+                "detecting",
+                "Running Pi-side channel detection with saved fin6 settings.",
+                self.remote_controller.detect_channel,
+                allow_calibration_bypass=True,
+            )
             return
         self.start_task(
             "channel detection",

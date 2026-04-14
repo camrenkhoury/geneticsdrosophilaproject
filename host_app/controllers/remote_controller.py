@@ -52,6 +52,15 @@ class RemoteController(BaseController):
     def run_assay(self) -> ControllerPayload:
         return self._command_request("POST", "/run_assay")
 
+    def detect_channel(self) -> ControllerPayload:
+        return self._command_request("POST", "/detect_channel")
+
+    def get_fin6_setup_status(self) -> ControllerPayload:
+        return self._request_json("GET", "/fin6/setup_status")
+
+    def launch_fin6_setup(self) -> ControllerPayload:
+        return self._request_json("POST", "/fin6/launch_setup")
+
     def get_status(self) -> ControllerPayload | None:
         url = f"{self.base_url}/status"
         headers = {"X-API-Key": self.api_key}

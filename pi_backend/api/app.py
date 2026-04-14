@@ -54,6 +54,22 @@ class BackendApiContext:
             message=snapshot.latest_message,
         )
 
+    def get_fin6_setup_status(self) -> dict[str, Any]:
+        return self.machine_service.get_fin6_setup_status()
+
+    def launch_fin6_setup(self) -> dict[str, Any]:
+        with self._worker_lock:
+            if self.is_busy():
+                self.runtime_state.append_log(
+                    "WARNING",
+                    f"Rejected fin6 setup launch: machine busy with {self._active_command}.",
+                )
+                return {
+                    "ok": False,
+                    "message": f"Machine is busy running {self._active_command}. Wait for it to finish before opening fin6 setup.",
+                }
+        return self.machine_service.launch_fin6_setup()
+
     def submit_machine_task(
         self,
         command: str,

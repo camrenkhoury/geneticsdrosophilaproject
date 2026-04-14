@@ -55,6 +55,18 @@ def get_channel_annotated_preview(request: Request) -> FileResponse:
     return FileResponse(preview_path, media_type="image/png", filename=preview_path.name)
 
 
+@router.get("/fin6/setup_status", dependencies=[Depends(require_api_key)])
+def get_fin6_setup_status(request: Request) -> dict:
+    context = request.app.state.backend_context
+    return context.get_fin6_setup_status()
+
+
+@router.post("/fin6/launch_setup", dependencies=[Depends(require_api_key)])
+def post_fin6_launch_setup(request: Request) -> dict:
+    context = request.app.state.backend_context
+    return context.launch_fin6_setup()
+
+
 @router.post("/home", response_model=CommandResponse, dependencies=[Depends(require_api_key)])
 def post_home(request: Request) -> CommandResponse:
     context = request.app.state.backend_context
@@ -118,6 +130,16 @@ def post_classify(request: Request) -> CommandResponse:
         "classify",
         context.machine_service.classify_fly,
         precheck=context.machine_service.validate_classifier_command,
+    )
+
+
+@router.post("/detect_channel", response_model=CommandResponse, dependencies=[Depends(require_api_key)])
+def post_detect_channel(request: Request) -> CommandResponse:
+    context = request.app.state.backend_context
+    return context.submit_machine_task(
+        "detect_channel",
+        context.machine_service.detect_channel,
+        precheck=context.machine_service.validate_detect_channel_command,
     )
 
 
