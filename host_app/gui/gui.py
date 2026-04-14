@@ -588,8 +588,8 @@ class DrosophilaGUI:
         self.remote_api_key_var = tk.StringVar(value=self.remote_settings.api_key)
         self.detection_var = tk.StringVar(value="Waiting for channel detection output.")
         self.output_dir_var = tk.StringVar(value=str(self._default_channel_output_dir()))
-        self.channel_setup_var = tk.StringVar(value="Checking fin6 channel setup...")
-        self.assay_setup_var = tk.StringVar(value="Checking fin6 assay setup...")
+        self.channel_setup_var = tk.StringVar(value="Not checked yet")
+        self.assay_setup_var = tk.StringVar(value="Not checked yet")
         self.device_state_labels: dict[str, tk.Label] = {}
         self.device_state_text: dict[str, tk.StringVar] = {}
         self.device_detail_text: dict[str, tk.StringVar] = {}
@@ -604,7 +604,6 @@ class DrosophilaGUI:
         self._set_window_icon()
         self.set_status("idle", "Ready")
         self.log_message(f"Channel output directory: {self.output_dir_var.get()}")
-        self._refresh_fin6_setup_status_display()
         self.update_position()
         self.update_channel_preview()
         self.process_queue()
@@ -670,6 +669,9 @@ class DrosophilaGUI:
             messagebox.showerror("fin6 Integration Unavailable", f"{action_label} requires the fin6 integration.\n\n{exc}")
             return None
 
+    def _get_fin6_bridge_if_loaded(self):
+        return self._fin6_bridge_cache
+
     def _get_local_gpio_available(self) -> bool | None:
         runtime = self._get_local_runtime_if_loaded()
         if runtime is None:
@@ -730,6 +732,7 @@ class DrosophilaGUI:
         else:
             self.log_message(f"Opened fin6 setup GUI (pid {pid_text}).")
         self.set_status("running", "Opened fin6 setup GUI.")
+        self._refresh_fin6_setup_status_display()
         return True
 
     def open_fin6_setup(self):
@@ -747,6 +750,7 @@ class DrosophilaGUI:
             return None
 
         fin6_status = fin6_bridge.get_setup_status()
+        self._refresh_fin6_setup_status_display()
         issues = self._collect_fin6_setup_issues(fin6_status, require_channel=require_channel, require_assay=require_assay)
         if not issues:
             return fin6_bridge
@@ -836,37 +840,40 @@ class DrosophilaGUI:
         return bool(prompt_state["response"])
 
     def _refresh_fin6_setup_status_display(self) -> None:
+        fin6_bridge = self._get_fin6_bridge_if_loaded()
+        if fin6_bridge is None:
+            self.channel_setup_var.set("Not checked yet")
+            self.assay_setup_var.set("Not checked yet")
+            return
+
         try:
-            fin6_bridge = self._load_fin6_bridge()
             status = fin6_bridge.get_setup_status()
         except Exception as exc:
             message = f"Unavailable: {type(exc).__name__}"
             self.channel_setup_var.set(message)
             self.assay_setup_var.set(message)
-        else:
-            channel_parts = []
-            if status.channel_background_ready:
-                channel_parts.append("background ready")
-            else:
-                channel_parts.append("background missing")
-            if status.channel_calibration_ready:
-                channel_parts.append("calibration ready")
-            else:
-                channel_parts.append("calibration missing")
-            assay_parts = []
-            if status.assay_background_ready:
-                assay_parts.append("background ready")
-            else:
-                assay_parts.append("background missing")
-            if status.assay_calibration_ready:
-                assay_parts.append("calibration ready")
-            else:
-                assay_parts.append("calibration missing")
-            self.channel_setup_var.set("Channel: " + ", ".join(channel_parts))
-            self.assay_setup_var.set("Assay: " + ", ".join(assay_parts))
+            return
 
-        if getattr(self, "root", None) is not None:
-            self.root.after(2000, self._refresh_fin6_setup_status_display)
+        channel_parts = []
+        if status.channel_background_ready:
+            channel_parts.append("background ready")
+        else:
+            channel_parts.append("background missing")
+        if status.channel_calibration_ready:
+            channel_parts.append("calibration ready")
+        else:
+            channel_parts.append("calibration missing")
+        assay_parts = []
+        if status.assay_background_ready:
+            assay_parts.append("background ready")
+        else:
+            assay_parts.append("background missing")
+        if status.assay_calibration_ready:
+            assay_parts.append("calibration ready")
+        else:
+            assay_parts.append("calibration missing")
+        self.channel_setup_var.set("Channel: " + ", ".join(channel_parts))
+        self.assay_setup_var.set("Assay: " + ", ".join(assay_parts))
 
     def _resolve_asset_path(self, *candidate_names: str) -> Path | None:
         search_roots = (
