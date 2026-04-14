@@ -77,6 +77,9 @@ class RemoteController(BaseController):
             self._status_etag = etag
         return payload
 
+    def get_status_fresh(self) -> ControllerPayload:
+        return self._request_json("GET", "/status")
+
     def get_health(self) -> ControllerPayload:
         return self._request_json("GET", "/health")
 

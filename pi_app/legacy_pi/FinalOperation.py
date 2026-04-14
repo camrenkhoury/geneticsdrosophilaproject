@@ -197,6 +197,10 @@ def _resolve_destination(
 
 def run_operation(
     *,
+    home: Callable[[], Any] | None = None,
+    move_absolute: Callable[[float], Any] | None = None,
+    set_vacuum: Callable[[bool], Any] | None = None,
+    get_operational_max_mm: Callable[[], float] | None = None,
     detect_channel: Callable[[], dict[str, Any]] | None = None,
     classify_fly: Callable[[], dict[str, Any]] | None = None,
     ask_yes_no: Callable[[str, str], bool] | None = None,
@@ -206,8 +210,11 @@ def run_operation(
     snapshot_callback: Callable[[dict[str, Any]], None] | None = None,
     stop_requested: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
-    motion = importlib.import_module("motion")
-    vacuum = importlib.import_module("vacuum")
+    motion = None
+    vacuum = None
+    if home is None or move_absolute is None or set_vacuum is None or get_operational_max_mm is None:
+        motion = importlib.import_module("motion")
+        vacuum = importlib.import_module("vacuum")
 
     classify_callable = classify_fly or importlib.import_module("fly_classifier").classify_fly
     detect_callable = detect_channel or (lambda: _default_detect_channel(log))
@@ -215,6 +222,10 @@ def run_operation(
     launch_assay_callable = launch_assay_gui or _default_launch_assay_gui
     status = status_callback or _noop
     log = log_callback or print
+    home_callable = home or motion.home_to_zero
+    move_absolute_callable = move_absolute or motion.move_to_absolute
+    set_vacuum_callable = set_vacuum or vacuum.set_enabled
+    get_operational_max_mm_callable = get_operational_max_mm or motion.get_operational_max_mm
 
     chamber_drop_s = 2.0
     chamber_settle_s = 6.0
@@ -232,7 +243,7 @@ def run_operation(
             raise OperationCancelled
 
     def clamp_operational(position_mm: float) -> float:
-        return max(0.0, min(float(position_mm), float(motion.get_operational_max_mm())))
+        return max(0.0, min(float(position_mm), float(get_operational_max_mm_callable())))
 
     camera_photo_position = clamp_operational(config.CHANNEL_LOCATION_END + 43.0)
     _publish_snapshot(tube_states, snapshot_callback=snapshot_callback, stage="idle")
@@ -244,11 +255,11 @@ def run_operation(
 
             status("running", f"Cycle {cycle_index}: homing gantry.")
             log(f"Cycle {cycle_index}: homing gantry.")
-            vacuum.vacuum_off()
-            motion.home_to_zero()
+            set_vacuum_callable(False)
+            home_callable()
 
             status("moving", f"Cycle {cycle_index}: moving to channel photo position.")
-            motion.move_to_absolute(camera_photo_position)
+            move_absolute_callable(camera_photo_position)
 
             status("detecting", f"Cycle {cycle_index}: capturing channel detection image.")
             log(f"Cycle {cycle_index}: running channel detection.")
@@ -274,21 +285,21 @@ def run_operation(
             log(f"Cycle {cycle_index}: selected pickup position {pickup_position:.2f} mm.")
 
             status("running", f"Cycle {cycle_index}: reset home before pickup.")
-            vacuum.vacuum_off()
-            motion.home_to_zero()
+            set_vacuum_callable(False)
+            home_callable()
 
             status("moving", f"Cycle {cycle_index}: moving to pickup position.")
-            motion.move_to_absolute(pickup_position)
+            move_absolute_callable(pickup_position)
 
             status("picking", f"Cycle {cycle_index}: picking fly.")
-            vacuum.vacuum_on()
+            set_vacuum_callable(True)
             _sleep_with_stop(2.0, stop_requested)
 
             status("moving", f"Cycle {cycle_index}: moving to chamber.")
-            motion.move_to_absolute(config.CHAMBER_CENTER)
+            move_absolute_callable(config.CHAMBER_CENTER)
 
             status("running", f"Cycle {cycle_index}: dropping in chamber.")
-            vacuum.vacuum_off()
+            set_vacuum_callable(False)
             _sleep_with_stop(chamber_drop_s, stop_requested)
 
             status("running", f"Cycle {cycle_index}: waiting for chamber classification window.")
@@ -317,14 +328,14 @@ def run_operation(
             )
 
             status("picking", f"Cycle {cycle_index}: picking fly from chamber.")
-            vacuum.vacuum_on()
+            set_vacuum_callable(True)
             _sleep_with_stop(chamber_pickup_s, stop_requested)
 
             status("moving", f"Cycle {cycle_index}: moving to {destination_tube.label}.")
-            motion.move_to_absolute(destination_tube.position_mm)
+            move_absolute_callable(destination_tube.position_mm)
 
             status("running", f"Cycle {cycle_index}: dropping into {destination_tube.label}.")
-            vacuum.vacuum_off()
+            set_vacuum_callable(False)
             _sleep_with_stop(tube_drop_s, stop_requested)
             destination_tube.count += 1
 
@@ -345,7 +356,7 @@ def run_operation(
             )
 
             status("running", f"Cycle {cycle_index}: returning home.")
-            motion.home_to_zero()
+            home_callable()
 
         status("running", "No more flies detected. Awaiting assay confirmation.")
         should_launch_assay = ask_callable(
@@ -359,7 +370,10 @@ def run_operation(
         else:
             log("Operator declined assay GUI launch.")
     finally:
-        vacuum.vacuum_off()
+        try:
+            set_vacuum_callable(False)
+        except Exception:
+            pass
 
     _publish_snapshot(
         tube_states,

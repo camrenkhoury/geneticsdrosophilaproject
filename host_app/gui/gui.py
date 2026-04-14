@@ -611,6 +611,7 @@ class DrosophilaGUI:
         self.toggle_widgets = []
         self.motion_widgets = []
         self.remote_unsupported_widgets = []
+        self.local_vision_widgets = []
         self.manual_move_entry: ttk.Entry | None = None
 
         self.create_widgets()
@@ -746,9 +747,6 @@ class DrosophilaGUI:
         return True
 
     def open_fin6_setup(self):
-        if self.is_remote_mode():
-            messagebox.showinfo("Remote Mode", "fin6 setup is only available in local mode.")
-            return
         fin6_bridge = self._ensure_fin6_bridge_or_warn("Open fin6 Setup")
         if fin6_bridge is None:
             return
@@ -1546,13 +1544,15 @@ class DrosophilaGUI:
         self.position_var.set(f"{float(status.get('current_position_mm', 0.0)):.2f} mm")
         self.mode_var.set("Remote Mode (Degraded)" if self.remote_backend_degraded else "Remote Mode")
         self.mode_label.config(bg="#FF9800" if self.remote_backend_degraded else "#4CAF50")
-        self.detection_var.set(self._format_remote_detection(status.get("detection_summary", {}) or {}))
+        automation_using_local_detection = self.current_task_name == "automated run"
+        if not automation_using_local_detection:
+            self.detection_var.set(self._format_remote_detection(status.get("detection_summary", {}) or {}))
 
-        detection_summary = status.get("detection_summary", {}) or {}
-        source_path = detection_summary.get("source_path")
-        if source_path:
-            self.output_dir_var.set(str(source_path))
-        self._request_remote_preview_if_needed(detection_summary)
+            detection_summary = status.get("detection_summary", {}) or {}
+            source_path = detection_summary.get("source_path")
+            if source_path:
+                self.output_dir_var.set(str(source_path))
+            self._request_remote_preview_if_needed(detection_summary)
 
         self.update_actuator_state("vacuum", bool(status.get("vacuum_on", False)))
         self.update_actuator_state("vibration", bool(status.get("vibration_on", False)))
@@ -1629,6 +1629,19 @@ class DrosophilaGUI:
             "confidence": float(result.get("confidence", 0.0)),
             "errors": list(result.get("errors", [])),
         }
+        if self.current_task_name == "automated run":
+            self.sort_last_sex_var.set(
+                str(normalized_result["class"]).title()
+                if str(normalized_result["class"]).lower() in {"male", "female"}
+                else str(normalized_result["class"])
+            )
+            self.sort_confidence_var.set(f"{float(normalized_result['confidence']):.4f}")
+            self.sort_notes_var.set(
+                ", ".join(str(error) for error in normalized_result["errors"])
+                if normalized_result["errors"]
+                else "Remote classification updated."
+            )
+            return
         self.show_classification_result(normalized_result)
 
     def _request_remote_preview_if_needed(self, detection_summary: dict) -> None:
@@ -1743,6 +1756,95 @@ class DrosophilaGUI:
         if payload:
             self.message_var.set(str(payload.get("message", message)))
 
+    def _get_remote_controller_for_automation(self) -> RemoteController:
+        if not self.is_remote_mode() or not self.remote_connected or self.remote_controller is None:
+            raise RuntimeError("Connect to the Pi backend before starting the remote automated process.")
+        return self.remote_controller
+
+    @staticmethod
+    def _remote_status_has_terminal_error(status: dict) -> bool:
+        task_state = str(status.get("task_state") or "").upper()
+        orchestrator_state = str(status.get("orchestrator_state") or "").upper()
+        return task_state.endswith("_ERROR") or orchestrator_state == "TASK_ERROR"
+
+    def _poll_remote_status_fresh(self) -> dict:
+        controller = self._get_remote_controller_for_automation()
+        status = controller.get_status_fresh()
+        self.ui_queue.put(("remote_status", status))
+        return status
+
+    def _wait_for_remote_backend_idle(self, label: str, timeout_s: float = 90.0) -> dict:
+        deadline = time.monotonic() + timeout_s
+        saw_busy = False
+        last_status: dict | None = None
+
+        while time.monotonic() < deadline:
+            self._check_stop()
+            status = self._poll_remote_status_fresh()
+            last_status = status
+            busy = self._backend_busy_from_status(status)
+            if busy:
+                saw_busy = True
+            elif saw_busy or status.get("current_task") is None:
+                if self._remote_status_has_terminal_error(status):
+                    raise RuntimeError(str(status.get("latest_message", f"Remote {label} failed.")))
+                return status
+            time.sleep(0.2)
+
+        if last_status is not None and self._remote_status_has_terminal_error(last_status):
+            raise RuntimeError(str(last_status.get("latest_message", f"Remote {label} failed.")))
+        raise RuntimeError(f"Timed out waiting for remote {label} to finish.")
+
+    def _run_remote_command_and_wait(self, label: str, command_callable, timeout_s: float = 90.0) -> dict:
+        controller = self._get_remote_controller_for_automation()
+        response = command_callable()
+        message = str(response.get("message", f"Accepted remote {label} request."))
+        self.worker_log(f"Remote {label}: {message}")
+
+        status = controller.get_status_fresh()
+        self.ui_queue.put(("remote_status", status))
+        if not self._backend_busy_from_status(status):
+            if self._remote_status_has_terminal_error(status):
+                raise RuntimeError(str(status.get("latest_message", f"Remote {label} failed.")))
+            return status
+        return self._wait_for_remote_backend_idle(label, timeout_s=timeout_s)
+
+    def _remote_operational_max_mm(self) -> float:
+        return max(0.0, float(config.GANTRY_MAX_MM) - (2.0 * float(config.VACUUM_CENTER_OFFSET_MM)))
+
+    def _run_remote_home_for_automation(self) -> None:
+        controller = self._get_remote_controller_for_automation()
+        self._run_remote_command_and_wait("home", controller.home)
+
+    def _run_remote_move_absolute_for_automation(self, target_mm: float) -> None:
+        controller = self._get_remote_controller_for_automation()
+        self._run_remote_command_and_wait(
+            f"move to {target_mm:.2f} mm",
+            lambda: controller.move_absolute(float(target_mm)),
+        )
+
+    def _run_remote_set_vacuum_for_automation(self, enabled: bool) -> None:
+        controller = self._get_remote_controller_for_automation()
+        self._run_remote_command_and_wait(
+            f"vacuum {'on' if enabled else 'off'}",
+            lambda: controller.set_vacuum(bool(enabled)),
+            timeout_s=20.0,
+        )
+
+    def _run_remote_classify_for_automation(self) -> dict[str, Any]:
+        controller = self._get_remote_controller_for_automation()
+        status = self._run_remote_command_and_wait("classification", controller.classify_fly, timeout_s=30.0)
+        result = status.get("classification_result") or {}
+        if not result:
+            raise RuntimeError("Remote classification completed without returning a classification result.")
+        normalized = {
+            "class": str(result.get("result_class", "UNCERTAIN")),
+            "confidence": float(result.get("confidence", 0.0)),
+            "errors": list(result.get("errors", []) or []),
+            "raw": dict(result.get("raw", {}) or {}),
+        }
+        return normalized
+
     def _update_control_interactivity(self) -> None:
         busy = self.local_task_busy or self.remote_request_in_flight or (self.is_remote_mode() and self.remote_backend_busy)
         entry_state = "disabled" if busy else "normal"
@@ -1764,7 +1866,10 @@ class DrosophilaGUI:
                 except tk.TclError:
                     pass
                 continue
-            if widget in self.remote_unsupported_widgets and self.is_remote_mode():
+            if widget in self.local_vision_widgets:
+                target_state = tk.NORMAL if not busy else tk.DISABLED
+                target_entry_state = "normal" if not busy else "disabled"
+            elif widget in self.remote_unsupported_widgets and self.is_remote_mode():
                 target_state = tk.DISABLED
                 target_entry_state = "disabled"
             else:
@@ -1800,7 +1905,9 @@ class DrosophilaGUI:
 
         stop_enabled = False
         if self.is_remote_mode():
-            stop_enabled = self.remote_connected and self.remote_stop_allowed
+            stop_enabled = self.remote_connected and (
+                self.remote_stop_allowed or (self.local_task_busy and self.local_task_cancellable)
+            )
         else:
             stop_enabled = self.local_task_busy and self.local_task_cancellable
 
@@ -2219,11 +2326,11 @@ class DrosophilaGUI:
 
         self.detect_channel_button = self.make_button(vision_row, "Detect Channel", "#9C27B0", self.run_channel_detection)
         self.detect_channel_button.grid(row=0, column=0, sticky=tk.W)
-        self.remote_unsupported_widgets.append(self.detect_channel_button)
+        self.local_vision_widgets.append(self.detect_channel_button)
 
         self.fin6_setup_button = self.make_button(vision_row, "Open fin6 Setup", "#607D8B", self.open_fin6_setup)
         self.fin6_setup_button.grid(row=0, column=1, sticky=tk.W, padx=(8, 0))
-        self.remote_unsupported_widgets.append(self.fin6_setup_button)
+        self.local_vision_widgets.append(self.fin6_setup_button)
 
     def create_main_content(self, parent):
         content_frame = ttk.Frame(parent)
@@ -2441,7 +2548,6 @@ class DrosophilaGUI:
 
         self.start_button = self.make_button(system_frame, "START", "#4CAF50", self.system_start)
         self.start_button.grid(row=0, column=0, pady=3, padx=5, sticky=(tk.W, tk.E))
-        self.remote_unsupported_widgets.append(self.start_button)
 
         self.stop_button = self.make_button(system_frame, "STOP", "#F44336", self.system_stop)
         self.stop_button.grid(row=0, column=1, pady=3, padx=5, sticky=(tk.W, tk.E))
@@ -3425,9 +3531,22 @@ class DrosophilaGUI:
         return process
 
     def _run_automated_worker(self):
-        runtime = self._load_local_runtime()
         final_operation = importlib.import_module("pi_app.legacy_pi.FinalOperation")
-        classify_callable = runtime["classify_fly"]
+        home_callable = None
+        move_callable = None
+        vacuum_callable = None
+        get_operational_max_mm_callable = None
+
+        if self.is_remote_mode():
+            self._get_remote_controller_for_automation()
+            classify_callable = self._run_remote_classify_for_automation
+            home_callable = self._run_remote_home_for_automation
+            move_callable = self._run_remote_move_absolute_for_automation
+            vacuum_callable = self._run_remote_set_vacuum_for_automation
+            get_operational_max_mm_callable = self._remote_operational_max_mm
+        else:
+            runtime = self._load_local_runtime()
+            classify_callable = runtime["classify_fly"]
 
         def detect_channel():
             capture = self._run_local_channel_detection_capture()
@@ -3441,6 +3560,10 @@ class DrosophilaGUI:
 
         try:
             final_operation.run_operation(
+                home=home_callable,
+                move_absolute=move_callable,
+                set_vacuum=vacuum_callable,
+                get_operational_max_mm=get_operational_max_mm_callable,
                 detect_channel=detect_channel,
                 classify_fly=classify_callable,
                 ask_yes_no=self._ask_user_yes_no_from_worker,
@@ -3547,9 +3670,6 @@ class DrosophilaGUI:
         self.start_task("vibration", "running", f"Turning vibration {'on' if enabled else 'off'}.", task)
 
     def run_channel_detection(self):
-        if self.is_remote_mode():
-            messagebox.showinfo("Remote Mode", "Local fin6 channel detection is only available in local mode.")
-            return
         if self._require_fin6_setup_ready("Detect Channel", require_channel=True, require_assay=False) is None:
             return
         self.start_task(
@@ -3561,11 +3681,22 @@ class DrosophilaGUI:
 
     def run_automated(self):
         if self.is_remote_mode():
-            messagebox.showinfo("Remote Mode", "Automated run is not wired for remote mode in this phase.")
-            return
-        runtime = self._ensure_local_runtime_or_warn("Run Automated")
-        if runtime is None:
-            return
+            if not self.remote_connected or self.remote_controller is None:
+                messagebox.showwarning("Disconnected", "Connect to the Pi backend before starting the automated process.")
+                return
+            if self.remote_home_calibration_required:
+                self._schedule_remote_home_prompt()
+                return
+            if not self.remote_motion_available:
+                messagebox.showerror("Remote Motion Unavailable", "The remote motion subsystem is not available.")
+                return
+            if not self.remote_classifier_available:
+                messagebox.showerror("Remote Classifier Unavailable", "The remote classifier subsystem is not available.")
+                return
+        else:
+            runtime = self._ensure_local_runtime_or_warn("Run Automated")
+            if runtime is None:
+                return
         if not self._prompt_fin6_preflight("Run Automated", require_channel=True, require_assay=True, automation=True):
             return
         self._reset_sorting_status_display()
@@ -3614,10 +3745,19 @@ class DrosophilaGUI:
             if not self.remote_connected:
                 messagebox.showinfo("Stop", "Remote backend is not connected.")
                 return
-            if not self.remote_stop_allowed:
+            local_automation_active = bool(self.worker_thread and self.worker_thread.is_alive() and self.current_task_cancellable)
+            if not self.remote_stop_allowed and not local_automation_active:
                 messagebox.showinfo("Stop", "Stop is only available while the remote backend is busy.")
                 return
-            self._start_remote_command("stop", "stopped", "Sending remote stop request.", self.remote_controller.stop)
+            if local_automation_active:
+                self.stop_requested.set()
+                self.set_status("stopped", "Stopping remote automated run at the next safe point.")
+                self.log_message("Stop requested for remote automated run.")
+            else:
+                self.set_status("stopped", "Sending remote stop request.")
+                self.log_message("Sending remote stop request.")
+            if self.remote_stop_allowed:
+                self._start_remote_command("stop", "stopped", "Sending remote stop request.", self.remote_controller.stop)
             return
 
         if not (self.worker_thread and self.worker_thread.is_alive() and self.current_task_cancellable):
