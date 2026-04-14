@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import queue
 import threading
 import time
@@ -847,7 +848,20 @@ class App(tk.Tk):
         self._watch_settings_vars()
         self._bootstrap_from_disk()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        if os.environ.get("DROSOPHILA_FIN6_RAISE") == "1":
+            self.after(120, self._raise_window_on_startup)
         self.after(self._assay_poll_interval_ms, self._poll_ui_queue)
+
+    def _raise_window_on_startup(self) -> None:
+        try:
+            self.deiconify()
+            self.update_idletasks()
+            self.lift()
+            self.focus_force()
+            self.attributes("-topmost", True)
+            self.after(300, lambda: self.winfo_exists() and self.attributes("-topmost", False))
+        except tk.TclError:
+            return
 
     def _build_vars(self) -> None:
         root = self.project_root
