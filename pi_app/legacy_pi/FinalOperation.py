@@ -151,14 +151,19 @@ def _load_detection_from_json_interactive(log_callback: Callable[[str], None]) -
 
 def _default_launch_assay_gui() -> Any:
     try:
-        fin6_bridge = importlib.import_module("host_app.fin6_bridge")
-        return fin6_bridge.launch_fin6_gui()
+        operator_bridge = importlib.import_module("host_app.operator_bridge")
+        return operator_bridge.launch_fin6_gui()
     except Exception:
         script_path = REPO_ROOT / "vision" / "fin6" / "fly_tracking_gui.py"
         return subprocess.Popen([sys.executable, str(script_path)], cwd=str(script_path.parent))
 
 
 def _default_detect_channel(log_callback: Callable[[str], None]) -> dict[str, Any]:
+    try:
+        operator_bridge = importlib.import_module("host_app.operator_bridge")
+        return operator_bridge.detect_channel_once_from_saved_settings()
+    except Exception as exc:
+        log_callback(f"Saved channel detection failed, falling back to detection JSON: {exc}")
     result = _load_detection_from_json_interactive(log_callback)
     return {
         "result": result,

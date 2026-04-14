@@ -49,7 +49,7 @@ def get_status(request: Request) -> Response:
 @router.get("/artifacts/channel/annotated", dependencies=[Depends(require_api_key)])
 def get_channel_annotated_preview(request: Request) -> FileResponse:
     context = request.app.state.backend_context
-    preview_path = context.runtime_config.annotated_preview_path
+    preview_path = context.machine_service.get_channel_annotated_preview_path()
     if not preview_path.exists():
         raise HTTPException(status_code=404, detail="Channel annotated preview is not available yet.")
     return FileResponse(preview_path, media_type="image/png", filename=preview_path.name)

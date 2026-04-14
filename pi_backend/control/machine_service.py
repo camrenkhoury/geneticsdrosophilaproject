@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+from pathlib import Path
 from typing import Any
 
 from pi_backend.adapters.detection_result_reader import DetectionResultReader
@@ -224,13 +225,37 @@ class MachineService:
             self._ensure_assay_ready()
         except SubsystemUnavailableError as exc:
             return str(exc)
-        return None
+        try:
+            fin6_bridge = self._load_fin6_bridge()
+        except Exception as exc:
+            return f"Assay setup integration is unavailable: {exc}"
+        status = fin6_bridge.get_setup_status()
+        if status.assay_ready:
+            return None
+        return (
+            "Assay Setup is missing on the Pi.\n"
+            "Open Assay Setup on the Pi, capture the saved assay background, run assay calibration, and save the setup before running the assay."
+        )
 
     def _load_fin6_bridge(self):
         if self._fin6_bridge is not None:
             return self._fin6_bridge
-        self._fin6_bridge = importlib.import_module("host_app.fin6_bridge")
+        self._fin6_bridge = importlib.import_module("host_app.operator_bridge")
         return self._fin6_bridge
+
+    def _channel_output_dir(self) -> Path:
+        try:
+            fin6_bridge = self._load_fin6_bridge()
+            status = fin6_bridge.get_setup_status()
+            return Path(status.channel.output_dir)
+        except Exception:
+            return Path(self.runtime_config.channel_output_directory)
+
+    def _channel_result_path(self) -> Path:
+        return self._channel_output_dir() / "last_channel_result.json"
+
+    def get_channel_annotated_preview_path(self) -> Path:
+        return self._channel_output_dir() / "last_channel_annotated.png"
 
     def get_fin6_setup_status(self) -> dict[str, Any]:
         fin6_bridge = self._load_fin6_bridge()
@@ -251,24 +276,22 @@ class MachineService:
         }
 
     def validate_detect_channel_command(self) -> str | None:
-        fin6_bridge = self._load_fin6_bridge()
+        try:
+            fin6_bridge = self._load_fin6_bridge()
+        except Exception as exc:
+            return f"Channel Detection Setup integration is unavailable: {exc}"
         status = fin6_bridge.get_setup_status()
-        issues: list[str] = []
-        if not status.channel_background_ready:
-            issues.append(f"Channel background missing: {status.channel.background_path}")
-        if not status.channel_calibration_ready:
-            issues.append(f"Channel calibration missing: {status.channel.calibration_path}")
-        if not issues:
+        if status.channel_ready:
             return None
         return (
-            "Saved fin6 channel setup is missing on the Pi.\n"
+            "Channel Detection Setup is missing on the Pi.\n"
             "Preparation steps:\n"
             "1. Empty the channel.\n"
-            "2. Move the nozzle out of the way.\n"
-            "3. Open fin6 Setup on the Pi.\n"
-            "4. Capture the channel background.\n"
-            "5. Calibrate the channel.\n\n"
-            + "\n".join(issues)
+            "2. Move the nozzle out of the camera view.\n"
+            "3. Open Channel Detection Setup on the Pi.\n"
+            "4. Capture a clean channel background.\n"
+            "5. Run channel calibration.\n"
+            "6. Save the setup."
         )
 
     def home(self) -> float:
@@ -404,6 +427,9 @@ class MachineService:
         return result
 
     def refresh_detection_summary(self) -> DetectionSummary:
+        result_path = self._channel_result_path()
+        if self.detection_reader.result_path != result_path:
+            self.detection_reader = DetectionResultReader(result_path)
         try:
             summary = self.detection_reader.read_summary()
         except Exception as exc:

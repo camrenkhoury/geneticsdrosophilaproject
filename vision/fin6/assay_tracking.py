@@ -1926,7 +1926,8 @@ def run_assay_session(
     camera_width: int = 1536,
     camera_height: int = 864,
     camera_backend: str = "opencv",
-    camera_device: str | int = "/dev/video10",
+    camera_device: str | int = "auto:assay",
+    camera_preferred_hint: str = "",
     camera_index: int = 0,
     min_area: int = 10,
     max_area: int = 250,
@@ -1967,6 +1968,8 @@ def run_assay_session(
         fps=float(fps),
         camera_index=int(camera_index),
         camera_device=camera_device,
+        preferred_hint=camera_preferred_hint,
+        role="assay",
     ) as camera:
         camera_index_in_use = getattr(camera, "camera_index_in_use", None)
         first_frame = camera.read()
@@ -2116,6 +2119,7 @@ def run_assay_session(
         "camera_height": int(camera_height),
         "camera_backend": assay_camera_backend,
         "camera_device_requested": None if assay_camera_backend != "opencv" else str(camera_device),
+        "camera_preferred_hint": str(camera_preferred_hint or ""),
         "camera_index_requested": int(camera_index),
         "camera_index_in_use": None if camera_index_in_use is None else int(camera_index_in_use),
         "frames_processed": int(frame_index),
@@ -2154,7 +2158,8 @@ def capture_assay_background(
     fps: float = 10.0,
     frame_count: int = 25,
     camera_backend: str = "opencv",
-    camera_device: str | int = "/dev/video10",
+    camera_device: str | int = "auto:assay",
+    camera_preferred_hint: str = "",
     camera_index: int = 0,
 ) -> str:
     with open_assay_camera(
@@ -2164,6 +2169,8 @@ def capture_assay_background(
         fps=float(fps),
         camera_index=int(camera_index),
         camera_device=camera_device,
+        preferred_hint=camera_preferred_hint,
+        role="assay",
     ) as camera:
         bg = capture_background_image(camera, frame_count=frame_count, frame_sleep_s=0.03)
     ok = cv2.imwrite(str(output_path), bg)
@@ -2177,7 +2184,8 @@ def capture_assay_frame(
     height: int = 864,
     fps: float = 10.0,
     camera_backend: str = "opencv",
-    camera_device: str | int = "/dev/video10",
+    camera_device: str | int = "auto:assay",
+    camera_preferred_hint: str = "",
     camera_index: int = 0,
 ) -> np.ndarray:
     with open_assay_camera(
@@ -2187,6 +2195,8 @@ def capture_assay_frame(
         fps=float(fps),
         camera_index=int(camera_index),
         camera_device=camera_device,
+        preferred_hint=camera_preferred_hint,
+        role="assay",
     ) as camera:
         return camera.read()
 
@@ -2202,7 +2212,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_bg.add_argument("--fps", type=float, default=10.0)
     p_bg.add_argument("--frames", type=int, default=25)
     p_bg.add_argument("--camera-backend", choices=["opencv", "pihq"], default="opencv")
-    p_bg.add_argument("--camera-device", default="/dev/video10")
+    p_bg.add_argument("--camera-device", default="auto:assay")
     p_bg.add_argument("--camera-index", type=int, default=0)
 
     p_cal = sub.add_parser("calibrate", help="Calibrate vial ROIs, top, and baseline from a background image.")
@@ -2222,7 +2232,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--width", type=int, default=1536)
     p_run.add_argument("--height", type=int, default=864)
     p_run.add_argument("--camera-backend", choices=["opencv", "pihq"], default="opencv")
-    p_run.add_argument("--camera-device", default="/dev/video10")
+    p_run.add_argument("--camera-device", default="auto:assay")
     p_run.add_argument("--camera-index", type=int, default=0)
     p_run.add_argument("--min-area", type=int, default=10)
     p_run.add_argument("--max-area", type=int, default=250)

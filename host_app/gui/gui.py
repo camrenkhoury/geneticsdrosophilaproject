@@ -676,7 +676,7 @@ class DrosophilaGUI:
             return self._fin6_bridge_cache
 
         try:
-            fin6_bridge = importlib.import_module("host_app.fin6_bridge")
+            fin6_bridge = importlib.import_module("host_app.operator_bridge")
         except Exception as exc:
             self._fin6_bridge_error = f"{type(exc).__name__}: {exc}"
             raise RuntimeError(f"fin6 integration is unavailable: {self._fin6_bridge_error}") from exc
@@ -2011,8 +2011,9 @@ class DrosophilaGUI:
                     pass
                 continue
             if widget in self.local_vision_widgets:
-                target_state = tk.NORMAL if not busy else tk.DISABLED
-                target_entry_state = "normal" if not busy else "disabled"
+                local_vision_enabled = not busy and (not self.is_remote_mode() or self.remote_connected)
+                target_state = tk.NORMAL if local_vision_enabled else tk.DISABLED
+                target_entry_state = "normal" if local_vision_enabled else "disabled"
             elif widget in self.remote_unsupported_widgets and self.is_remote_mode():
                 target_state = tk.DISABLED
                 target_entry_state = "disabled"

@@ -40,13 +40,13 @@ except ImportError:
 
 def capture_brio_background(
     output_path: str | Path,
-    device: str = "/dev/video8",
+    device: str = "auto:channel",
     width: int = 1920,
     height: int = 1080,
     fps: int = 30,
     frame_count: int = 15,
 ) -> str:
-    with BrioCamera(BrioConfig(device=device, width=width, height=height, fps=fps)) as camera:
+    with BrioCamera(BrioConfig(device=device, width=width, height=height, fps=fps, role="channel")) as camera:
         bg = capture_background_image(camera, frame_count=frame_count, frame_sleep_s=0.03)
     ok = cv2.imwrite(str(output_path), bg)
     if not ok:
@@ -112,7 +112,7 @@ def detect_once(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if frame_path is None:
-        with BrioCamera(BrioConfig(device=device, width=width, height=height, fps=fps)) as camera:
+        with BrioCamera(BrioConfig(device=device, width=width, height=height, fps=fps, role="channel")) as camera:
             frame_bgr = camera.read()
     else:
         frame_bgr = cv2.imread(str(frame_path), cv2.IMREAD_COLOR)
@@ -146,7 +146,7 @@ def detect_once(
 def live_detect(
     background_path: str | Path,
     calibration_path: str | Path,
-    device: str = "/dev/video8",
+    device: str = "auto:channel",
     width: int = 1920,
     height: int = 1080,
     fps: int = 30,
@@ -154,7 +154,7 @@ def live_detect(
     score_thresh: int = 20,
     band_half_width: int = 35,
 ) -> None:
-    with BrioCamera(BrioConfig(device=device, width=width, height=height, fps=fps)) as camera:
+    with BrioCamera(BrioConfig(device=device, width=width, height=height, fps=fps, role="channel")) as camera:
         while True:
             frame_bgr = camera.read()
             result, annotated, mask = process_fly_detection(
@@ -184,7 +184,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p_bg = sub.add_parser("background", help="Capture a median background image from the Brio camera.")
     p_bg.add_argument("-o", "--output", required=True)
-    p_bg.add_argument("--device", default="/dev/video8")
+    p_bg.add_argument("--device", default="auto:channel")
     p_bg.add_argument("--width", type=int, default=1920)
     p_bg.add_argument("--height", type=int, default=1080)
     p_bg.add_argument("--fps", type=int, default=30)
@@ -202,7 +202,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_det.add_argument("-b", "--background", required=True)
     p_det.add_argument("-c", "--calibration", required=True)
     p_det.add_argument("--frame", default=None, help="Optional existing image path. If omitted, a fresh Brio frame is captured.")
-    p_det.add_argument("--device", default="/dev/video8")
+    p_det.add_argument("--device", default="auto:channel")
     p_det.add_argument("--width", type=int, default=1920)
     p_det.add_argument("--height", type=int, default=1080)
     p_det.add_argument("--fps", type=int, default=30)
@@ -214,7 +214,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_live = sub.add_parser("live", help="Run live Brio channel detection.")
     p_live.add_argument("-b", "--background", required=True)
     p_live.add_argument("-c", "--calibration", required=True)
-    p_live.add_argument("--device", default="/dev/video8")
+    p_live.add_argument("--device", default="auto:channel")
     p_live.add_argument("--width", type=int, default=1920)
     p_live.add_argument("--height", type=int, default=1080)
     p_live.add_argument("--fps", type=int, default=30)

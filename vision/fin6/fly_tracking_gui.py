@@ -78,6 +78,10 @@ def _read_bgr(path: str | Path) -> np.ndarray:
     return image
 
 
+def _looks_like_windows_path(raw_text: str) -> bool:
+    return len(raw_text) >= 3 and raw_text[1] == ":" and raw_text[0].isalpha() and raw_text[2] in {"\\", "/"}
+
+
 @dataclass
 class EditorRegion:
     x: int
@@ -876,7 +880,7 @@ class App(tk.Tk):
         self.channel_background_var = tk.StringVar(value=str(root / "backgrounds" / "channel_bg.png"))
         self.channel_calibration_var = tk.StringVar(value=str(root / "calibrations" / "channel_calibration.json"))
         self.channel_output_var = tk.StringVar(value=str(root / "outputs" / "channel"))
-        self.channel_device_var = tk.StringVar(value="/dev/video8")
+        self.channel_device_var = tk.StringVar(value="auto:channel")
         self.channel_width_var = tk.IntVar(value=1920)
         self.channel_height_var = tk.IntVar(value=1080)
         self.channel_fps_var = tk.IntVar(value=30)
@@ -891,7 +895,7 @@ class App(tk.Tk):
         self.assay_height_var = tk.IntVar(value=864)
         self.assay_fps_var = tk.DoubleVar(value=5.0)
         self.assay_camera_backend_var = tk.StringVar(value="opencv")
-        self.assay_camera_device_var = tk.StringVar(value="/dev/video10")
+        self.assay_camera_device_var = tk.StringVar(value="auto:assay")
         self.assay_camera_index_var = tk.IntVar(value=0)
         self.assay_seconds_var = tk.DoubleVar(value=30.0)
         self.assay_min_area_var = tk.IntVar(value=10)
@@ -947,6 +951,9 @@ class App(tk.Tk):
             if not raw:
                 var.set(str(default_path))
                 continue
+            if _looks_like_windows_path(raw):
+                var.set(str(default_path))
+                continue
             current = Path(raw).expanduser()
             if not current.is_absolute():
                 var.set(str((self.project_root / current).resolve()))
@@ -960,6 +967,14 @@ class App(tk.Tk):
             same_name = current.name == default_path.name
             if same_name and not current.exists():
                 var.set(str(default_path))
+
+        channel_device = str(self.channel_device_var.get() or "").strip()
+        if not channel_device or channel_device == "/dev/video8":
+            self.channel_device_var.set("auto:channel")
+
+        assay_device = str(self.assay_camera_device_var.get() or "").strip()
+        if not assay_device or assay_device == "/dev/video10":
+            self.assay_camera_device_var.set("auto:assay")
 
     def _watch_settings_vars(self) -> None:
         watch_vars = [
@@ -2289,7 +2304,7 @@ class App(tk.Tk):
 
         def worker():
             try:
-                with BrioCamera(BrioConfig(device=params["device"], width=params["width"], height=params["height"], fps=params["fps"])) as camera:
+                with BrioCamera(BrioConfig(device=params["device"], width=params["width"], height=params["height"], fps=params["fps"], role="channel")) as camera:
                     frame = camera.read()
                 result, annotated, mask = process_fly_detection(
                     background=params["background"],
@@ -2327,7 +2342,7 @@ class App(tk.Tk):
 
         def worker():
             try:
-                with BrioCamera(BrioConfig(device=params["device"], width=params["width"], height=params["height"], fps=params["fps"])) as camera:
+                with BrioCamera(BrioConfig(device=params["device"], width=params["width"], height=params["height"], fps=params["fps"], role="channel")) as camera:
                     while not self.channel_stop_event.is_set():
                         frame = camera.read()
                         result, annotated, _mask = process_fly_detection(

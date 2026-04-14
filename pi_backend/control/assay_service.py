@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import logging
 from typing import Callable
 
@@ -7,7 +8,6 @@ from pi_backend.adapters.vibration_adapter import VibrationAdapter
 from pi_backend.core.subsystem_support import (
     SubsystemUnavailableError,
     format_exception_message,
-    import_legacy_module,
 )
 from pi_backend.core.runtime_state import RuntimeStateStore
 from shared.state.state_enums import OrchestratorState, TaskState
@@ -34,8 +34,8 @@ class AssayService:
 
         self._initialized = True
         try:
-            module = import_legacy_module("assay")
-            self._assay_callable = getattr(module, "assay")
+            module = importlib.import_module("host_app.operator_bridge")
+            self._assay_callable = getattr(module, "run_assay_from_saved_settings")
         except Exception as exc:
             self._assay_callable = None
             self._available = False
@@ -60,7 +60,7 @@ class AssayService:
         if self._assay_callable is None:
             raise SubsystemUnavailableError(
                 "assay",
-                self._last_error or "legacy assay module failed to initialize.",
+                self._last_error or "operator assay bridge failed to initialize.",
             )
         return self._assay_callable
 
