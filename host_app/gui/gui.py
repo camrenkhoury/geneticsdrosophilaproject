@@ -928,7 +928,8 @@ class DrosophilaGUI:
                     "",
                     "Automation notes:",
                     "1. The gantry loop will trigger channel detection automatically each cycle using the saved fin6 settings.",
-                    "2. The GUI will ask for assay confirmation after sorting completes.",
+                    "2. After START is confirmed, the run proceeds automatically without more prompts unless Emergency Stop is used.",
+                    "3. The GUI will ask for assay confirmation only after sorting completes.",
                 ]
             )
 
@@ -1547,6 +1548,8 @@ class DrosophilaGUI:
             label_color = "#FF9800" if self.remote_backend_degraded else "#4CAF50"
             connection_color = "#4CAF50"
             self.remote_connected = True
+            self.remote_home_calibration_required = False
+            self.remote_home_prompt_scheduled = False
         elif state in {ConnectionState.CONNECTING_TO_PI, ConnectionState.RECONNECT_ATTEMPT, ConnectionState.RETRY_WAIT}:
             label_text = "Remote Mode"
             label_color = "#FF9800"
@@ -1576,48 +1579,10 @@ class DrosophilaGUI:
         self._update_control_interactivity()
 
     def _schedule_remote_home_prompt(self) -> None:
-        if (
-            not self.is_remote_mode()
-            or not self.remote_connected
-            or self.remote_home_prompt_scheduled
-            or self.remote_controller is None
-        ):
-            return
-
-        self.remote_home_calibration_required = True
-        self.remote_home_prompt_scheduled = True
-        self.connection_var.set("Connected. Waiting for home calibration approval.")
-        self.set_status("waiting", "Remote calibration must be sent Home before controls unlock.")
-        self._update_control_interactivity()
-        self.root.after(50, self._prompt_remote_home_calibration)
+        return
 
     def _prompt_remote_home_calibration(self) -> None:
-        self.remote_home_prompt_scheduled = False
-
-        if not self.is_remote_mode() or not self.remote_connected or self.remote_controller is None:
-            return
-
-        approved = messagebox.askyesno(
-            "Remote Calibration",
-            "The remote calibration should be sent to Home before use.\n\nSend Home now?",
-        )
-
-        if not approved:
-            self.remote_home_calibration_required = True
-            self.connection_var.set("Connected. Waiting for home calibration approval.")
-            self.set_status("waiting", "Waiting for home calibration approval.")
-            self._update_control_interactivity()
-            return
-
-        self.connection_var.set("Connected. Sending remote home calibration.")
-        self.set_status("moving", "Sending remote home calibration.")
-        self._start_remote_command(
-            "home calibration",
-            "moving",
-            "Sending remote home calibration.",
-            self.remote_controller.home,
-            allow_calibration_bypass=True,
-        )
+        return
 
     def _backend_busy_from_status(self, status: dict) -> bool:
         current_task = status.get("current_task")
@@ -3222,8 +3187,6 @@ class DrosophilaGUI:
                 elif kind == "remote_connection":
                     connection_state = ConnectionState(item[1])
                     self._apply_connection_state(connection_state, item[2])
-                    if connection_state in {ConnectionState.CLIENT_CONNECTED, ConnectionState.CLIENT_RECONNECTED}:
-                        self._schedule_remote_home_prompt()
                 elif kind == "remote_status":
                     self._apply_remote_status(item[1])
                 elif kind == "remote_preview":
@@ -3960,9 +3923,6 @@ class DrosophilaGUI:
             if not self.remote_connected or self.remote_controller is None:
                 messagebox.showwarning("Disconnected", "Connect to the Pi backend before starting the automated process.")
                 return
-            if self.remote_home_calibration_required:
-                self._schedule_remote_home_prompt()
-                return
             if not self.remote_motion_available:
                 messagebox.showerror("Remote Motion Unavailable", "The remote motion subsystem is not available.")
                 return
@@ -3977,7 +3937,7 @@ class DrosophilaGUI:
             return
         self._reset_sorting_status_display()
         self.sort_stage_var.set("Preflight complete")
-        self.sort_notes_var.set("Automated loading is starting with saved fin6 calibration.")
+        self.sort_notes_var.set("Automated loading is starting. No further operator prompts will appear until the final assay confirmation.")
         self.start_task(
             "automated run",
             "running",
