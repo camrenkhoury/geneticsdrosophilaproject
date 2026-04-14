@@ -2194,6 +2194,19 @@ class DrosophilaGUI:
         )
         self.output_dir_label.grid(row=7, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
+        ttk.Label(status_frame, text="Vision Setup:", font=("Arial", 10, "bold")).grid(row=8, column=0, sticky=tk.W, pady=2)
+        vision_row = ttk.Frame(status_frame)
+        vision_row.grid(row=8, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
+        vision_row.columnconfigure(2, weight=1)
+
+        self.detect_channel_button = self.make_button(vision_row, "Detect Channel", "#2196F3", self.run_channel_detection)
+        self.detect_channel_button.grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
+        self.remote_unsupported_widgets.append(self.detect_channel_button)
+
+        self.fin6_setup_button = self.make_button(vision_row, "Open fin6 Setup", "#607D8B", self.open_fin6_setup)
+        self.fin6_setup_button.grid(row=0, column=1, sticky=tk.W)
+        self.remote_unsupported_widgets.append(self.fin6_setup_button)
+
     def create_main_content(self, parent):
         content_frame = ttk.Frame(parent)
         content_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.N, tk.S, tk.W, tk.E), pady=(0, 10))
@@ -2272,19 +2285,7 @@ class DrosophilaGUI:
         preview_frame = ttk.LabelFrame(parent, text="Channel Detection Preview", style="Log.TLabelframe", padding="10")
         preview_frame.grid(row=0, column=1, sticky=(tk.N, tk.S, tk.W, tk.E), padx=8)
         preview_frame.columnconfigure(0, weight=1)
-        preview_frame.rowconfigure(1, weight=1)
-
-        toolbar = ttk.Frame(preview_frame)
-        toolbar.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
-        toolbar.columnconfigure(2, weight=1)
-
-        self.detect_channel_button = self.make_button(toolbar, "Detect Channel", "#2196F3", self.run_channel_detection)
-        self.detect_channel_button.grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
-        self.remote_unsupported_widgets.append(self.detect_channel_button)
-
-        self.fin6_setup_button = self.make_button(toolbar, "Open fin6 Setup", "#607D8B", self.open_fin6_setup)
-        self.fin6_setup_button.grid(row=0, column=1, sticky=tk.W)
-        self.remote_unsupported_widgets.append(self.fin6_setup_button)
+        preview_frame.rowconfigure(0, weight=1)
 
         self.preview_label = tk.Label(
             preview_frame,
@@ -2295,7 +2296,7 @@ class DrosophilaGUI:
             anchor=tk.CENTER,
             justify="center",
         )
-        self.preview_label.grid(row=1, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        self.preview_label.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
         self.preview_label.bind("<Configure>", self._refresh_preview_image)
 
     def create_device_operations(self, parent):
