@@ -18,6 +18,7 @@ import time
 import traceback
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import messagebox, scrolledtext, ttk
@@ -573,6 +574,8 @@ class DrosophilaGUI:
         self.remote_sync: RemoteSyncManager | None = None
         self._local_runtime_cache: dict[str, object] | None = None
         self._local_runtime_error: str | None = None
+        self._fin6_bridge_cache: object | None = None
+        self._fin6_bridge_error: str | None = None
         self.entry_page_scale = self.entry_profile["scale"]
 
         self.state_var = tk.StringVar(value="IDLE")
@@ -612,7 +615,6 @@ class DrosophilaGUI:
             motion = importlib.import_module("motion")
             vacuum = importlib.import_module("vacuum")
             vibration = importlib.import_module("vibration")
-            assay_module = importlib.import_module("assay")
             classifier_module = importlib.import_module("fly_classifier")
         except Exception as exc:
             self._local_runtime_error = f"{type(exc).__name__}: {exc}"
@@ -624,7 +626,6 @@ class DrosophilaGUI:
             "motion": motion,
             "vacuum": vacuum,
             "vibration": vibration,
-            "assay": getattr(assay_module, "assay"),
             "classify_fly": getattr(classifier_module, "classify_fly"),
             "gpio_available": bool(getattr(motion, "GPIO_AVAILABLE", False)),
         }
@@ -641,6 +642,29 @@ class DrosophilaGUI:
             self.set_status("error", str(exc))
             self.log_message(f"{action_label} unavailable: {exc}")
             messagebox.showerror("Local Mode Unavailable", f"{action_label} requires local dependencies.\n\n{exc}")
+            return None
+
+    def _load_fin6_bridge(self):
+        if self._fin6_bridge_cache is not None:
+            return self._fin6_bridge_cache
+
+        try:
+            fin6_bridge = importlib.import_module("host_app.fin6_bridge")
+        except Exception as exc:
+            self._fin6_bridge_error = f"{type(exc).__name__}: {exc}"
+            raise RuntimeError(f"fin6 integration is unavailable: {self._fin6_bridge_error}") from exc
+
+        self._fin6_bridge_error = None
+        self._fin6_bridge_cache = fin6_bridge
+        return fin6_bridge
+
+    def _ensure_fin6_bridge_or_warn(self, action_label: str):
+        try:
+            return self._load_fin6_bridge()
+        except RuntimeError as exc:
+            self.set_status("error", str(exc))
+            self.log_message(f"{action_label} unavailable: {exc}")
+            messagebox.showerror("fin6 Integration Unavailable", f"{action_label} requires the fin6 integration.\n\n{exc}")
             return None
 
     def _get_local_gpio_available(self) -> bool | None:
@@ -670,6 +694,143 @@ class DrosophilaGUI:
             self.mode_label.config(bg=label_color)
         if getattr(self, "connection_label", None) is not None:
             self.connection_label.config(bg=label_color)
+
+    def _collect_fin6_setup_issues(self, fin6_status, require_channel: bool, require_assay: bool) -> list[str]:
+        issues: list[str] = []
+        if require_channel:
+            if not fin6_status.channel_background_ready:
+                issues.append(f"Channel background missing: {fin6_status.channel.background_path}")
+            if not fin6_status.channel_calibration_ready:
+                issues.append(f"Channel calibration missing: {fin6_status.channel.calibration_path}")
+        if require_assay:
+            if not fin6_status.assay_background_ready:
+                issues.append(f"Assay background missing: {fin6_status.assay.background_path}")
+            if not fin6_status.assay_calibration_ready:
+                issues.append(f"Assay calibration missing: {fin6_status.assay.calibration_path}")
+        return issues
+
+    def _open_fin6_setup_with_bridge(self, fin6_bridge) -> bool:
+        if self.worker_thread and self.worker_thread.is_alive():
+            messagebox.showwarning("Busy", "Wait for the current task to finish before opening the fin6 setup GUI.")
+            return False
+        try:
+            process = fin6_bridge.launch_fin6_gui()
+        except Exception as exc:
+            self.set_status("error", f"Could not open fin6 setup: {exc}")
+            self.log_message(f"Could not open fin6 setup GUI: {exc}")
+            messagebox.showerror("fin6 Setup Error", str(exc))
+            return False
+
+        pid_text = getattr(process, "pid", None)
+        if pid_text is None:
+            self.log_message("Opened fin6 setup GUI.")
+        else:
+            self.log_message(f"Opened fin6 setup GUI (pid {pid_text}).")
+        self.set_status("running", "Opened fin6 setup GUI.")
+        return True
+
+    def open_fin6_setup(self):
+        if self.is_remote_mode():
+            messagebox.showinfo("Remote Mode", "fin6 setup is only available in local mode.")
+            return
+        fin6_bridge = self._ensure_fin6_bridge_or_warn("Open fin6 Setup")
+        if fin6_bridge is None:
+            return
+        self._open_fin6_setup_with_bridge(fin6_bridge)
+
+    def _require_fin6_setup_ready(self, action_label: str, require_channel: bool, require_assay: bool):
+        fin6_bridge = self._ensure_fin6_bridge_or_warn(action_label)
+        if fin6_bridge is None:
+            return None
+
+        fin6_status = fin6_bridge.get_setup_status()
+        issues = self._collect_fin6_setup_issues(fin6_status, require_channel=require_channel, require_assay=require_assay)
+        if not issues:
+            return fin6_bridge
+
+        message_lines = [
+            f"{action_label} needs the saved fin6 setup to be ready.",
+            "",
+            *issues,
+            "",
+            "Open the fin6 setup GUI now?",
+        ]
+        should_open = messagebox.askyesno("fin6 Setup Required", "\n".join(message_lines))
+        if should_open:
+            self._open_fin6_setup_with_bridge(fin6_bridge)
+        return None
+
+    def _prompt_fin6_preflight(self, action_label: str, require_channel: bool, require_assay: bool, automation: bool = False) -> bool:
+        fin6_bridge = self._require_fin6_setup_ready(
+            action_label,
+            require_channel=require_channel,
+            require_assay=require_assay,
+        )
+        if fin6_bridge is None:
+            return False
+
+        fin6_status = fin6_bridge.get_setup_status()
+        lines = [
+            f"{action_label} will use the saved fin6 settings.",
+            "",
+        ]
+        if require_channel:
+            lines.extend(
+                [
+                    f"Channel background: {fin6_status.channel.background_path}",
+                    f"Channel calibration: {fin6_status.channel.calibration_path}",
+                    f"Channel output dir: {fin6_status.channel.output_dir}",
+                    "",
+                ]
+            )
+        if require_assay:
+            lines.extend(
+                [
+                    f"Assay background: {fin6_status.assay.background_path}",
+                    f"Assay calibration: {fin6_status.assay.calibration_path}",
+                    f"Assay output dir: {fin6_status.assay.output_dir}",
+                    "",
+                ]
+            )
+
+        lines.extend(
+            [
+                "Calibration steps:",
+                "1. Choose No to open the fin6 setup GUI if you need to capture or recalibrate backgrounds.",
+                "2. Use the fin6 GUI to adjust channel and assay settings, then close it.",
+                "3. Return here and start again when the setup looks correct.",
+            ]
+        )
+        if automation:
+            lines.extend(
+                [
+                    "",
+                    "Automation notes:",
+                    "1. The gantry loop will trigger channel detection automatically each cycle using the saved fin6 settings.",
+                    "2. The GUI will ask for assay confirmation after sorting completes.",
+                ]
+            )
+
+        lines.extend(["", "Yes = continue now", "No = open fin6 Setup", "Cancel = abort"])
+        approved = messagebox.askyesnocancel(f"{action_label} Preflight", "\n".join(lines))
+        if approved is None:
+            return False
+        if approved is False:
+            self._open_fin6_setup_with_bridge(fin6_bridge)
+            return False
+        return True
+
+    def _ask_user_yes_no_from_worker(self, title: str, message: str) -> bool:
+        prompt_state = {
+            "title": title,
+            "message": message,
+            "response": False,
+            "event": threading.Event(),
+        }
+        self.ui_queue.put(("prompt_yes_no", prompt_state))
+        while not prompt_state["event"].wait(0.1):
+            self._check_stop()
+        return bool(prompt_state["response"])
 
     def _resolve_asset_path(self, *candidate_names: str) -> Path | None:
         search_roots = (
@@ -2111,7 +2272,19 @@ class DrosophilaGUI:
         preview_frame = ttk.LabelFrame(parent, text="Channel Detection Preview", style="Log.TLabelframe", padding="10")
         preview_frame.grid(row=0, column=1, sticky=(tk.N, tk.S, tk.W, tk.E), padx=8)
         preview_frame.columnconfigure(0, weight=1)
-        preview_frame.rowconfigure(0, weight=1)
+        preview_frame.rowconfigure(1, weight=1)
+
+        toolbar = ttk.Frame(preview_frame)
+        toolbar.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        toolbar.columnconfigure(2, weight=1)
+
+        self.detect_channel_button = self.make_button(toolbar, "Detect Channel", "#2196F3", self.run_channel_detection)
+        self.detect_channel_button.grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
+        self.remote_unsupported_widgets.append(self.detect_channel_button)
+
+        self.fin6_setup_button = self.make_button(toolbar, "Open fin6 Setup", "#607D8B", self.open_fin6_setup)
+        self.fin6_setup_button.grid(row=0, column=1, sticky=tk.W)
+        self.remote_unsupported_widgets.append(self.fin6_setup_button)
 
         self.preview_label = tk.Label(
             preview_frame,
@@ -2122,7 +2295,7 @@ class DrosophilaGUI:
             anchor=tk.CENTER,
             justify="center",
         )
-        self.preview_label.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        self.preview_label.grid(row=1, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
         self.preview_label.bind("<Configure>", self._refresh_preview_image)
 
     def create_device_operations(self, parent):
@@ -2641,8 +2814,14 @@ class DrosophilaGUI:
                     self.update_actuator_state(item[1], item[2])
                 elif kind == "classification_result":
                     self.show_classification_result(item[1])
+                elif kind == "local_channel_detection":
+                    self._apply_local_channel_detection(item[1])
                 elif kind == "clear_stop":
                     self.stop_requested.clear()
+                elif kind == "prompt_yes_no":
+                    prompt_state = item[1]
+                    prompt_state["response"] = messagebox.askyesno(prompt_state["title"], prompt_state["message"])
+                    prompt_state["event"].set()
                 elif kind == "remote_connection":
                     connection_state = ConnectionState(item[1])
                     self._apply_connection_state(connection_state, item[2])
@@ -2843,6 +3022,29 @@ class DrosophilaGUI:
         except (OSError, json.JSONDecodeError):
             return None
 
+    def _apply_local_channel_detection(self, payload: dict[str, Any]) -> None:
+        output_dir = Path(payload["output_dir"])
+        annotated_path = Path(payload["annotated_path"])
+        result_path = Path(payload["result_path"])
+        result = payload.get("result") or {}
+
+        output_text = str(output_dir)
+        self._last_output_dir_text = output_text
+        self.output_dir_var.set(output_text)
+
+        positions = result.get("x_positions_mm", [])
+        count = len(positions) if isinstance(positions, list) else 0
+        remaining = bool(result.get("fly_remaining", False))
+        modified = time.strftime("%H:%M:%S", time.localtime(result_path.stat().st_mtime))
+        self.detection_var.set(f"remaining={remaining} count={count} last_update={modified}")
+        self.last_result_mtime = result_path.stat().st_mtime
+
+        if annotated_path.exists():
+            self.load_channel_preview(annotated_path)
+            self.last_preview_mtime = annotated_path.stat().st_mtime
+        else:
+            self.set_preview_placeholder("Waiting for channel detection image...")
+
     def update_channel_preview(self):
         if self.is_remote_mode():
             if not self.remote_connected:
@@ -2982,10 +3184,9 @@ class DrosophilaGUI:
         corrected_position = position_mm + config.PICKUP_POSITION_CORRECTION_MM
         return self._clamp_operational(corrected_position)
 
-    def _load_positions_from_json(self, path: Path):
-        result = self._read_detection_result(path)
+    def _load_positions_from_result(self, result: dict | None, source_label: str):
         if result is None:
-            self.worker_log(f"Invalid JSON format in: {path}")
+            self.worker_log(f"Invalid detection result: {source_label}")
             return None
 
         if not result.get("fly_remaining", False):
@@ -3012,6 +3213,44 @@ class DrosophilaGUI:
             return "done"
 
         return sorted((self._apply_pickup_correction(value) for value in positions), reverse=True)
+
+    def _load_positions_from_json(self, path: Path):
+        return self._load_positions_from_result(self._read_detection_result(path), str(path))
+
+    def _run_local_channel_detection_capture(self):
+        fin6_bridge = self._load_fin6_bridge()
+        capture = fin6_bridge.detect_channel_once_from_saved_settings()
+        self.ui_queue.put(("local_channel_detection", capture))
+        return capture
+
+    def _resolve_tube_for_classification(self, classification_result: dict) -> tuple[str, float]:
+        class_name = str(classification_result.get("class") or "UNCERTAIN").strip().lower()
+        if class_name == "male":
+            return "Tube 1", config.TUBE_1_CENTER
+        if class_name == "female":
+            return "Tube 2", config.TUBE_2_CENTER
+        raise RuntimeError(
+            "Classification remained uncertain. Automated run stopped with the fly left in the chamber for operator review."
+        )
+
+    def _classify_for_automated_routing(self, classify_callable, cycle_index: int) -> dict:
+        max_attempts = 2
+        settle_retry_s = 2.0
+        last_result: dict | None = None
+        for attempt in range(1, max_attempts + 1):
+            self.worker_status("running", f"Cycle {cycle_index}: classifying fly (attempt {attempt}/{max_attempts}).")
+            result = classify_callable()
+            last_result = result
+            self.worker_log(f"Cycle {cycle_index} classification result: {result}")
+            class_name = str(result.get("class") or "UNCERTAIN").strip().lower()
+            if class_name in {"male", "female"}:
+                return result
+            if attempt < max_attempts:
+                self.worker_log("Classification was uncertain. Waiting briefly before retrying.")
+                self._sleep_with_stop(settle_retry_s)
+        raise RuntimeError(
+            f"Classification remained uncertain after {max_attempts} attempts: {last_result}"
+        )
 
     def _wait_for_detection_result(self, previous_mtime: float | None):
         first_wait = True
@@ -3041,14 +3280,20 @@ class DrosophilaGUI:
             self._sleep_with_stop(1.0)
 
     def _run_assay_worker(self):
-        runtime = self._load_local_runtime()
-        assay_callable = runtime["assay"]
-        self.worker_status("assaying", "Running assay.")
-        self.ui_queue.put(("actuator", "vibration", True))
-        try:
-            assay_callable()
-        finally:
-            self.ui_queue.put(("actuator", "vibration", False))
+        fin6_bridge = self._load_fin6_bridge()
+        self.worker_status("assaying", "Running fin6 assay from saved settings.")
+        result = fin6_bridge.run_assay_from_saved_settings()
+        output_dir = result.get("output_dir")
+        if output_dir:
+            self.worker_log(f"Assay completed. Output: {output_dir}")
+
+    def _run_channel_detection_worker(self):
+        self.worker_status("detecting", "Capturing channel image with fin6 settings.")
+        capture = self._run_local_channel_detection_capture()
+        result = capture.get("result") or {}
+        count = int(result.get("count", 0))
+        remaining = bool(result.get("fly_remaining", False))
+        self.worker_log(f"Channel detection complete. remaining={remaining} count={count}")
 
     def _classify_worker(self):
         runtime = self._load_local_runtime()
@@ -3065,24 +3310,21 @@ class DrosophilaGUI:
 
     def _run_automated_worker(self):
         runtime = self._load_local_runtime()
+        fin6_bridge = self._load_fin6_bridge()
         motion = runtime["motion"]
-        assay_callable = runtime["assay"]
+        classify_callable = runtime["classify_fly"]
         chamber_drop_s = 2.0
-        chamber_identify_s = 6.0
+        chamber_settle_s = 6.0
         chamber_pickup_s = 2.0
         tube_drop_s = 2.0
-        camera_photo_position = self._clamp_operational(config.CHANNEL_LOCATION_END + 15.0)
+        camera_photo_position = self._clamp_operational(config.CHANNEL_LOCATION_END + 43.0)
 
         cycle_index = 0
-        last_detection_mtime = self.last_used_detection_mtime
 
         try:
             while True:
                 self._check_stop()
                 cycle_index += 1
-
-                tube_label = "Tube 1" if (cycle_index - 1) % 2 == 0 else "Tube 2"
-                tube_position = config.TUBE_1_CENTER if (cycle_index - 1) % 2 == 0 else config.TUBE_2_CENTER
 
                 self.worker_status("running", f"Cycle {cycle_index}: homing gantry.")
                 self._set_vacuum(False)
@@ -3091,12 +3333,22 @@ class DrosophilaGUI:
                 self.worker_status("moving", f"Cycle {cycle_index}: moving to channel photo position.")
                 motion.move_to_absolute(camera_photo_position)
 
-                last_detection_mtime, positions = self._wait_for_detection_result(last_detection_mtime)
-                self.last_used_detection_mtime = last_detection_mtime
+                self.worker_status("detecting", f"Cycle {cycle_index}: capturing channel detection image.")
+                detection_capture = self._run_local_channel_detection_capture()
+                result_path = Path(detection_capture["result_path"])
+                if result_path.exists():
+                    self.last_used_detection_mtime = result_path.stat().st_mtime
+
+                positions = self._load_positions_from_result(
+                    detection_capture.get("result"),
+                    str(result_path),
+                )
 
                 if positions == "done":
                     self.worker_log("No more flies remaining. Ending automated run.")
                     break
+                if positions is None:
+                    raise RuntimeError("Channel detection did not return a usable result.")
 
                 pickup_position = positions[0]
                 self.worker_log(f"Selected pickup position: {pickup_position:.2f} mm")
@@ -3119,8 +3371,12 @@ class DrosophilaGUI:
                 self._set_vacuum(False)
                 self._sleep_with_stop(chamber_drop_s)
 
-                self.worker_status("running", "Identification window active.")
-                self._sleep_with_stop(chamber_identify_s)
+                self.worker_status("running", "Allowing the fly to settle in the chamber before classification.")
+                self._sleep_with_stop(chamber_settle_s)
+
+                classification_result = self._classify_for_automated_routing(classify_callable, cycle_index)
+                tube_label, tube_position = self._resolve_tube_for_classification(classification_result)
+                self.worker_log(f"Cycle {cycle_index}: routing {classification_result.get('class')} to {tube_label}.")
 
                 self.worker_status("picking", "Picking fly from chamber.")
                 self._set_vacuum(True)
@@ -3136,20 +3392,21 @@ class DrosophilaGUI:
                 self.worker_status("running", f"Cycle {cycle_index}: returning home.")
                 motion.home_to_zero()
 
-            self.worker_status("assaying", "Sorting complete. Assay starts in 10 seconds.")
-            for seconds_left in range(10, 0, -1):
-                self._check_stop()
-                self.worker_log(f"Assay starts in {seconds_left}...")
-                self._sleep_with_stop(1.0)
+            ready_for_assay = self._ask_user_yes_no_from_worker(
+                "Ready To Start Assay",
+                "Sorting is complete.\n\nConfirm that the assay arena is prepared and the saved fin6 calibration is ready.\n\nStart the fin6 assay now?",
+            )
+            if not ready_for_assay:
+                self.worker_log("Operator declined the final assay prompt. Automated run finished without starting assay.")
+                return
 
-            self.ui_queue.put(("actuator", "vibration", True))
-            try:
-                assay_callable()
-            finally:
-                self.ui_queue.put(("actuator", "vibration", False))
+            self.worker_status("assaying", "Running fin6 assay from saved settings.")
+            assay_result = fin6_bridge.run_assay_from_saved_settings()
+            output_dir = assay_result.get("output_dir")
+            if output_dir:
+                self.worker_log(f"Assay completed. Output: {output_dir}")
         finally:
             self._set_vacuum(False)
-            self.ui_queue.put(("actuator", "vibration", False))
 
     def home_gantry(self):
         if self.is_remote_mode():
@@ -3244,6 +3501,19 @@ class DrosophilaGUI:
 
         self.start_task("vibration", "running", f"Turning vibration {'on' if enabled else 'off'}.", task)
 
+    def run_channel_detection(self):
+        if self.is_remote_mode():
+            messagebox.showinfo("Remote Mode", "Local fin6 channel detection is only available in local mode.")
+            return
+        if self._require_fin6_setup_ready("Detect Channel", require_channel=True, require_assay=False) is None:
+            return
+        self.start_task(
+            "channel detection",
+            "detecting",
+            "Capturing channel image with fin6 settings.",
+            self._run_channel_detection_worker,
+        )
+
     def run_automated(self):
         if self.is_remote_mode():
             messagebox.showinfo("Remote Mode", "Automated run is not wired for remote mode in this phase.")
@@ -3251,17 +3521,15 @@ class DrosophilaGUI:
         runtime = self._ensure_local_runtime_or_warn("Run Automated")
         if runtime is None:
             return
-        if messagebox.askyesno(
-            "Confirm",
-            "Start automated operation?\n\nThe GUI will follow the existing gantry sequence and wait for channel detection JSON updates.",
-        ):
-            self.start_task(
-                "automated run",
-                "running",
-                "Automated run started.",
-                self._run_automated_worker,
-                cancellable=True,
-            )
+        if not self._prompt_fin6_preflight("Run Automated", require_channel=True, require_assay=True, automation=True):
+            return
+        self.start_task(
+            "automated run",
+            "running",
+            "Automated run started.",
+            self._run_automated_worker,
+            cancellable=True,
+        )
 
     def run_assay(self):
         if self.is_remote_mode():
@@ -3272,8 +3540,7 @@ class DrosophilaGUI:
                 self.remote_controller.run_assay,
             )
             return
-        runtime = self._ensure_local_runtime_or_warn("Run Assay")
-        if runtime is None:
+        if not self._prompt_fin6_preflight("Run Assay", require_channel=False, require_assay=True):
             return
         self.start_task("assay", "assaying", "Running assay.", self._run_assay_worker)
 
