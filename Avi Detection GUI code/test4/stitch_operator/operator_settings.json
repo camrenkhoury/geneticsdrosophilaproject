@@ -1,0 +1,57 @@
+{
+  "active_assay_profile": "stitch_operator",
+  "sexing_model_path": "models/best.pt",
+  "sexing_capture_dir": "outputs/sexing",
+  "sexing_capture_command": "/usr/bin/rpicam-still",
+  "sexing_uncertain_threshold": 0.7,
+  "channel_background_path": "fin6/backgrounds/channel_bg.png",
+  "channel_calibration_path": "fin6/calibrations/channel_calibration.json",
+  "channel_output_dir": "fin6/outputs/channel",
+  "channel_device": "auto:channel",
+  "channel_preferred_hint": "",
+  "channel_width": 1920,
+  "channel_height": 1080,
+  "channel_fps": 30,
+  "channel_mm": 149.34,
+  "channel_score_thresh": 20,
+  "channel_band_half_width": 35,
+  "channel_no_align": false,
+  "pickup_offset_mm": -5.0,
+  "channel_camera_position_mm": 192.34,
+  "chamber_position_mm": 165.0,
+  "chamber_clear_offset_mm": 20.0,
+  "vacuum_pick_delay_s": 0.4,
+  "vacuum_drop_delay_s": 0.4,
+  "classification_delay_s": 1.0,
+  "confirmation_timeout_s": 300.0,
+  "vial_definitions": [
+    {
+      "vial_id": "V1",
+      "label": "V1",
+      "target_sex": "male",
+      "position_mm": 238.0,
+      "max_count": 10
+    },
+    {
+      "vial_id": "V2",
+      "label": "V2",
+      "target_sex": "female",
+      "position_mm": 267.5,
+      "max_count": 10
+    },
+    {
+      "vial_id": "V3",
+      "label": "V3",
+      "target_sex": "male",
+      "position_mm": 297.0,
+      "max_count": 10
+    },
+    {
+      "vial_id": "V4",
+      "label": "V4",
+      "target_sex": "female",
+      "position_mm": 326.5,
+      "max_count": 10
+    }
+  ]
+}

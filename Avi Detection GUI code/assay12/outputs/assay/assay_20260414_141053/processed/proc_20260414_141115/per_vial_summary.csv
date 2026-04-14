@@ -1,0 +1,2 @@
+assay_tube_index,number_of_flies_detected,flies_detected,number_of_unique_threshold_crossings,unique_threshold_crossings,fraction_crossing_by_10s,first_crossing_time_s,mean_height_px,max_height_px,mean_vertical_velocity_px_s,max_vertical_velocity_px_s,mean_speed_px_s,max_speed_px_s,processed_duration_s
+1,9,9,4,4,0.4444444444444444,1.0,385.36186955131126,587.3684210526316,43.84923996636591,144.94879162982602,56.56364155972643,146.38770345394116,9.8

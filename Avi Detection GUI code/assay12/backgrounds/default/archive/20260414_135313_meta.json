@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "profile_name": "default",
+  "captured_at": "2026-04-14T13:53:14",
+  "source": "camera",
+  "raw_path": "/home/team8/z.avi_assay_tests/assay12/backgrounds/default/archive/20260414_135313_raw.png",
+  "transformed_path": "/home/team8/z.avi_assay_tests/assay12/backgrounds/default/archive/20260414_135313_transformed.png",
+  "transform_settings": {
+    "rotation_deg": 0.0,
+    "flip_horizontal": false,
+    "flip_vertical": false,
+    "crop_xywh": null
+  },
+  "transform_signature": "8350b22003d6",
+  "image_shape_hw": [
+    960,
+    1280
+  ],
+  "notes": ""
+}

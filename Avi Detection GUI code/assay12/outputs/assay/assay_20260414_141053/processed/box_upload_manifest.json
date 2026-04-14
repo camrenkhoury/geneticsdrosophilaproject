@@ -1,0 +1,21 @@
+{
+  "profile_folder_id": "376744936056",
+  "session_folder_id": "376746873439",
+  "uploaded_relpaths": {
+    "processed/proc_20260414_141115/annotated_video.mp4": {
+      "uploaded_at": "2026-04-14T14:11:46",
+      "size_bytes": 744294,
+      "remote_parent": "processed/proc_20260414_141115"
+    },
+    "processed/proc_20260414_141115/report.pdf": {
+      "uploaded_at": "2026-04-14T14:11:47",
+      "size_bytes": 37851,
+      "remote_parent": "processed/proc_20260414_141115"
+    },
+    "raw_video.mp4": {
+      "uploaded_at": "2026-04-14T14:11:49",
+      "size_bytes": 588530,
+      "remote_parent": "."
+    }
+  }
+}

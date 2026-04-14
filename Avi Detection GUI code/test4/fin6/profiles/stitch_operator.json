@@ -1,0 +1,89 @@
+{
+  "name": "stitch_operator",
+  "schema_version": 1,
+  "description": "",
+  "created_at": "2026-04-10T18:37:50",
+  "updated_at": "2026-04-11T13:54:16",
+  "channel_camera": {
+    "backend": "opencv",
+    "device": "auto:channel",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30.0,
+    "camera_index": 0,
+    "preferred_hint": "",
+    "description": "Brio channel camera"
+  },
+  "assay_camera": {
+    "backend": "opencv",
+    "device": "auto:assay",
+    "width": 1536,
+    "height": 864,
+    "fps": 30.0,
+    "camera_index": 0,
+    "preferred_hint": "",
+    "description": "Assay camera"
+  },
+  "assay_duration_s": 10.0,
+  "record_preroll_s": 0.0,
+  "threshold_default_fraction": 0.5,
+  "transform": {
+    "rotation_deg": 0.0,
+    "flip_horizontal": false,
+    "flip_vertical": false,
+    "crop_xywh": null
+  },
+  "detector": {
+    "min_area": 10,
+    "max_area": 250,
+    "min_threshold": 16.0,
+    "inner_margin_px": 8,
+    "max_flies_per_vial": 10,
+    "threshold_hysteresis_px": 1.5,
+    "blob_split_max_parts": 4,
+    "allow_blob_split": true,
+    "motion_weight": 0.3
+  },
+  "analysis": {
+    "analysis_fps": 5.0,
+    "frame_subsampling": "nearest",
+    "frame_average_count": 1,
+    "smoothing_window": 3,
+    "auto_process_after_recording": false,
+    "alignment_enabled": false,
+    "save_mask_video": false,
+    "show_positions": false
+  },
+  "motor": {
+    "enabled": false,
+    "gpio_pin": 18,
+    "pulse_ms": 250,
+    "settle_delay_ms": 500,
+    "active_high": true
+  },
+  "outputs": {
+    "output_root": "outputs/assay",
+    "background_root": "backgrounds",
+    "calibration_root": "calibrations",
+    "upload_artifacts": "summaries",
+    "save_preview_snapshots": true,
+    "snapshot_interval_s": 1.0
+  },
+  "box_upload": {
+    "enabled": false,
+    "parent_folder_id": "",
+    "tokens_file": "",
+    "config_file": "",
+    "upload_after_processing": false,
+    "upload_after_recording": false,
+    "upload_backgrounds": false,
+    "artifact_mode": "summaries",
+    "folder_prefix": "fly_assay"
+  },
+  "calibration_path": "calibrations/assay_calibration.json",
+  "background_meta_path": "/home/team8/z.avi_assay_tests/test4/fin6/backgrounds/stitch_operator/current_meta.json",
+  "current_background_path": "/home/team8/z.avi_assay_tests/test4/fin6/backgrounds/stitch_operator/archive/20260411_123201_transformed.png",
+  "previous_background_path": "",
+  "last_run_dir": "",
+  "notes": ""
+}

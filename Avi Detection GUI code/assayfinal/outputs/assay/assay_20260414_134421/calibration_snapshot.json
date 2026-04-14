@@ -1,0 +1,159 @@
+{
+  "schema_version": 4,
+  "background_path": "/home/team8/z.avi_assay_tests/assayfinal/backgrounds/default/current_transformed.png",
+  "image_shape_hw": [
+    960,
+    1280
+  ],
+  "editor_mode": "rectangles",
+  "editor_meta": {},
+  "ignored_physical_indices": [],
+  "vials": [
+    {
+      "physical_index": 1,
+      "assay_index": 1,
+      "enabled": true,
+      "roi_xywh": [
+        137,
+        155,
+        184,
+        618
+      ],
+      "top_point_px": [
+        229,
+        156
+      ],
+      "baseline_point_px": [
+        229,
+        769
+      ],
+      "threshold_point_px": [
+        229,
+        239
+      ],
+      "quad_points_px": null,
+      "tube_height_mm": 80.0,
+      "tube_width_mm": 20.0,
+      "label": "Vial 1",
+      "group_id": null
+    },
+    {
+      "physical_index": 2,
+      "assay_index": 2,
+      "enabled": true,
+      "roi_xywh": [
+        370,
+        157,
+        173,
+        608
+      ],
+      "top_point_px": [
+        456,
+        158
+      ],
+      "baseline_point_px": [
+        456,
+        760
+      ],
+      "threshold_point_px": [
+        456,
+        239
+      ],
+      "quad_points_px": null,
+      "tube_height_mm": 80.0,
+      "tube_width_mm": 20.0,
+      "label": "Vial 2",
+      "group_id": null
+    },
+    {
+      "physical_index": 3,
+      "assay_index": 3,
+      "enabled": true,
+      "roi_xywh": [
+        587,
+        159,
+        176,
+        609
+      ],
+      "top_point_px": [
+        674,
+        161
+      ],
+      "baseline_point_px": [
+        682,
+        760
+      ],
+      "threshold_point_px": [
+        675,
+        239
+      ],
+      "quad_points_px": [
+        [
+          587,
+          163
+        ],
+        [
+          762,
+          159
+        ],
+        [
+          760,
+          753
+        ],
+        [
+          604,
+          767
+        ]
+      ],
+      "tube_height_mm": 80.0,
+      "tube_width_mm": 20.0,
+      "label": "Vial 3",
+      "group_id": null
+    },
+    {
+      "physical_index": 4,
+      "assay_index": 4,
+      "enabled": true,
+      "roi_xywh": [
+        796,
+        151,
+        181,
+        615
+      ],
+      "top_point_px": [
+        886,
+        153
+      ],
+      "baseline_point_px": [
+        894,
+        764
+      ],
+      "threshold_point_px": [
+        886,
+        239
+      ],
+      "quad_points_px": [
+        [
+          796,
+          155
+        ],
+        [
+          975,
+          151
+        ],
+        [
+          976,
+          763
+        ],
+        [
+          812,
+          765
+        ]
+      ],
+      "tube_height_mm": 80.0,
+      "tube_width_mm": 20.0,
+      "label": "Vial 4",
+      "group_id": null
+    }
+  ]
+}

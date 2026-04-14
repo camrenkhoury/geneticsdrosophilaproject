@@ -1,0 +1,2 @@
+unique_event_id,assay_tube_index,physical_vial_index,display_id,internal_track_id,crossing_frame_index,crossing_time_s,crossing_x_px,crossing_y_px,threshold_distance_px,threshold_distance_mm,deduplicated
+1,3,3,1,2,12,2.4,745.2189349112426,350.7041420118343,410.0,,False

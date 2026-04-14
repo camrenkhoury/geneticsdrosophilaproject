@@ -1,0 +1,9 @@
+{
+  "window_geometry": "1420x960+-225+202",
+  "channel_background": "/home/team8/z.avi_assay_tests/assayfinal1/backgrounds/channel_bg.png",
+  "channel_calibration": "/home/team8/z.avi_assay_tests/assayfinal1/calibrations/channel_calibration.json",
+  "assay_preview_mode": "annotated",
+  "channel_mm": "111",
+  "channel_score_thresh": "20",
+  "channel_band_half_width": "35"
+}

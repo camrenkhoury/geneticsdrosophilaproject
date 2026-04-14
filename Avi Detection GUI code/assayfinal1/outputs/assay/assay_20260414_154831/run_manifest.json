@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "run_name": "assay_20260414_154831",
+  "run_dir": "/home/team8/z.avi_assay_tests/assayfinal1/outputs/assay/assay_20260414_154831",
+  "created_at": "2026-04-14T15:48:43",
+  "duration_s": 10.0,
+  "record_fps": 30.0,
+  "frames_recorded": 50,
+  "raw_video_path": "/home/team8/z.avi_assay_tests/assayfinal1/outputs/assay/assay_20260414_154831/raw_video.mp4",
+  "camera_backend": "opencv",
+  "camera_device_requested": "auto:assay",
+  "camera_descriptor": {
+    "device_path": "/dev/video0",
+    "stable_path": "/dev/v4l/by-id/usb-EMEET_HD_Webcam_eMeet_C960_A230724000405104-video-index0",
+    "symlink_name": "usb-EMEET_HD_Webcam_eMeet_C960_A230724000405104-video-index0",
+    "card_name": "HD Webcam eMeet C960: HD Webcam",
+    "index": 0,
+    "is_brio": false,
+    "by_id_path": "/dev/v4l/by-id/usb-EMEET_HD_Webcam_eMeet_C960_A230724000405104-video-index0",
+    "by_path_path": "/dev/v4l/by-path/platform-xhci-hcd.1-usbv2-0:2:1.0-video-index0"
+  },
+  "camera_index_requested": 0,
+  "camera_index_in_use": null,
+  "frame_shape_hw": [
+    960,
+    1280
+  ],
+  "transform_description": "identity",
+  "transform_snapshot_path": "/home/team8/z.avi_assay_tests/assayfinal1/outputs/assay/assay_20260414_154831/transform_snapshot.json",
+  "profile_snapshot_path": "/home/team8/z.avi_assay_tests/assayfinal1/outputs/assay/assay_20260414_154831/profile_snapshot.json",
+  "calibration_snapshot_path": "/home/team8/z.avi_assay_tests/assayfinal1/outputs/assay/assay_20260414_154831/calibration_snapshot.json",
+  "background_raw_snapshot_path": "/home/team8/z.avi_assay_tests/assayfinal1/outputs/assay/assay_20260414_154831/background_raw_snapshot.png",
+  "background_transformed_snapshot_path": "/home/team8/z.avi_assay_tests/assayfinal1/outputs/assay/assay_20260414_154831/background_transformed_snapshot.png",
+  "background_meta_snapshot_path": "/home/team8/z.avi_assay_tests/assayfinal1/outputs/assay/assay_20260414_154831/background_meta_snapshot.json",
+  "record_preroll_s": 0.0,
+  "motor": {
+    "enabled": false,
+    "gpio_pin": 18,
+    "pulse_ms": 2000,
+    "settle_delay_ms": 500,
+    "active_high": true,
+    "backend": "module",
+    "module_name": "vibration"
+  },
+  "analysis_settings": {
+    "analysis_fps": 5.0,
+    "frame_subsampling": "nearest",
+    "frame_average_count": 1,
+    "smoothing_window": 3,
+    "auto_process_after_recording": false,
+    "alignment_enabled": false,
+    "save_mask_video": false,
+    "show_positions": false,
+    "tracking_mode": "stitch",
+    "use_mask_blobs_as_flies": true
+  },
+  "detector_settings": {
+    "min_area": 10,
+    "max_area": 250,
+    "min_threshold": 12.0,
+    "inner_margin_px": 8,
+    "max_flies_per_vial": 10,
+    "threshold_hysteresis_px": 1.5,
+    "blob_split_max_parts": 4,
+    "allow_blob_split": true,
+    "motion_weight": 0.3
+  },
+  "calibration_resized": false,
+  "calibration_backup_path": null,
+  "stopped_early": false,
+  "elapsed_wall_s": 11.974929586999679
+}

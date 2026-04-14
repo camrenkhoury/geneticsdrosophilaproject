@@ -1,0 +1,13 @@
+{
+  "session_folder_id": "376746873439",
+  "parent_folder_id": "376744936056",
+  "uploaded_files": [
+    "/home/team8/z.avi_assay_tests/assay12/outputs/assay/assay_20260414_141053/processed/proc_20260414_141115/annotated_video.mp4",
+    "/home/team8/z.avi_assay_tests/assay12/outputs/assay/assay_20260414_141053/processed/proc_20260414_141115/report.pdf",
+    "/home/team8/z.avi_assay_tests/assay12/outputs/assay/assay_20260414_141053/raw_video.mp4"
+  ],
+  "skipped_files": [],
+  "artifact_mode": "raw+annotated+pdf",
+  "upload_backgrounds": false,
+  "manifest_path": "/home/team8/z.avi_assay_tests/assay12/outputs/assay/assay_20260414_141053/processed/box_upload_manifest.json"
+}

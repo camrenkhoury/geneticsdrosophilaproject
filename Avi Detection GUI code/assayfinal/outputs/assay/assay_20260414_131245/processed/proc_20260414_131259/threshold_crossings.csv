@@ -1,0 +1,5 @@
+unique_event_id,assay_tube_index,physical_vial_index,display_id,internal_track_id,crossing_frame_index,crossing_time_s,crossing_x_px,crossing_y_px,threshold_distance_px,threshold_distance_mm,deduplicated
+1,1,1,8,8,38,7.6,318.3671875,261.6796875,501.0,66.91151919866444,False
+2,4,4,3,18,19,3.8,964.8651685393259,240.42696629213484,500.0,68.14310051107326,False
+3,4,4,2,17,23,4.6,896.5488372093023,241.52558139534884,500.0,68.14310051107326,False
+4,4,4,6,24,25,5.0,970.3113207547169,238.50943396226415,500.0,68.14310051107326,False

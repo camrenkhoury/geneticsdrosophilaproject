@@ -1,0 +1,17 @@
+{
+  "_instructions": [
+    "Replace the placeholder values below.",
+    "Copy this file to ~/.config/fin6/box_config.json or point the fin6 profile Box config file at it.",
+    "This template enables automatic upload after processing by default."
+  ],
+  "enabled": true,
+  "upload_after_processing": true,
+  "upload_after_recording": false,
+  "upload_backgrounds": false,
+  "artifact_mode": "summaries+videos",
+  "folder_prefix": "fly_assay",
+  "parent_folder_id": "PASTE_BOX_PARENT_FOLDER_ID_HERE",
+  "client_id": "PASTE_BOX_CLIENT_ID_HERE",
+  "client_secret": "PASTE_BOX_CLIENT_SECRET_HERE",
+  "tokens_file": "~/.config/fin6/box_tokens.json"
+}

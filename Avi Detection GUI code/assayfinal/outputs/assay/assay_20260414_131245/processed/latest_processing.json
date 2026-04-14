@@ -1,0 +1,8 @@
+{
+  "processed_at": "2026-04-14T13:13:02",
+  "processing_dir": "/home/team8/z.avi_assay_tests/assayfinal/outputs/assay/assay_20260414_131245/processed/proc_20260414_131259",
+  "processing_session_json": "/home/team8/z.avi_assay_tests/assayfinal/outputs/assay/assay_20260414_131245/processed/proc_20260414_131259/processing_session.json",
+  "annotated_video_path": "/home/team8/z.avi_assay_tests/assayfinal/outputs/assay/assay_20260414_131245/processed/proc_20260414_131259/annotated_video.mp4",
+  "mask_video_path": "",
+  "tracking_mode": "stitch"
+}

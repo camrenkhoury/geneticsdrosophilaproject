@@ -1,0 +1,91 @@
+{
+  "name": "default",
+  "schema_version": 1,
+  "description": "",
+  "created_at": "2026-04-12T14:07:35",
+  "updated_at": "2026-04-12T14:07:46",
+  "channel_camera": {
+    "backend": "opencv",
+    "device": "auto:channel",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30.0,
+    "camera_index": 0,
+    "preferred_hint": "",
+    "description": "Brio channel camera"
+  },
+  "assay_camera": {
+    "backend": "opencv",
+    "device": "auto:assay",
+    "width": 1536,
+    "height": 864,
+    "fps": 10.0,
+    "camera_index": 0,
+    "preferred_hint": "",
+    "description": "Assay camera"
+  },
+  "assay_duration_s": 10.0,
+  "record_preroll_s": 1.0,
+  "threshold_default_fraction": 0.5,
+  "transform": {
+    "rotation_deg": 0.0,
+    "flip_horizontal": false,
+    "flip_vertical": false,
+    "crop_xywh": null
+  },
+  "detector": {
+    "min_area": 2,
+    "max_area": 10000,
+    "min_threshold": 10.0,
+    "inner_margin_px": 4,
+    "max_flies_per_vial": 9,
+    "threshold_hysteresis_px": 2.0,
+    "blob_split_max_parts": 4,
+    "allow_blob_split": true,
+    "motion_weight": 0.3
+  },
+  "analysis": {
+    "analysis_fps": 1.0,
+    "frame_subsampling": "nearest",
+    "frame_average_count": 1,
+    "smoothing_window": 1,
+    "auto_process_after_recording": false,
+    "alignment_enabled": false,
+    "save_mask_video": true,
+    "show_positions": false
+  },
+  "motor": {
+    "enabled": true,
+    "gpio_pin": 18,
+    "pulse_ms": 2000,
+    "settle_delay_ms": 500,
+    "active_high": true,
+    "backend": "auto",
+    "module_name": ""
+  },
+  "outputs": {
+    "output_root": "/home/team8/z.avi_assay_tests/testb/fin6/outputs/assay",
+    "background_root": "backgrounds",
+    "calibration_root": "calibrations",
+    "upload_artifacts": "summaries",
+    "save_preview_snapshots": true,
+    "snapshot_interval_s": 1.0
+  },
+  "box_upload": {
+    "enabled": false,
+    "parent_folder_id": "",
+    "tokens_file": "/home/team8/.config/fin6/box_tokens.json",
+    "config_file": "/home/team8/.config/fin6/box_config.json",
+    "upload_after_processing": true,
+    "upload_after_recording": false,
+    "upload_backgrounds": false,
+    "artifact_mode": "summaries",
+    "folder_prefix": "fly_assay"
+  },
+  "calibration_path": "/home/team8/z.avi_assay_tests/testb/fin6/calibrations/default_calibration.json",
+  "background_meta_path": "/home/team8/z.avi_assay_tests/testb/fin6/backgrounds/default/current_meta.json",
+  "current_background_path": "/home/team8/z.avi_assay_tests/testb/fin6/backgrounds/default/archive/20260412_133337_transformed.png",
+  "previous_background_path": "",
+  "last_run_dir": "/home/team8/z.avi_assay_tests/testb/fin6/outputs/assay/assay_20260412_133456",
+  "notes": ""
+}

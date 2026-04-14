@@ -1,0 +1,3 @@
+{
+  "error": "The Box tokens file does not contain a usable access/refresh token pair. Current file: /home/team8/.config/fin6/box_tokens.json. If this is still a template, point fin6 at the repo's real box_tokens.json or paste in real OAuth tokens."
+}
