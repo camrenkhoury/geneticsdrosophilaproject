@@ -87,6 +87,9 @@ def _publish_snapshot(
 ) -> None:
     if snapshot_callback is None:
         return
+    normalized_classification = (
+        None if classification_result is None else _normalize_classification_result(classification_result)
+    )
     snapshot_callback(
         {
             "cycle_index": int(cycle_index),
@@ -94,19 +97,19 @@ def _publish_snapshot(
             "pickup_position_mm": pickup_position_mm,
             "stage": stage or "",
             "classification": None
-            if classification_result is None
+            if normalized_classification is None
             else {
-                "class": str(classification_result.get("class", "UNCERTAIN")),
-                "count": int(classification_result.get("count", 0) or 0),
-                "confidence": float(classification_result.get("confidence", 0.0)),
-                "errors": list(classification_result.get("errors", []) or []),
-                "image_path": classification_result.get("image_path"),
-                "raw": dict(classification_result.get("raw", {}) or {}),
+                "class": str(normalized_classification.get("class", "UNCERTAIN")),
+                "count": int(normalized_classification.get("count", 0) or 0),
+                "confidence": float(normalized_classification.get("confidence", 0.0)),
+                "errors": list(normalized_classification.get("errors", []) or []),
+                "image_path": normalized_classification.get("image_path"),
+                "raw": dict(normalized_classification.get("raw", {}) or {}),
                 "preview_key": (
-                    f"{str(classification_result.get('class', 'UNCERTAIN')).strip().lower()}:"
-                    f"{float(classification_result.get('confidence', 0.0) or 0.0):.8f}:"
-                    f"{int(classification_result.get('count', 0) or 0)}:"
-                    f"{'|'.join(str(error) for error in list(classification_result.get('errors', []) or []))}"
+                    f"{str(normalized_classification.get('class', 'UNCERTAIN')).strip().lower()}:"
+                    f"{float(normalized_classification.get('confidence', 0.0) or 0.0):.8f}:"
+                    f"{int(normalized_classification.get('count', 0) or 0)}:"
+                    f"{'|'.join(str(error) for error in list(normalized_classification.get('errors', []) or []))}"
                 ),
             },
             "destination_key": destination_key,
@@ -149,6 +152,22 @@ def _seed_tube_counts(tube_states: dict[str, TubeState], initial_tube_counts: di
         except Exception:
             continue
         tube.count = max(0, min(normalized_count, int(tube.capacity)))
+
+
+def _normalize_chamber_count(count: Any) -> int:
+    try:
+        normalized = int(count or 0)
+    except Exception:
+        return 0
+    if normalized <= 1:
+        return max(0, normalized)
+    return max(0, (normalized + 1) // 2)
+
+
+def _normalize_classification_result(classification_result: dict[str, Any] | None) -> dict[str, Any]:
+    normalized = dict(classification_result or {})
+    normalized["count"] = _normalize_chamber_count(normalized.get("count", 0))
+    return normalized
 
 
 def _sorted_pickup_positions(result: dict[str, Any], clamp_operational: Callable[[float], float]) -> list[float] | str | None:
@@ -227,10 +246,11 @@ def _resolve_destination(
     classification_result: dict[str, Any],
     tube_states: dict[str, TubeState],
 ) -> tuple[TubeState, str]:
-    class_name = str(classification_result.get("class") or "UNCERTAIN").strip().lower()
-    errors = list(classification_result.get("errors", []) or [])
-    confidence = float(classification_result.get("confidence", 0.0) or 0.0)
-    chamber_count = int(classification_result.get("count", 0) or 0)
+    normalized_result = _normalize_classification_result(classification_result)
+    class_name = str(normalized_result.get("class") or "UNCERTAIN").strip().lower()
+    errors = list(normalized_result.get("errors", []) or [])
+    confidence = float(normalized_result.get("confidence", 0.0) or 0.0)
+    chamber_count = int(normalized_result.get("count", 0) or 0)
 
     if chamber_count >= 2:
         reject_tube = tube_states["T1"]
@@ -401,6 +421,7 @@ def run_operation(
     lost_fly_count = 0
     retry_pickup_count = 0
     discarded_overflow_count = 0
+    skip_home_for_detection_cycle = False
 
     def publish_snapshot(**kwargs: Any) -> None:
         _publish_snapshot(
@@ -475,10 +496,19 @@ def run_operation(
                 # Each detection cycle starts from a known reference:
                 # vacuum off, home, move to the fixed channel photo position,
                 # then trigger the Pi-side channel detection pipeline.
-                status("running", f"Cycle {cycle_index}: homing gantry.")
-                log(f"Cycle {cycle_index}: homing gantry.")
                 set_vacuum_callable(False)
-                home_callable()
+                if skip_home_for_detection_cycle:
+                    status("running", f"Cycle {cycle_index}: retrying channel detection from photo position.")
+                    log(
+                        f"Cycle {cycle_index}: chamber-empty retry already returned to the channel photo position. "
+                        "Skipping redundant home before the retry detection."
+                    )
+                    op_trace("channel_retry_skip_home", camera_photo_position=camera_photo_position)
+                    skip_home_for_detection_cycle = False
+                else:
+                    status("running", f"Cycle {cycle_index}: homing gantry.")
+                    log(f"Cycle {cycle_index}: homing gantry.")
+                    home_callable()
 
                 status("moving", f"Cycle {cycle_index}: moving to channel photo position.")
                 log(f"Cycle {cycle_index}: channel photo target {camera_photo_position:.2f} mm.")
@@ -641,7 +671,7 @@ def run_operation(
                 stage="classifying",
             )
             status("running", f"Cycle {cycle_index}: classifying fly.")
-            last_classification = dict(classify_callable() or {})
+            last_classification = _normalize_classification_result(dict(classify_callable() or {}))
             confidence = float(last_classification.get("confidence", 0.0) or 0.0)
             chamber_count = int(last_classification.get("count", 0) or 0)
             class_name = str(last_classification.get("class", "UNCERTAIN") or "UNCERTAIN").strip().lower()
@@ -674,6 +704,7 @@ def run_operation(
                 pending_pickup_positions = []
                 flies_taken_from_current_detection = max_flies_per_detection
                 first_pickup_after_detection = False
+                skip_home_for_detection_cycle = True
                 last_destination = None
                 publish_snapshot(
                     cycle_index=cycle_index,

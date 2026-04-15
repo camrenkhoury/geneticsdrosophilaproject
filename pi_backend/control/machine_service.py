@@ -554,7 +554,7 @@ class MachineService:
         self._trace("detect_channel_enter")
         self.runtime_state.begin_task(
             "detect_channel",
-            TaskState.AUTO_WAIT_FOR_DETECTION,
+            TaskState.DETECT_CHANNEL_RUNNING,
             "Running fin6 channel detection on the Pi.",
         )
         self.runtime_state.set_orchestrator_state(
@@ -567,13 +567,13 @@ class MachineService:
             summary = self.refresh_detection_summary()
         except Exception:
             self._trace("detect_channel_exception")
-            self.runtime_state.fail_task(TaskState.AUTOMATED_ERROR, "Pi-side fin6 channel detection failed.")
+            self.runtime_state.fail_task(TaskState.DETECT_CHANNEL_ERROR, "Pi-side fin6 channel detection failed.")
             self.logger.exception("Pi-side fin6 channel detection failed.")
             raise
 
         count = len(summary.corrected_positions_mm) or len(summary.x_positions_mm)
         self.runtime_state.complete_task(
-            TaskState.AUTOMATED_COMPLETE,
+            TaskState.DETECT_CHANNEL_COMPLETE,
             f"Pi-side fin6 channel detection complete. count={count}.",
         )
         self.runtime_state.set_orchestrator_state(OrchestratorState.SYSTEM_IDLE, "Machine idle.")

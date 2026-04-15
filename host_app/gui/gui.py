@@ -2218,10 +2218,7 @@ class DrosophilaGUI:
             return
 
         raw_result = result.get("raw") if isinstance(result.get("raw"), dict) else {}
-        chamber_count = result.get("count")
-        if chamber_count is None:
-            chamber_count = raw_result.get("count")
-        normalized_count = None if chamber_count is None else int(chamber_count)
+        normalized_count = self._normalize_chamber_count(result.get("count", raw_result.get("count")))
         signature = (
             str(result.get("result_class", "UNCERTAIN")),
             float(result.get("confidence", 0.0)),
@@ -2680,6 +2677,30 @@ class DrosophilaGUI:
         return max(0.0, float(config.GANTRY_MAX_MM) - (2.0 * float(config.VACUUM_CENTER_OFFSET_MM)))
 
     @staticmethod
+    def _normalize_chamber_count(count: Any) -> int | None:
+        if count is None:
+            return None
+        try:
+            normalized = int(count)
+        except Exception:
+            return None
+        if normalized <= 1:
+            return max(0, normalized)
+        return max(0, (normalized + 1) // 2)
+
+    def _normalize_classification_result(self, result: dict | None) -> dict:
+        normalized = dict(result or {})
+        raw_result = normalized.get("raw")
+        if not isinstance(raw_result, dict):
+            raw_result = {}
+        chamber_count = normalized.get("count")
+        if chamber_count is None:
+            chamber_count = raw_result.get("count")
+        normalized["count"] = self._normalize_chamber_count(chamber_count)
+        normalized["raw"] = raw_result
+        return normalized
+
+    @staticmethod
     def _estimate_move_time_for_step_delay(distance_mm: float, step_delay: float) -> float | None:
         distance = abs(float(distance_mm))
         if distance <= 0.0:
@@ -2839,10 +2860,8 @@ class DrosophilaGUI:
         class_name = str(result.get("result_class", "UNCERTAIN"))
         confidence = float(result.get("confidence", 0.0))
         errors = list(result.get("errors", []) or [])
-        raw_count = raw.get("count", result.get("count", 0))
-        try:
-            normalized_count = int(raw_count or 0)
-        except Exception:
+        normalized_count = self._normalize_chamber_count(raw.get("count", result.get("count", 0)))
+        if normalized_count is None:
             normalized_count = 0
         normalized = {
             "class": class_name,
@@ -4596,12 +4615,13 @@ class DrosophilaGUI:
             state_label.config(bg="#EEF2F6", fg="#52606D")
 
     def show_classification_result(self, result: dict):
-        class_name = result.get("class", "UNCERTAIN")
-        confidence = result.get("confidence", 0.0)
-        errors = result.get("errors", [])
-        chamber_count = result.get("count")
+        normalized_result = self._normalize_classification_result(result)
+        class_name = normalized_result.get("class", "UNCERTAIN")
+        confidence = normalized_result.get("confidence", 0.0)
+        errors = normalized_result.get("errors", [])
+        chamber_count = normalized_result.get("count")
         self._show_workspace_tab("sexing")
-        self._update_sexing_preview_from_result(result)
+        self._update_sexing_preview_from_result(normalized_result)
         self.sort_detected_var.set("--" if chamber_count is None else str(int(chamber_count)))
         self.sort_last_sex_var.set(str(class_name).title() if str(class_name).lower() in {"male", "female"} else str(class_name))
         self.sort_confidence_var.set(f"{float(confidence):.4f}")
@@ -4611,7 +4631,7 @@ class DrosophilaGUI:
             message += f"\nFlies in chamber: {int(chamber_count)}"
         if errors:
             message += f"\nErrors: {', '.join(errors)}"
-        self.log_message(f"Classification result: {result}")
+        self.log_message(f"Classification result: {normalized_result}")
         messagebox.showinfo("Fly Classification", message)
 
     def set_controls_busy(self, busy: bool, cancellable: bool = False):
@@ -4929,7 +4949,7 @@ class DrosophilaGUI:
         cycle_index = int(snapshot.get("cycle_index") or 0)
         pickup_position = snapshot.get("pickup_position_mm")
         destination_label = snapshot.get("destination_label")
-        classification = snapshot.get("classification") or {}
+        classification = self._normalize_classification_result(snapshot.get("classification") or {})
         classification_count = classification.get("count")
         retry_count = int(snapshot.get("retry_count") or 0)
         discard_count = int(snapshot.get("discard_count") or 0)
@@ -5400,9 +5420,13 @@ class DrosophilaGUI:
         raise RuntimeError("Timed out waiting for a fresh remote channel detection result.")
 
     def _resolve_tube_for_classification(self, classification_result: dict) -> tuple[str, float]:
-        class_name = str(classification_result.get("class") or "UNCERTAIN").strip().lower()
-        confidence = float(classification_result.get("confidence", 0.0) or 0.0)
-        errors = list(classification_result.get("errors", []) or [])
+        normalized_result = self._normalize_classification_result(classification_result)
+        class_name = str(normalized_result.get("class") or "UNCERTAIN").strip().lower()
+        confidence = float(normalized_result.get("confidence", 0.0) or 0.0)
+        errors = list(normalized_result.get("errors", []) or [])
+        chamber_count = normalized_result.get("count")
+        if chamber_count is not None and int(chamber_count) >= 2:
+            return "Tube 1", config.TUBE_1_CENTER
         if class_name not in {"male", "female"} or confidence <= 0.0 or errors:
             return "Tube 1", config.TUBE_1_CENTER
         if class_name == "male":

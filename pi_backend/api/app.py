@@ -40,6 +40,8 @@ class BackendApiContext:
             return TaskState.HOMING_ERROR
         if normalized in {"move_absolute", "move_relative"}:
             return TaskState.MOVE_ERROR
+        if normalized == "detect_channel":
+            return TaskState.DETECT_CHANNEL_ERROR
         if normalized == "classify":
             return TaskState.CLASSIFY_ERROR
         if normalized == "run_assay":
