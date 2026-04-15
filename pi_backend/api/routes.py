@@ -66,6 +66,15 @@ def get_channel_background_preview(request: Request) -> FileResponse:
     return FileResponse(preview_path, media_type="image/png", filename=preview_path.name)
 
 
+@router.get("/artifacts/channel/setup_preview", dependencies=[Depends(require_api_key)])
+def get_channel_setup_preview(request: Request) -> FileResponse:
+    context = request.app.state.backend_context
+    preview_path = context.machine_service.get_channel_setup_preview_path()
+    if not preview_path.exists():
+        raise HTTPException(status_code=404, detail="Channel setup preview is not available yet.")
+    return FileResponse(preview_path, media_type="image/jpeg", filename=preview_path.name)
+
+
 @router.get("/fin6/setup_status", dependencies=[Depends(require_api_key)])
 def get_fin6_setup_status(request: Request) -> dict:
     context = request.app.state.backend_context
@@ -105,6 +114,20 @@ def post_channel_setup_capture_background(request: Request) -> dict:
         }
     try:
         return context.machine_service.capture_channel_setup_background()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/channel_setup/capture_preview", dependencies=[Depends(require_api_key)])
+def post_channel_setup_capture_preview(request: Request) -> dict:
+    context = request.app.state.backend_context
+    if context.is_busy():
+        return {
+            "ok": False,
+            "message": f"Machine is busy running {context._active_command}. Wait for it to finish before capturing a setup preview.",
+        }
+    try:
+        return context.machine_service.capture_channel_setup_preview()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

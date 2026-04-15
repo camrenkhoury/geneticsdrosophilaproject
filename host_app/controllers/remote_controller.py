@@ -21,6 +21,7 @@ class RemoteController(BaseController):
         "/channel_setup/cameras": "Pi-side channel camera discovery",
         "/channel_setup/select_camera": "Pi-side channel camera selection",
         "/channel_setup/capture_background": "Pi-side channel setup background capture",
+        "/channel_setup/capture_preview": "Pi-side channel setup preview capture",
         "/channel_setup/save_calibration": "Pi-side channel setup calibration save",
     }
 
@@ -87,6 +88,9 @@ class RemoteController(BaseController):
     def capture_channel_setup_background(self) -> ControllerPayload:
         return self._request_json("POST", "/channel_setup/capture_background")
 
+    def capture_channel_setup_preview(self) -> ControllerPayload:
+        return self._request_json("POST", "/channel_setup/capture_preview")
+
     def save_channel_setup_calibration(
         self,
         left_point_px: tuple[int, int],
@@ -140,6 +144,9 @@ class RemoteController(BaseController):
 
     def get_channel_background_image(self) -> bytes | None:
         return self._request_bytes("GET", "/artifacts/channel/background")
+
+    def get_channel_setup_preview_image(self) -> bytes | None:
+        return self._request_bytes("GET", "/artifacts/channel/setup_preview")
 
     def _command_request(
         self,

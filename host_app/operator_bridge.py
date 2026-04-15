@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from shared.config.project_paths import ASSAY_OUTPUT_DIR, CHANNEL_OUTPUT_DIR, FIN6_DIR
+import config
 
 
 SETTINGS_PATH = FIN6_DIR / ".fly_tracking_gui_settings.json"
@@ -244,7 +245,7 @@ def get_setup_status() -> Fin6SetupStatus:
         width=_to_int(saved.get("channel_width_var"), 1920),
         height=_to_int(saved.get("channel_height_var"), 1080),
         fps=_to_int(saved.get("channel_fps_var"), 30),
-        channel_mm=_to_float(saved.get("channel_mm_var"), 111.0),
+        channel_mm=_to_float(saved.get("channel_mm_var"), float(getattr(config, "CHANNEL_LENGTH", 149.0))),
         score_thresh=_to_int(saved.get("channel_score_var"), 20),
         band_half_width=_to_int(saved.get("channel_band_var"), 35),
         no_align=_to_bool(saved.get("channel_no_align_var"), False),
@@ -451,6 +452,46 @@ def capture_channel_background_from_saved_settings(*, frame_count: int = 15) -> 
     }
 
 
+def capture_channel_preview_from_saved_settings() -> dict[str, Any]:
+    import cv2
+
+    from vision.fin6.camera_sources import BrioCamera, BrioConfig
+
+    status = get_setup_status()
+    channel = status.channel
+    preview_path = FIN6_DIR / "backgrounds" / "channel_setup_preview.jpg"
+    preview_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with BrioCamera(
+        BrioConfig(
+            device=channel.device,
+            width=channel.width,
+            height=channel.height,
+            fps=channel.fps,
+            preferred_hint=channel.preferred_hint,
+            role="channel",
+            warmup_frames=8,
+            flush_grabs=2,
+            reconnect_attempts=1,
+            reconnect_sleep_s=0.15,
+            post_open_settle_s=0.03,
+        )
+    ) as camera:
+        frame_bgr = camera.read()
+
+    if not cv2.imwrite(str(preview_path), frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 90]):
+        raise IOError(f"Could not save setup preview image to {preview_path}")
+
+    return {
+        "preview_path": str(preview_path.resolve()),
+        "camera_description": _camera_description(
+            channel.device,
+            role="channel",
+            preferred_hint=channel.preferred_hint,
+        ),
+    }
+
+
 def save_channel_calibration_from_points(
     left_point_px: tuple[int, int],
     right_point_px: tuple[int, int],
@@ -633,6 +674,7 @@ __all__ = [
     "Fin6SetupStatus",
     "SETTINGS_PATH",
     "capture_channel_background_from_saved_settings",
+    "capture_channel_preview_from_saved_settings",
     "detect_channel_once_from_saved_settings",
     "get_setup_status",
     "launch_fin6_gui",

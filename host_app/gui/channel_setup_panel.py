@@ -15,8 +15,9 @@ class ChannelSetupActions:
     fetch_camera_options: Callable[[], dict[str, Any]]
     save_camera_selection: Callable[[str, str], dict[str, Any]]
     capture_background: Callable[[], dict[str, Any]]
+    capture_preview: Callable[[], dict[str, Any]]
     save_calibration: Callable[[tuple[int, int], tuple[int, int], float], dict[str, Any]]
-    fetch_background_bytes: Callable[[], bytes | None]
+    fetch_preview_bytes: Callable[[], bytes | None]
 
 
 class ChannelSetupPanel:
@@ -65,6 +66,7 @@ class ChannelSetupPanel:
         self._camera_choice_map: dict[str, tuple[str, str]] = {}
         self._busy = False
         self._closed = False
+        self._needs_preview_refresh = True
 
         self._build_ui()
         self._focus_window()
@@ -170,12 +172,14 @@ class ChannelSetupPanel:
 
         self.capture_button = ttk.Button(controls, text="Capture Background", command=self._capture_background)
         self.capture_button.grid(row=5, column=0, sticky="ew")
+        self.preview_button = ttk.Button(controls, text="Refresh Photo", command=self._capture_preview)
+        self.preview_button.grid(row=6, column=0, sticky="ew", pady=(8, 0))
         self.reset_points_button = ttk.Button(controls, text="Reset Point Selection", command=self._reset_points)
-        self.reset_points_button.grid(row=6, column=0, sticky="ew", pady=(8, 0))
+        self.reset_points_button.grid(row=7, column=0, sticky="ew", pady=(8, 0))
         self.save_button = ttk.Button(controls, text="Save Calibration", command=self._save_calibration)
-        self.save_button.grid(row=7, column=0, sticky="ew", pady=(8, 0))
+        self.save_button.grid(row=8, column=0, sticky="ew", pady=(8, 0))
         self.refresh_button = ttk.Button(controls, text="Refresh", command=self.refresh_status_and_preview)
-        self.refresh_button.grid(row=8, column=0, sticky="ew", pady=(8, 0))
+        self.refresh_button.grid(row=9, column=0, sticky="ew", pady=(8, 0))
 
         footer = ttk.Frame(right)
         footer.grid(row=2, column=0, sticky="sew", pady=(12, 0))
@@ -236,7 +240,7 @@ class ChannelSetupPanel:
     def _update_control_states(self) -> None:
         state = tk.DISABLED if self._busy else tk.NORMAL
         entry_state = "disabled" if self._busy else "normal"
-        for widget in (self.capture_button, self.reset_points_button, self.save_button, self.refresh_button, self.cancel_button):
+        for widget in (self.capture_button, self.preview_button, self.reset_points_button, self.save_button, self.refresh_button, self.cancel_button):
             try:
                 widget.config(state=state)
             except tk.TclError:
@@ -287,7 +291,7 @@ class ChannelSetupPanel:
     def _load_status_payload(self) -> dict[str, Any]:
         status = self.actions.fetch_status()
         cameras = self.actions.fetch_camera_options()
-        image_bytes = self.actions.fetch_background_bytes()
+        image_bytes = self.actions.fetch_preview_bytes()
         return {
             "status": status,
             "cameras": cameras,
@@ -321,13 +325,16 @@ class ChannelSetupPanel:
             self.canvas.create_text(
                 max(120, self.canvas.winfo_width() // 2),
                 max(80, self.canvas.winfo_height() // 2),
-                text="No saved background yet.\nUse Capture Background to create one.",
+                text="No setup photo yet.\nUse Refresh Photo or Capture Background.",
                 fill="#FFFFFF",
                 justify=tk.CENTER,
                 font=("Segoe UI", 12, "bold"),
             )
         self._render_preview()
         self._update_selection_label()
+        if self._needs_preview_refresh and not self._busy:
+            self._needs_preview_refresh = False
+            self._capture_preview()
 
     def _apply_camera_options(self, payload: dict[str, Any]) -> None:
         auto_label = str(payload.get("auto_label", "Auto-detect channel camera"))
@@ -383,6 +390,22 @@ class ChannelSetupPanel:
             self.log_callback(message)
         self.refresh_status_and_preview()
 
+    def _capture_preview(self) -> None:
+        self._run_worker(
+            "Capturing setup photo...",
+            self.actions.capture_preview,
+            self._handle_preview_complete,
+        )
+
+    def _handle_preview_complete(self, payload: dict[str, Any]) -> None:
+        if self._closed:
+            return
+        self._set_busy(False, "Setup photo updated.")
+        camera_description = str(payload.get("camera_description", "")).strip()
+        if camera_description:
+            self.camera_status_var.set(f"Setup photo updated from {camera_description}.")
+        self.refresh_status_and_preview()
+
     def _handle_camera_change(self, _event=None) -> None:
         if self._busy:
             return
@@ -405,6 +428,7 @@ class ChannelSetupPanel:
         self.camera_status_var.set(message)
         if callable(self.log_callback):
             self.log_callback(message)
+        self._needs_preview_refresh = True
         self.refresh_status_and_preview()
 
     def _save_calibration(self) -> None:

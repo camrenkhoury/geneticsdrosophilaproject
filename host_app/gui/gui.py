@@ -910,6 +910,21 @@ class DrosophilaGUI:
             raise RuntimeError(str(payload.get("message", "Channel background capture failed.")))
         return payload
 
+    def _capture_channel_setup_preview(self) -> dict[str, Any]:
+        if self.is_remote_mode():
+            if not self.remote_connected or self.remote_controller is None:
+                raise RuntimeError("Connect to the Pi backend before capturing a setup photo.")
+            payload = self.remote_controller.capture_channel_setup_preview()
+        else:
+            try:
+                fin6_bridge = self._load_fin6_bridge()
+            except RuntimeError as exc:
+                raise RuntimeError("Channel Detection Setup integration is unavailable.") from exc
+            payload = fin6_bridge.capture_channel_preview_from_saved_settings()
+        if not payload.get("ok", True):
+            raise RuntimeError(str(payload.get("message", "Channel setup photo capture failed.")))
+        return payload
+
     def _save_channel_setup_calibration(
         self,
         left_point_px: tuple[int, int],
@@ -938,20 +953,20 @@ class DrosophilaGUI:
             raise RuntimeError(str(payload.get("message", "Channel calibration save failed.")))
         return payload
 
-    def _get_channel_setup_background_bytes(self) -> bytes | None:
+    def _get_channel_setup_preview_bytes(self) -> bytes | None:
         if self.is_remote_mode():
             if not self.remote_connected or self.remote_controller is None:
                 return None
-            return self.remote_controller.get_channel_background_image()
+            return self.remote_controller.get_channel_setup_preview_image()
 
         fin6_status = self._get_fin6_setup_status("Load Channel Detection Setup", show_errors=False)
         if fin6_status is None:
             return None
-        background_path = Path(getattr(getattr(fin6_status, "channel", None), "background_path", ""))
-        if not background_path.exists():
+        preview_path = self.repo_root / "vision" / "fin6" / "backgrounds" / "channel_setup_preview.jpg"
+        if not preview_path.exists():
             return None
         try:
-            return background_path.read_bytes()
+            return preview_path.read_bytes()
         except OSError:
             return None
 
@@ -1006,8 +1021,9 @@ class DrosophilaGUI:
             fetch_camera_options=self._get_channel_setup_camera_options,
             save_camera_selection=self._save_channel_setup_camera_selection,
             capture_background=self._capture_channel_setup_background,
+            capture_preview=self._capture_channel_setup_preview,
             save_calibration=self._save_channel_setup_calibration,
-            fetch_background_bytes=self._get_channel_setup_background_bytes,
+            fetch_preview_bytes=self._get_channel_setup_preview_bytes,
         )
 
     def _handle_channel_setup_ready(self) -> None:

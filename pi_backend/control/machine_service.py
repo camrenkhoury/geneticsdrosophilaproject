@@ -262,6 +262,9 @@ class MachineService:
         status = fin6_bridge.get_setup_status()
         return Path(status.channel.background_path)
 
+    def get_channel_setup_preview_path(self) -> Path:
+        return Path(self.runtime_config.repo_root) / "vision" / "fin6" / "backgrounds" / "channel_setup_preview.jpg"
+
     def get_fin6_setup_status(self) -> dict[str, Any]:
         fin6_bridge = self._load_fin6_bridge()
         return fin6_bridge.setup_status_to_dict(fin6_bridge.get_setup_status())
@@ -311,6 +314,16 @@ class MachineService:
         return {
             "ok": True,
             "message": "Channel background captured.",
+            **payload,
+        }
+
+    def capture_channel_setup_preview(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.capture_channel_preview_from_saved_settings()
+        self.runtime_state.append_log("INFO", "Captured channel setup preview.")
+        return {
+            "ok": True,
+            "message": "Channel setup preview captured.",
             **payload,
         }
 
