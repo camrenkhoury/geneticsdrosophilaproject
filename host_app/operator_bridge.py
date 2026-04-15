@@ -366,6 +366,74 @@ def _missing_assay_setup_message(status: Fin6SetupStatus) -> str:
     )
 
 
+def capture_channel_background_from_saved_settings(*, frame_count: int = 15) -> dict[str, Any]:
+    from vision.fin6.brio_channel_cli import capture_brio_background
+
+    status = get_setup_status()
+    channel = status.channel
+    channel.background_path.parent.mkdir(parents=True, exist_ok=True)
+
+    saved_path = capture_brio_background(
+        output_path=channel.background_path,
+        device=channel.device,
+        width=channel.width,
+        height=channel.height,
+        fps=channel.fps,
+        frame_count=frame_count,
+    )
+    return {
+        "background_path": str(Path(saved_path).resolve()),
+        "camera_description": _camera_description(
+            channel.device,
+            role="channel",
+            preferred_hint=channel.preferred_hint,
+        ),
+    }
+
+
+def save_channel_calibration_from_points(
+    left_point_px: tuple[int, int],
+    right_point_px: tuple[int, int],
+    *,
+    channel_mm: float | None = None,
+) -> dict[str, Any]:
+    import cv2
+
+    from vision.fin6.fly_x_detector import estimate_channel_crop_from_background, save_calibration
+
+    status = get_setup_status()
+    channel = status.channel
+    if not channel.background_path.exists():
+        raise FileNotFoundError(_missing_channel_setup_message(status))
+
+    channel.calibration_path.parent.mkdir(parents=True, exist_ok=True)
+    background_gray = cv2.imread(str(channel.background_path), cv2.IMREAD_GRAYSCALE)
+    if background_gray is None:
+        raise FileNotFoundError(f"Could not read saved channel background image: {channel.background_path}")
+
+    left_pt = (int(left_point_px[0]), int(left_point_px[1]))
+    right_pt = (int(right_point_px[0]), int(right_point_px[1]))
+    resolved_channel_mm = float(channel_mm if channel_mm is not None else channel.channel_mm)
+    crop_x_pad, crop_above_px, crop_below_px, _ = estimate_channel_crop_from_background(
+        background_gray,
+        left_pt,
+        right_pt,
+    )
+    payload = save_calibration(
+        channel.calibration_path,
+        left_pt=left_pt,
+        right_pt=right_pt,
+        channel_length_mm=resolved_channel_mm,
+        crop_x_pad=crop_x_pad,
+        crop_above_px=crop_above_px,
+        crop_below_px=crop_below_px,
+    )
+    return {
+        "calibration_path": str(Path(channel.calibration_path).resolve()),
+        "calibration": payload,
+    }
+
+
 def detect_channel_once_from_saved_settings() -> dict[str, Any]:
     import cv2
 
@@ -504,10 +572,12 @@ __all__ = [
     "Fin6ChannelSettings",
     "Fin6SetupStatus",
     "SETTINGS_PATH",
+    "capture_channel_background_from_saved_settings",
     "detect_channel_once_from_saved_settings",
     "get_setup_status",
     "launch_fin6_gui",
     "normalize_settings_file",
     "run_assay_from_saved_settings",
+    "save_channel_calibration_from_points",
     "setup_status_to_dict",
 ]

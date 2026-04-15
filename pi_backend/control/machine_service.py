@@ -257,6 +257,11 @@ class MachineService:
     def get_channel_annotated_preview_path(self) -> Path:
         return self._channel_output_dir() / "last_channel_annotated.png"
 
+    def get_channel_background_preview_path(self) -> Path:
+        fin6_bridge = self._load_fin6_bridge()
+        status = fin6_bridge.get_setup_status()
+        return Path(status.channel.background_path)
+
     def get_fin6_setup_status(self) -> dict[str, Any]:
         fin6_bridge = self._load_fin6_bridge()
         return fin6_bridge.setup_status_to_dict(fin6_bridge.get_setup_status())
@@ -284,15 +289,40 @@ class MachineService:
         if status.channel_ready:
             return None
         return (
-            "Channel Detection Setup is missing on the Pi.\n"
-            "Preparation steps:\n"
-            "1. Empty the channel.\n"
-            "2. Move the nozzle out of the camera view.\n"
-            "3. Open Channel Detection Setup on the Pi.\n"
-            "4. Capture a clean channel background.\n"
-            "5. Run channel calibration.\n"
-            "6. Save the setup."
+            "Channel Detection Setup is missing.\n"
+            "Empty the channel, move the nozzle out of the camera view, "
+            "capture a clean channel background, run channel calibration, and save the setup."
         )
+
+    def capture_channel_setup_background(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.capture_channel_background_from_saved_settings()
+        self.runtime_state.append_log("INFO", "Captured channel setup background.")
+        return {
+            "ok": True,
+            "message": "Channel background captured.",
+            **payload,
+        }
+
+    def save_channel_setup_calibration(
+        self,
+        left_point_px: tuple[int, int],
+        right_point_px: tuple[int, int],
+        *,
+        channel_mm: float | None = None,
+    ) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.save_channel_calibration_from_points(
+            left_point_px,
+            right_point_px,
+            channel_mm=channel_mm,
+        )
+        self.runtime_state.append_log("INFO", "Saved channel setup calibration.")
+        return {
+            "ok": True,
+            "message": "Channel calibration saved.",
+            **payload,
+        }
 
     def home(self) -> float:
         self._ensure_motion_ready()

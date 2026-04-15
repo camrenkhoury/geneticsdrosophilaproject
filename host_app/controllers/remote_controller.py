@@ -18,6 +18,8 @@ class RemoteController(BaseController):
         "/fin6/setup_status": "Pi-side fin6 setup status",
         "/fin6/launch_setup": "Pi-side fin6 setup launch",
         "/detect_channel": "Pi-side channel detection",
+        "/channel_setup/capture_background": "Pi-side channel setup background capture",
+        "/channel_setup/save_calibration": "Pi-side channel setup calibration save",
     }
 
     def __init__(
@@ -67,6 +69,26 @@ class RemoteController(BaseController):
     def launch_fin6_setup(self) -> ControllerPayload:
         return self._request_json("POST", "/fin6/launch_setup")
 
+    def capture_channel_setup_background(self) -> ControllerPayload:
+        return self._request_json("POST", "/channel_setup/capture_background")
+
+    def save_channel_setup_calibration(
+        self,
+        left_point_px: tuple[int, int],
+        right_point_px: tuple[int, int],
+        *,
+        channel_mm: float,
+    ) -> ControllerPayload:
+        return self._request_json(
+            "POST",
+            "/channel_setup/save_calibration",
+            json_payload={
+                "left_point_px": [int(left_point_px[0]), int(left_point_px[1])],
+                "right_point_px": [int(right_point_px[0]), int(right_point_px[1])],
+                "channel_mm": float(channel_mm),
+            },
+        )
+
     def get_status(self) -> ControllerPayload | None:
         url = f"{self.base_url}/status"
         headers = {"X-API-Key": self.api_key}
@@ -100,6 +122,9 @@ class RemoteController(BaseController):
 
     def get_channel_preview_image(self) -> bytes | None:
         return self._request_bytes("GET", "/artifacts/channel/annotated")
+
+    def get_channel_background_image(self) -> bytes | None:
+        return self._request_bytes("GET", "/artifacts/channel/background")
 
     def _command_request(
         self,

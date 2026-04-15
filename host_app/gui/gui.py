@@ -42,6 +42,7 @@ from host_app.controllers.base_controller import (
     ControllerError,
 )
 from host_app.controllers.remote_controller import RemoteController
+from host_app.gui.channel_setup_panel import ChannelSetupActions, ChannelSetupPanel
 from host_app.sync.connection_state import ConnectionState
 from host_app.sync.remote_sync import RemoteSyncManager
 from shared.config.network_config import (
@@ -579,9 +580,7 @@ class DrosophilaGUI:
         self._fin6_bridge_error: str | None = None
         self._pending_channel_setup_resume = None
         self._pending_channel_setup_action_label: str | None = None
-        self._channel_setup_wait_window: tk.Toplevel | None = None
-        self._channel_setup_wait_message_var: tk.StringVar | None = None
-        self._channel_setup_wait_after_id: str | None = None
+        self._channel_setup_panel: ChannelSetupPanel | None = None
         self.entry_page_scale = self.entry_profile["scale"]
 
         self.state_var = tk.StringVar(value="IDLE")
@@ -777,6 +776,15 @@ class DrosophilaGUI:
             "Use Run Assay here for a direct assay run, or START to run automation first and launch assay at the end."
         )
 
+    def _ensure_remote_connection_for_action(self, action_label: str) -> bool:
+        if not self.is_remote_mode():
+            return True
+        if self.remote_connected and self.remote_controller is not None:
+            return True
+        messagebox.showwarning("Disconnected", f"Connect to the Pi backend before using {action_label}.")
+        self.set_status("error", f"{action_label} unavailable while disconnected from the Pi backend.")
+        return False
+
     def _open_fin6_setup_with_bridge(self, fin6_bridge) -> bool:
         if self.worker_thread and self.worker_thread.is_alive():
             messagebox.showwarning("Busy", "Wait for the current task to finish before opening the fin6 setup GUI.")
@@ -828,6 +836,8 @@ class DrosophilaGUI:
         return self._get_fin6_setup_status(action_label, show_errors=True)
 
     def open_fin6_setup(self):
+        if not self._ensure_remote_connection_for_action("Open Assay Setup"):
+            return
         if self.is_remote_mode():
             self._open_remote_fin6_setup()
             return
@@ -835,6 +845,11 @@ class DrosophilaGUI:
         if fin6_bridge is None:
             return
         self._open_fin6_setup_with_bridge(fin6_bridge)
+
+    def open_channel_setup(self):
+        if not self._ensure_remote_connection_for_action("Open Channel Detection Setup"):
+            return
+        self._open_channel_setup_panel("Channel Detection Setup")
 
     def _get_fin6_setup_status(self, action_label: str, *, show_errors: bool):
         if self.is_remote_mode():
@@ -870,102 +885,157 @@ class DrosophilaGUI:
             return None
 
     def _cancel_pending_channel_setup_resume(self) -> None:
-        if self._channel_setup_wait_after_id is not None:
+        if self._channel_setup_panel is not None:
             try:
-                self.root.after_cancel(self._channel_setup_wait_after_id)
-            except tk.TclError:
+                self._channel_setup_panel.close()
+            except Exception:
                 pass
-            self._channel_setup_wait_after_id = None
-        if self._channel_setup_wait_window is not None:
-            try:
-                self._channel_setup_wait_window.destroy()
-            except tk.TclError:
-                pass
-            self._channel_setup_wait_window = None
-        self._channel_setup_wait_message_var = None
+            self._channel_setup_panel = None
         self._pending_channel_setup_resume = None
         self._pending_channel_setup_action_label = None
         self._update_control_interactivity()
 
-    def _begin_channel_setup_resume_wait(self, action_label: str, resume_callable) -> None:
-        self._cancel_pending_channel_setup_resume()
-        self._pending_channel_setup_resume = resume_callable
-        self._pending_channel_setup_action_label = action_label
+    def _capture_channel_setup_background(self) -> dict[str, Any]:
+        if self.is_remote_mode():
+            if not self.remote_connected or self.remote_controller is None:
+                raise RuntimeError("Connect to the Pi backend before capturing a setup background.")
+            payload = self.remote_controller.capture_channel_setup_background()
+        else:
+            try:
+                fin6_bridge = self._load_fin6_bridge()
+            except RuntimeError as exc:
+                raise RuntimeError("Channel Detection Setup integration is unavailable.") from exc
+            payload = fin6_bridge.capture_channel_background_from_saved_settings()
+        if not payload.get("ok", True):
+            raise RuntimeError(str(payload.get("message", "Channel background capture failed.")))
+        return payload
 
-        wait_window = tk.Toplevel(self.root)
-        wait_window.title("Channel Detection Setup")
-        wait_window.resizable(False, False)
-        wait_window.transient(self.root)
-        body = ttk.Frame(wait_window, padding=16)
-        body.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
-        body.columnconfigure(0, weight=1)
-
-        ttk.Label(
-            body,
-            text="Channel Detection Setup is open.",
-            font=("Segoe UI", 11, "bold"),
-        ).grid(row=0, column=0, sticky=tk.W)
-        self._channel_setup_wait_message_var = tk.StringVar(
-            value=(
-                "Save the channel background and calibration there. "
-                f"{action_label} will continue automatically as soon as setup is ready."
+    def _save_channel_setup_calibration(
+        self,
+        left_point_px: tuple[int, int],
+        right_point_px: tuple[int, int],
+        channel_mm: float,
+    ) -> dict[str, Any]:
+        if self.is_remote_mode():
+            if not self.remote_connected or self.remote_controller is None:
+                raise RuntimeError("Connect to the Pi backend before saving setup calibration.")
+            payload = self.remote_controller.save_channel_setup_calibration(
+                left_point_px,
+                right_point_px,
+                channel_mm=channel_mm,
             )
-        )
-        ttk.Label(
-            body,
-            textvariable=self._channel_setup_wait_message_var,
-            wraplength=420,
-            justify=tk.LEFT,
-        ).grid(row=1, column=0, sticky=tk.W, pady=(8, 0))
-        ttk.Button(body, text="Cancel", command=self._cancel_pending_channel_setup_resume).grid(
-            row=2,
-            column=0,
-            sticky=tk.E,
-            pady=(14, 0),
-        )
-        wait_window.protocol("WM_DELETE_WINDOW", self._cancel_pending_channel_setup_resume)
+        else:
+            try:
+                fin6_bridge = self._load_fin6_bridge()
+            except RuntimeError as exc:
+                raise RuntimeError("Channel Detection Setup integration is unavailable.") from exc
+            payload = fin6_bridge.save_channel_calibration_from_points(
+                left_point_px,
+                right_point_px,
+                channel_mm=channel_mm,
+            )
+        if not payload.get("ok", True):
+            raise RuntimeError(str(payload.get("message", "Channel calibration save failed.")))
+        return payload
+
+    def _get_channel_setup_background_bytes(self) -> bytes | None:
+        if self.is_remote_mode():
+            if not self.remote_connected or self.remote_controller is None:
+                return None
+            return self.remote_controller.get_channel_background_image()
+
+        fin6_status = self._get_fin6_setup_status("Load Channel Detection Setup", show_errors=False)
+        if fin6_status is None:
+            return None
+        background_path = Path(getattr(getattr(fin6_status, "channel", None), "background_path", ""))
+        if not background_path.exists():
+            return None
         try:
-            wait_window.deiconify()
-            wait_window.lift()
-            wait_window.focus_force()
-            wait_window.attributes("-topmost", True)
-            wait_window.after(250, lambda: wait_window.winfo_exists() and wait_window.attributes("-topmost", False))
-        except tk.TclError:
-            pass
+            return background_path.read_bytes()
+        except OSError:
+            return None
 
-        self._channel_setup_wait_window = wait_window
-        self.set_status("running", f"Waiting for Channel Detection Setup before continuing {action_label}.")
-        self.log_message(f"Waiting for Channel Detection Setup before continuing {action_label}.")
-        self._update_control_interactivity()
-        self._poll_channel_setup_ready()
+    def _get_channel_setup_status_for_panel(self):
+        if self.is_remote_mode():
+            if not self.remote_connected or self.remote_controller is None:
+                raise RuntimeError("Connect to the Pi backend before opening Channel Detection Setup.")
+            return self._to_namespace(self.remote_controller.get_fin6_setup_status())
 
-    def _poll_channel_setup_ready(self) -> None:
-        self._channel_setup_wait_after_id = None
-        resume_callable = self._pending_channel_setup_resume
+        try:
+            fin6_bridge = self._load_fin6_bridge()
+        except RuntimeError as exc:
+            raise RuntimeError("Channel Detection Setup integration is unavailable.") from exc
+        return fin6_bridge.get_setup_status()
+
+    def _build_channel_setup_actions(self) -> ChannelSetupActions:
+        return ChannelSetupActions(
+            fetch_status=self._get_channel_setup_status_for_panel,
+            capture_background=self._capture_channel_setup_background,
+            save_calibration=self._save_channel_setup_calibration,
+            fetch_background_bytes=self._get_channel_setup_background_bytes,
+        )
+
+    def _handle_channel_setup_ready(self) -> None:
         action_label = self._pending_channel_setup_action_label
-        if resume_callable is None or action_label is None:
-            return
-
-        fin6_status = self._get_fin6_setup_status(action_label, show_errors=False)
-        if fin6_status is not None and self._channel_setup_ready(fin6_status):
-            self.log_message(f"Channel Detection Setup saved. Resuming {action_label}.")
+        resume_callable = self._pending_channel_setup_resume
+        self._channel_setup_panel = None
+        self._pending_channel_setup_action_label = None
+        self._pending_channel_setup_resume = None
+        self.log_message("Channel Detection Setup saved.")
+        if action_label and resume_callable is not None:
             self.set_status("running", f"Channel Detection Setup saved. Resuming {action_label}.")
-            self._cancel_pending_channel_setup_resume()
+            self.log_message(f"Resuming {action_label}.")
+            self._update_control_interactivity()
             self.root.after(100, resume_callable)
             return
+        self.set_status("idle", "Channel Detection Setup saved.")
+        self._update_control_interactivity()
 
-        if self._channel_setup_wait_message_var is not None:
-            if fin6_status is None:
-                self._channel_setup_wait_message_var.set(
-                    "Waiting to reach the saved setup on the Pi. "
-                    "As soon as the channel background and calibration are saved, this will continue automatically."
-                )
-            else:
-                self._channel_setup_wait_message_var.set(
-                    "Waiting for a saved channel background and channel calibration. "
-                    f"{action_label} will continue automatically when both are ready."
-                )
-        self._channel_setup_wait_after_id = self.root.after(1500, self._poll_channel_setup_ready)
+    def _handle_channel_setup_cancelled(self) -> None:
+        action_label = self._pending_channel_setup_action_label
+        had_resume = self._pending_channel_setup_resume is not None
+        self._channel_setup_panel = None
+        self._pending_channel_setup_action_label = None
+        self._pending_channel_setup_resume = None
+        if had_resume and action_label:
+            self.set_status("idle", f"{action_label} cancelled. Channel Detection Setup is still required.")
+        else:
+            self.set_status("idle", "Channel Detection Setup closed.")
+        self._update_control_interactivity()
+
+    def _open_channel_setup_panel(self, action_label: str, resume_callable=None) -> bool:
+        if self.worker_thread and self.worker_thread.is_alive():
+            messagebox.showwarning("Busy", "Wait for the current task to finish before opening Channel Detection Setup.")
+            return False
+        if not self._ensure_remote_connection_for_action(action_label):
+            return False
+        if self._channel_setup_panel is not None and self._channel_setup_panel.is_open():
+            self._pending_channel_setup_action_label = action_label if resume_callable is not None else None
+            self._pending_channel_setup_resume = resume_callable
+            self._channel_setup_panel.show()
+            self.set_status("running", "Channel Detection Setup is open.")
+            self._update_control_interactivity()
+            return True
+
+        if resume_callable is not None:
+            self._pending_channel_setup_action_label = action_label
+            self._pending_channel_setup_resume = resume_callable
+        else:
+            self._pending_channel_setup_action_label = None
+            self._pending_channel_setup_resume = None
+
+        self._channel_setup_panel = ChannelSetupPanel(
+            self.root,
+            actions=self._build_channel_setup_actions(),
+            on_ready=self._handle_channel_setup_ready,
+            on_cancel=self._handle_channel_setup_cancelled,
+            status_callback=self.set_status,
+            log_callback=self.log_message,
+        )
+        self.set_status("running", "Channel Detection Setup is open.")
+        self.log_message("Opened Channel Detection Setup.")
+        self._update_control_interactivity()
+        return True
 
     def _ensure_channel_setup_ready_or_begin_setup(self, action_label: str, resume_callable) -> bool:
         fin6_status = self._get_fin6_setup_status(action_label, show_errors=True)
@@ -979,15 +1049,7 @@ class DrosophilaGUI:
             self.set_status("idle", f"{action_label} cancelled. Channel Detection Setup is still required.")
             return False
 
-        opened = False
-        if self.is_remote_mode():
-            opened = self._open_remote_fin6_setup()
-        else:
-            fin6_bridge = self._ensure_fin6_bridge_or_warn("Open Channel Detection Setup")
-            if fin6_bridge is not None:
-                opened = self._open_fin6_setup_with_bridge(fin6_bridge)
-        if opened:
-            self._begin_channel_setup_resume_wait(action_label, resume_callable)
+        self._open_channel_setup_panel(action_label, resume_callable)
         return False
 
     def _ensure_assay_setup_ready_or_prompt(self, action_label: str) -> bool:
@@ -2626,7 +2688,7 @@ class DrosophilaGUI:
         self.detect_channel_button.grid(row=0, column=0, sticky=tk.W)
         self.local_vision_widgets.append(self.detect_channel_button)
 
-        self.channel_setup_button = self.make_button(actions, "Open Channel Setup", "#607D8B", self.open_fin6_setup)
+        self.channel_setup_button = self.make_button(actions, "Open Channel Setup", "#607D8B", self.open_channel_setup)
         self.channel_setup_button.grid(row=0, column=1, sticky=tk.W, padx=(8, 0))
         self.local_vision_widgets.append(self.channel_setup_button)
 
@@ -3969,6 +4031,8 @@ class DrosophilaGUI:
         self.start_task("vibration", "running", f"Turning vibration {'on' if enabled else 'off'}.", task)
 
     def run_channel_detection(self):
+        if not self._ensure_remote_connection_for_action("Detect Channel"):
+            return
         if not self._ensure_channel_setup_ready_or_begin_setup("Detect Channel", self.run_channel_detection):
             return
         if self.is_remote_mode():

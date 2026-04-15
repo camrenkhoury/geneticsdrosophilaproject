@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse
@@ -55,6 +57,15 @@ def get_channel_annotated_preview(request: Request) -> FileResponse:
     return FileResponse(preview_path, media_type="image/png", filename=preview_path.name)
 
 
+@router.get("/artifacts/channel/background", dependencies=[Depends(require_api_key)])
+def get_channel_background_preview(request: Request) -> FileResponse:
+    context = request.app.state.backend_context
+    preview_path = context.machine_service.get_channel_background_preview_path()
+    if not preview_path.exists():
+        raise HTTPException(status_code=404, detail="Channel background preview is not available yet.")
+    return FileResponse(preview_path, media_type="image/png", filename=preview_path.name)
+
+
 @router.get("/fin6/setup_status", dependencies=[Depends(require_api_key)])
 def get_fin6_setup_status(request: Request) -> dict:
     context = request.app.state.backend_context
@@ -65,6 +76,48 @@ def get_fin6_setup_status(request: Request) -> dict:
 def post_fin6_launch_setup(request: Request) -> dict:
     context = request.app.state.backend_context
     return context.launch_fin6_setup()
+
+
+@router.post("/channel_setup/capture_background", dependencies=[Depends(require_api_key)])
+def post_channel_setup_capture_background(request: Request) -> dict:
+    context = request.app.state.backend_context
+    if context.is_busy():
+        return {
+            "ok": False,
+            "message": f"Machine is busy running {context._active_command}. Wait for it to finish before capturing a setup background.",
+        }
+    try:
+        return context.machine_service.capture_channel_setup_background()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/channel_setup/save_calibration", dependencies=[Depends(require_api_key)])
+def post_channel_setup_save_calibration(request: Request, payload: dict[str, Any]) -> dict:
+    context = request.app.state.backend_context
+    if context.is_busy():
+        return {
+            "ok": False,
+            "message": f"Machine is busy running {context._active_command}. Wait for it to finish before saving setup calibration.",
+        }
+    try:
+        left_raw = payload.get("left_point_px")
+        right_raw = payload.get("right_point_px")
+        if not isinstance(left_raw, (list, tuple)) or len(left_raw) != 2:
+            raise ValueError("left_point_px must contain two pixel coordinates.")
+        if not isinstance(right_raw, (list, tuple)) or len(right_raw) != 2:
+            raise ValueError("right_point_px must contain two pixel coordinates.")
+        channel_mm_raw = payload.get("channel_mm")
+        channel_mm = float(channel_mm_raw) if channel_mm_raw is not None else None
+        return context.machine_service.save_channel_setup_calibration(
+            (int(left_raw[0]), int(left_raw[1])),
+            (int(right_raw[0]), int(right_raw[1])),
+            channel_mm=channel_mm,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/home", response_model=CommandResponse, dependencies=[Depends(require_api_key)])
