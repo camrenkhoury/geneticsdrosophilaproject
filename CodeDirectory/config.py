@@ -24,10 +24,9 @@ GANTRY_MAX_MM = 431
 # Distance from gantry hard-limit reference to vacuum/nozzle center
 VACUUM_CENTER_OFFSET_MM = 35.0
 
-# Detection results are already reported in nozzle-center channel coordinates.
-# Keep this at zero unless a future calibration workflow explicitly proves a
-# residual pickup offset still exists after channel calibration.
-PICKUP_POSITION_CORRECTION_MM = 0.0
+# Detection-based pickup correction for the current nozzle-center alignment.
+# Negative values move the pickup target slightly inward.
+PICKUP_POSITION_CORRECTION_MM = -2.0
 
 # Valid commanded nozzle-center range
 OPERATIONAL_MIN_POS_MM = GANTRY_MIN_MM + VACUUM_CENTER_OFFSET_MM
@@ -59,6 +58,8 @@ TUBE_SECTION_LENGTH = TUBE_SECTION_LOCATION_END - TUBE_SECTION_LOCATION_START
 # Increased gantry speed by ~1.8x by reducing the step pulse delay.
 DEFAULT_STEP_DELAY = 0.00010
 HOME_STEP_DELAY = 0.0001333333
+HOME_FINE_STEP_DELAY = 0.00024
+HOME_BACKOFF_MM = 2.0
 TIMING_FACTOR = 0.78125
 
 VACUUM_PICK_DELAY = 0.4

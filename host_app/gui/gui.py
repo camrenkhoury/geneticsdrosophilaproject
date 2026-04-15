@@ -4433,7 +4433,7 @@ class DrosophilaGUI:
         return max(0.0, min(position_mm, motion.get_operational_max_mm()))
 
     def _apply_pickup_correction(self, position_mm: float) -> float:
-        return self._clamp_operational(position_mm)
+        return self._clamp_operational(position_mm + float(getattr(config, "PICKUP_POSITION_CORRECTION_MM", 0.0)))
 
     def _load_positions_from_result(self, result: dict | None, source_label: str):
         if result is None:

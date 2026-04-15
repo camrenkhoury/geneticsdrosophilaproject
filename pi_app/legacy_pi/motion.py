@@ -103,6 +103,10 @@ def get_operational_max_mm():
     return config.GANTRY_MAX_MM - (2.0 * config.VACUUM_CENTER_OFFSET_MM)
 
 
+def _steps_for_distance(distance_mm: float) -> int:
+    return max(1, int(round(abs(float(distance_mm)) / config.MM_PER_STEP)))
+
+
 def move_relative(distance_mm, move_time=None):
     global current_position_mm
 
@@ -188,26 +192,53 @@ def home_to_zero(max_steps=50000):
         print("Homed (simulated). Usable position set to 0.0 mm.")
         return
 
-    enable_motor()
-    set_direction(False)
-
-    steps_taken = 0
     _, _, _, limit_min_device, _ = _ensure_devices()
+    fast_step_delay = float(getattr(config, "HOME_STEP_DELAY", config.DEFAULT_STEP_DELAY))
+    fine_step_delay = float(getattr(config, "HOME_FINE_STEP_DELAY", fast_step_delay))
+    backoff_steps = _steps_for_distance(float(getattr(config, "HOME_BACKOFF_MM", 2.0)))
+    steps_taken = 0
+
+    enable_motor()
 
     try:
+        set_direction(False)
         while not limit_min_device.value:
-            step_once(config.HOME_STEP_DELAY)
+            step_once(fast_step_delay)
             steps_taken += 1
 
             if steps_taken >= max_steps:
                 print("Homing aborted: max steps reached.")
                 break
 
+        if not limit_min_device.value:
+            print("Home switch not reached. Position not trusted.")
+            return
+
+        # Back off the switch, then re-approach slowly to improve zero repeatability.
+        set_direction(True)
+        backoff_count = 0
+        while limit_min_device.value and backoff_count < backoff_steps:
+            step_once(fine_step_delay)
+            backoff_count += 1
+
+        if limit_min_device.value:
+            print("Home switch remained active after backoff. Position not trusted.")
+            return
+
+        set_direction(False)
+        fine_steps_taken = 0
+        while not limit_min_device.value:
+            step_once(fine_step_delay)
+            fine_steps_taken += 1
+            if fine_steps_taken >= max_steps:
+                print("Fine homing aborted: max steps reached.")
+                break
+
         if limit_min_device.value:
             current_position_mm = 0.0
             print("Homed. Usable position set to 0.0 mm.")
         else:
-            print("Home switch not reached. Position not trusted.")
+            print("Home switch not reached on fine approach. Position not trusted.")
     finally:
         disable_motor()
 

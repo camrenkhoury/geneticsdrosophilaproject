@@ -117,8 +117,10 @@ def _sorted_pickup_positions(result: dict[str, Any], clamp_operational: Callable
         return "done"
 
     raw_positions = result.get("corrected_positions_mm")
+    apply_pickup_correction = False
     if raw_positions is None or not isinstance(raw_positions, list):
         raw_positions = result.get("x_positions_mm")
+        apply_pickup_correction = True
     if raw_positions is None or not isinstance(raw_positions, list):
         return None
 
@@ -130,9 +132,13 @@ def _sorted_pickup_positions(result: dict[str, Any], clamp_operational: Callable
     if not numeric_positions:
         return "done"
 
-    # Detection should already report channel positions in gantry/nozzle space.
-    # Do not apply an extra pickup correction here or the gantry will undershoot.
-    adjusted = [clamp_operational(float(value)) for value in numeric_positions]
+    if apply_pickup_correction:
+        adjusted = [
+            clamp_operational(float(value) + float(getattr(config, "PICKUP_POSITION_CORRECTION_MM", 0.0)))
+            for value in numeric_positions
+        ]
+    else:
+        adjusted = [clamp_operational(float(value)) for value in numeric_positions]
     return sorted(adjusted, reverse=True)
 
 
