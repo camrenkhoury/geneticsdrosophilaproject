@@ -145,8 +145,13 @@ class EmbeddedAssayUI(tk.Frame):
             debug_parent.configure(bg=APP_BG)
         except Exception:
             pass
-        self._build_biologist_tab(assay_parent)
-        self._build_assay_tab(debug_parent)
+        # In the host shell, assay_parent is the "Setup + Run" tab and
+        # debug_parent is the "Results" tab. The standalone fin6 app names are
+        # inverted relative to that shell, so attach the full assay workspace
+        # to the setup tab and the lighter playback/results page to the results
+        # tab.
+        self._build_assay_tab(assay_parent)
+        self._build_biologist_tab(debug_parent)
         self._load_settings()
         self._suspend_controller_sync = True
         try:
