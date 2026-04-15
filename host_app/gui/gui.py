@@ -2184,22 +2184,43 @@ class DrosophilaGUI:
 
         preview_exists = bool(detection_summary.get("preview_exists", False))
         preview_mtime = detection_summary.get("preview_mtime")
+        source_mtime = detection_summary.get("source_mtime")
         if not preview_exists:
             self._last_remote_preview_source_mtime = None
             self.preview_image = None
             self.set_preview_placeholder("Waiting for remote channel detection image...")
             return
 
+        try:
+            preview_mtime_value = float(preview_mtime) if preview_mtime is not None else None
+        except Exception:
+            preview_mtime_value = None
+        try:
+            source_mtime_value = float(source_mtime) if source_mtime is not None else None
+        except Exception:
+            source_mtime_value = None
+
+        # Only render the annotated preview once it is at least as fresh as the
+        # detection result JSON it belongs to. Otherwise we can fetch the
+        # previous run's PNG while the new JSON is already visible.
+        if (
+            preview_mtime_value is None
+            or source_mtime_value is None
+            or preview_mtime_value < source_mtime_value
+        ):
+            self.set_preview_placeholder("Capturing current remote channel detection image...")
+            return
+
         if self._remote_preview_fetch_in_flight:
             return
 
-        if preview_mtime is not None and preview_mtime == self._last_remote_preview_source_mtime and self.preview_image is not None:
+        if preview_mtime_value is not None and preview_mtime_value == self._last_remote_preview_source_mtime and self.preview_image is not None:
             return
 
         self._remote_preview_fetch_in_flight = True
         threading.Thread(
             target=self._remote_preview_worker,
-            args=(float(preview_mtime) if preview_mtime is not None else None,),
+            args=(preview_mtime_value,),
             daemon=True,
         ).start()
 
@@ -4502,7 +4523,16 @@ class DrosophilaGUI:
             detection_summary = status.get("detection_summary", {}) or {}
             source_mtime_raw = detection_summary.get("source_mtime")
             source_mtime = float(source_mtime_raw) if source_mtime_raw is not None else None
-            if source_mtime is not None and (previous_source_mtime is None or source_mtime > previous_source_mtime):
+            preview_exists = bool(detection_summary.get("preview_exists", False))
+            preview_mtime_raw = detection_summary.get("preview_mtime")
+            preview_mtime = float(preview_mtime_raw) if preview_mtime_raw is not None else None
+            if (
+                source_mtime is not None
+                and (previous_source_mtime is None or source_mtime > previous_source_mtime)
+                and preview_exists
+                and preview_mtime is not None
+                and preview_mtime >= source_mtime
+            ):
                 return status
             time.sleep(0.2)
         if last_status is not None and self._remote_status_has_terminal_error(last_status):
