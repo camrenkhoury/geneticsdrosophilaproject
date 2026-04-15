@@ -685,6 +685,7 @@ class DrosophilaGUI:
         self.debug_preview_state_var = tk.StringVar(value="preview=idle")
         self.debug_workspace_var = tk.StringVar(value="workspace=channel")
         self.debug_event_var = tk.StringVar(value="Startup | GUI created.")
+        self.debug_live_summary_var = tk.StringVar(value="task=idle | worker=idle | mode=local")
         self.debug_trace_text = None
         self.device_state_labels: dict[str, tk.Label] = {}
         self.device_state_text: dict[str, tk.StringVar] = {}
@@ -2971,34 +2972,6 @@ class DrosophilaGUI:
         )
         self.connection_label.grid(row=6, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
 
-        ttk.Label(status_frame, text="Output Dir:", font=("Arial", 10, "bold")).grid(row=7, column=0, sticky=tk.W, pady=2)
-        self.output_dir_label = tk.Label(
-            status_frame,
-            textvariable=self.output_dir_var,
-            bg="#F7F7F7",
-            relief="sunken",
-            font=("Arial", 9),
-            padx=5,
-            pady=2,
-            anchor="w",
-            justify="left",
-        )
-        self.output_dir_label.grid(row=7, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
-
-        ttk.Label(status_frame, text="Workspace:", font=("Arial", 10, "bold")).grid(row=8, column=0, sticky=tk.W, pady=2)
-        self.workspace_label = tk.Label(
-            status_frame,
-            text="Use the Channel, Sexing, and Assay tabs below for vision setup and results.",
-            bg="#F7F7F7",
-            relief="sunken",
-            font=("Arial", 9),
-            padx=5,
-            pady=2,
-            anchor="w",
-            justify="left",
-        )
-        self.workspace_label.grid(row=8, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=2)
-
     def create_main_content(self, parent):
         content_frame = ttk.Frame(parent)
         content_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.N, tk.S, tk.W, tk.E), pady=(0, 10))
@@ -3123,20 +3096,7 @@ class DrosophilaGUI:
         summary_card = ttk.LabelFrame(parent, text="Channel Detection", padding="10")
         summary_card.grid(row=0, column=0, sticky=(tk.W, tk.E))
         summary_card.columnconfigure(0, weight=1)
-        tk.Label(
-            summary_card,
-            textvariable=self.channel_workspace_summary_var,
-            bg="#F7F7F7",
-            relief="sunken",
-            font=("Arial", 9),
-            padx=8,
-            pady=6,
-            anchor="w",
-            justify="left",
-            wraplength=520,
-        ).grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E))
-
-        ttk.Label(summary_card, text="Detection:", font=("Arial", 9, "bold")).grid(row=1, column=0, sticky=tk.W, pady=(8, 2))
+        ttk.Label(summary_card, text="Detection:", font=("Arial", 9, "bold")).grid(row=0, column=0, sticky=tk.W, pady=2)
         tk.Label(
             summary_card,
             textvariable=self.detection_var,
@@ -3147,24 +3107,10 @@ class DrosophilaGUI:
             pady=2,
             anchor="w",
             justify="left",
-        ).grid(row=1, column=1, sticky=(tk.W, tk.E), pady=(8, 2))
-
-        ttk.Label(summary_card, text="Output Dir:", font=("Arial", 9, "bold")).grid(row=2, column=0, sticky=tk.W, pady=2)
-        tk.Label(
-            summary_card,
-            textvariable=self.output_dir_var,
-            bg="#FFFFFF",
-            relief="sunken",
-            font=("Arial", 9),
-            padx=5,
-            pady=2,
-            anchor="w",
-            justify="left",
-            wraplength=520,
-        ).grid(row=2, column=1, sticky=(tk.W, tk.E), pady=2)
+        ).grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2)
 
         actions = ttk.Frame(summary_card)
-        actions.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(10, 0))
+        actions.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(10, 0))
         self.detect_channel_button = self.make_button(actions, "Detect Channel", "#9C27B0", self.run_channel_detection)
         self.detect_channel_button.grid(row=0, column=0, sticky=tk.W)
         self.local_vision_widgets.append(self.detect_channel_button)
@@ -3403,44 +3349,35 @@ class DrosophilaGUI:
             system_frame.columnconfigure(column, weight=1)
 
     def create_log_section(self, parent):
-        log_frame = ttk.LabelFrame(parent, text="Activity Log", style="Log.TLabelframe", padding="10")
-        log_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.N, tk.S, tk.W, tk.E), pady=(15, 0))
+        log_frame = ttk.LabelFrame(parent, text="Activity Log", style="Log.TLabelframe", padding="8")
+        log_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.N, tk.S, tk.W, tk.E), pady=(8, 0))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(2, weight=1)
 
-        debug_frame = ttk.LabelFrame(log_frame, text="Runtime Debug", padding="8")
+        debug_frame = ttk.LabelFrame(log_frame, text="Runtime History", padding="8")
         debug_frame.grid(row=0, column=0, sticky=(tk.W, tk.E))
-        for column in range(2):
-            debug_frame.columnconfigure(column, weight=1)
+        debug_frame.columnconfigure(0, weight=1)
+        debug_frame.columnconfigure(1, weight=0)
 
-        debug_pairs = (
-            ("Task", self.debug_task_var),
-            ("Worker", self.debug_worker_var),
-            ("Remote", self.debug_remote_var),
-            ("Detection", self.debug_detection_state_var),
-            ("Preview", self.debug_preview_state_var),
-            ("Workspace", self.debug_workspace_var),
-            ("Last Event", self.debug_event_var),
-        )
-        for row_index, (label_text, value_var) in enumerate(debug_pairs):
-            ttk.Label(debug_frame, text=f"{label_text}:", font=("Arial", 8, "bold")).grid(row=row_index, column=0, sticky=tk.NW, pady=1)
-            tk.Label(
-                debug_frame,
-                textvariable=value_var,
-                bg="#111827",
-                fg="#E5E7EB",
-                relief="sunken",
-                font=("Consolas", 8),
-                padx=6,
-                pady=3,
-                anchor="w",
-                justify="left",
-                wraplength=1100,
-            ).grid(row=row_index, column=1, sticky=(tk.W, tk.E), pady=1)
+        tk.Label(
+            debug_frame,
+            textvariable=self.debug_live_summary_var,
+            bg="#111827",
+            fg="#E5E7EB",
+            relief="sunken",
+            font=("Consolas", 8),
+            padx=6,
+            pady=4,
+            anchor="w",
+            justify="left",
+            wraplength=1000,
+        ).grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 8))
+
+        ttk.Button(debug_frame, text="Copy Debug", command=self.copy_debug_history).grid(row=0, column=1, sticky=tk.E)
 
         self.debug_trace_text = scrolledtext.ScrolledText(
             log_frame,
-            height=6,
+            height=8,
             wrap=tk.WORD,
             font=("Consolas", 8),
             bg="#111827",
@@ -3448,12 +3385,13 @@ class DrosophilaGUI:
             insertbackground="#D1D5DB",
             relief="sunken",
             borderwidth=1,
+            exportselection=False,
         )
         self.debug_trace_text.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(8, 8))
 
         self.log_text = scrolledtext.ScrolledText(
             log_frame,
-            height=10,
+            height=5,
             wrap=tk.WORD,
             font=("Consolas", 9),
             bg="#F8F8F8",
@@ -3856,6 +3794,7 @@ class DrosophilaGUI:
                 elif kind == "status":
                     self.set_status(item[1], item[2])
                 elif kind == "task_finished":
+                    self._trace_runtime("queue", f"task_finished name={item[1]} ok={item[2]}", echo_to_log=False)
                     self.finish_task(item[1], item[2], item[3])
                     if item[1] == "channel setup prep" and item[2] and self._open_channel_setup_after_prep:
                         self._open_channel_setup_after_prep = False
@@ -3866,29 +3805,38 @@ class DrosophilaGUI:
                 elif kind == "actuator":
                     self.update_actuator_state(item[1], item[2])
                 elif kind == "classification_result":
+                    self._trace_runtime("queue", "classification_result received", echo_to_log=False)
                     self.show_classification_result(item[1])
                 elif kind == "local_channel_detection":
+                    self._trace_runtime("queue", "local_channel_detection received", echo_to_log=False)
                     self._apply_local_channel_detection(item[1])
                 elif kind == "automation_snapshot":
                     self._apply_automation_snapshot(item[1])
                 elif kind == "clear_stop":
+                    self._trace_runtime("queue", "clear_stop received", echo_to_log=False)
                     self.stop_requested.clear()
                 elif kind == "prompt_yes_no":
+                    self._trace_runtime("queue", f"prompt_yes_no title={item[1]['title']}", echo_to_log=False)
                     prompt_state = item[1]
                     prompt_state["response"] = messagebox.askyesno(prompt_state["title"], prompt_state["message"])
                     prompt_state["event"].set()
                 elif kind == "remote_connection":
+                    self._trace_runtime("queue", f"remote_connection state={item[1]}", echo_to_log=False)
                     connection_state = ConnectionState(item[1])
                     self._apply_connection_state(connection_state, item[2])
                 elif kind == "remote_status":
                     self._apply_remote_status(item[1])
                 elif kind == "remote_preview":
+                    self._trace_runtime("queue", "remote_preview received", echo_to_log=False)
                     self._apply_remote_preview(item[1], item[2])
                 elif kind == "remote_preview_error":
+                    self._trace_runtime("queue", f"remote_preview_error {item[1]}", echo_to_log=False)
                     self._fail_remote_preview(item[1])
                 elif kind == "remote_command_result":
+                    self._trace_runtime("queue", f"remote_command_result {item[1]}", echo_to_log=False)
                     self._complete_remote_command(item[1], item[2])
                 elif kind == "remote_command_error":
+                    self._trace_runtime("queue", f"remote_command_error {item[1]}", echo_to_log=False)
                     self._fail_remote_command(item[1], item[2], item[3])
         except queue.Empty:
             pass
@@ -3979,6 +3927,22 @@ class DrosophilaGUI:
             f"preview_fetch={self._remote_preview_fetch_in_flight} last_preview={self.last_preview_mtime} remote_preview={self._last_remote_preview_source_mtime}"
         )
         self.debug_workspace_var.set(f"workspace={workspace_name} output={self.output_dir_var.get()}")
+        self.debug_live_summary_var.set(
+            f"task={task_name} | worker={worker_state} | stop={stop_state} | "
+            f"mode={'remote' if self.is_remote_mode() else 'local'}:{connection_state}/{request_state}/{backend_state} | "
+            f"workspace={workspace_name} | awaiting={self._awaiting_current_detection} | "
+            f"result={self.last_result_mtime} | preview={self.last_preview_mtime}"
+        )
+
+    def copy_debug_history(self):
+        if self.debug_trace_text is None:
+            return
+        text = self.debug_trace_text.get("1.0", tk.END).strip()
+        if not text:
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self._trace_runtime("debug", "Copied runtime history to clipboard.", echo_to_log=False)
 
     def clear_log(self):
         self.log_text.delete("1.0", tk.END)
@@ -4563,9 +4527,11 @@ class DrosophilaGUI:
             self.set_sexing_preview_placeholder("Waiting for classification image...")
 
     def worker_log(self, message: str):
+        self._trace_runtime("worker-log", message, echo_to_log=False)
         self.ui_queue.put(("log", message))
 
     def worker_status(self, state: str, message: str):
+        self._trace_runtime("worker-status", f"{state}: {message}", echo_to_log=False)
         self.ui_queue.put(("status", state, message))
 
     def _check_stop(self):
