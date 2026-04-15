@@ -2223,8 +2223,8 @@ class DrosophilaGUI:
         source_mtime = detection_summary.get("source_mtime")
         if not preview_exists:
             self._last_remote_preview_source_mtime = None
-            self.preview_image = None
-            self.set_preview_placeholder("Waiting for remote channel detection image...")
+            if self.preview_image is None:
+                self.set_preview_placeholder("Waiting for remote channel detection image...")
             return
 
         try:
@@ -2244,7 +2244,8 @@ class DrosophilaGUI:
             or source_mtime_value is None
             or preview_mtime_value < source_mtime_value
         ):
-            self.set_preview_placeholder("Capturing current remote channel detection image...")
+            if self.preview_image is None:
+                self.set_preview_placeholder("Capturing current remote channel detection image...")
             return
 
         if self._remote_preview_fetch_in_flight:
@@ -2369,9 +2370,9 @@ class DrosophilaGUI:
             )
             return
         if image_bytes is None:
-            self.preview_image = None
-            self._last_remote_preview_source_mtime = None
-            self.set_preview_placeholder("Remote channel detection image not available yet.")
+            if self.preview_image is None:
+                self._last_remote_preview_source_mtime = None
+                self.set_preview_placeholder("Remote channel detection image not available yet.")
             self._trace_runtime("channel-preview-remote", "no image bytes returned", echo_to_log=False)
             return
 
@@ -4299,14 +4300,17 @@ class DrosophilaGUI:
 
         self._awaiting_current_detection = True
         self._current_detection_baseline_mtime = baseline
-        self.preview_image = None
-        self.preview_source_image = None
-        self.last_preview_mtime = None
+        preserve_remote_preview = self.is_remote_mode() and self.preview_image is not None and self._startup_preview_completed
+        if not preserve_remote_preview:
+            self.preview_image = None
+            self.preview_source_image = None
+            self.last_preview_mtime = None
         self._remote_preview_wait_in_flight = False
         self.detection_var.set("Waiting for current channel detection output.")
         if self.is_remote_mode():
             self._last_remote_preview_source_mtime = None
-        self.set_preview_placeholder(placeholder)
+        if not preserve_remote_preview:
+            self.set_preview_placeholder(placeholder)
         self._trace_runtime("channel-session", placeholder, echo_to_log=False)
 
     def _clear_channel_preview_state(self, *, clear_artifacts: bool, placeholder: str) -> None:
@@ -4437,9 +4441,11 @@ class DrosophilaGUI:
                 self.detection_var.set("Waiting for calibration before channel detection output.")
                 self.set_preview_placeholder("Waiting for calibration before channel preview...")
             elif self._awaiting_current_detection:
-                self.set_preview_placeholder("Waiting for current remote channel detection image...")
+                if self.preview_image is None:
+                    self.set_preview_placeholder("Waiting for current remote channel detection image...")
             elif not self._startup_preview_completed:
-                self.set_preview_placeholder("Capturing current remote channel detection image...")
+                if self.preview_image is None:
+                    self.set_preview_placeholder("Capturing current remote channel detection image...")
             elif self.preview_image is None and not self._remote_preview_fetch_in_flight:
                 self.set_preview_placeholder("Waiting for remote channel detection image...")
             self.root.after(1000, self.update_channel_preview)
