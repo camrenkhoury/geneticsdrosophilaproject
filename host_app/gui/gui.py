@@ -2182,9 +2182,9 @@ class DrosophilaGUI:
         if not self.is_remote_mode() or not self.remote_connected or self.remote_controller is None:
             return
 
-        source_exists = bool(detection_summary.get("source_exists", False))
-        source_mtime = detection_summary.get("source_mtime")
-        if not source_exists:
+        preview_exists = bool(detection_summary.get("preview_exists", False))
+        preview_mtime = detection_summary.get("preview_mtime")
+        if not preview_exists:
             self._last_remote_preview_source_mtime = None
             self.preview_image = None
             self.set_preview_placeholder("Waiting for remote channel detection image...")
@@ -2193,29 +2193,25 @@ class DrosophilaGUI:
         if self._remote_preview_fetch_in_flight:
             return
 
-        if source_mtime is not None and source_mtime == self._last_remote_preview_source_mtime and self.preview_image is not None:
+        if preview_mtime is not None and preview_mtime == self._last_remote_preview_source_mtime and self.preview_image is not None:
             return
 
         self._remote_preview_fetch_in_flight = True
         threading.Thread(
             target=self._remote_preview_worker,
-            args=(float(source_mtime) if source_mtime is not None else None,),
+            args=(float(preview_mtime) if preview_mtime is not None else None,),
             daemon=True,
         ).start()
 
-    def _remote_preview_worker(self, source_mtime: float | None) -> None:
+    def _remote_preview_worker(self, preview_mtime: float | None) -> None:
         try:
             image_bytes = self.remote_controller.get_channel_preview_image() if self.remote_controller is not None else None
-            self.ui_queue.put(("remote_preview", image_bytes, source_mtime))
+            self.ui_queue.put(("remote_preview", image_bytes, preview_mtime))
         except (ControllerConnectionError, ControllerError) as exc:
             self.ui_queue.put(("remote_preview_error", str(exc)))
 
-    def _apply_remote_preview(self, image_bytes: bytes | None, source_mtime: float | None) -> None:
+    def _apply_remote_preview(self, image_bytes: bytes | None, preview_mtime: float | None) -> None:
         self._remote_preview_fetch_in_flight = False
-        baseline = self._current_detection_baseline_mtime
-        if self._awaiting_current_detection:
-            if source_mtime is None or (baseline is not None and float(source_mtime) <= float(baseline)):
-                return
         if image_bytes is None:
             self.preview_image = None
             self._last_remote_preview_source_mtime = None
@@ -2223,7 +2219,7 @@ class DrosophilaGUI:
             return
 
         self.load_channel_preview_bytes(image_bytes)
-        self._last_remote_preview_source_mtime = source_mtime
+        self._last_remote_preview_source_mtime = preview_mtime
 
     def _fail_remote_preview(self, message: str) -> None:
         self._remote_preview_fetch_in_flight = False
@@ -4031,13 +4027,7 @@ class DrosophilaGUI:
 
     def _begin_new_detection_session(self, *, placeholder: str) -> None:
         baseline = self.last_used_detection_mtime
-        if self.is_remote_mode():
-            if self._last_remote_preview_source_mtime is not None:
-                baseline = max(
-                    float(self._last_remote_preview_source_mtime),
-                    float(baseline) if baseline is not None else float(self._last_remote_preview_source_mtime),
-                )
-        elif self.last_result_mtime is not None:
+        if not self.is_remote_mode() and self.last_result_mtime is not None:
             baseline = max(
                 float(self.last_result_mtime),
                 float(baseline) if baseline is not None else float(self.last_result_mtime),
@@ -4490,13 +4480,6 @@ class DrosophilaGUI:
         source_mtime = detection_summary.get("source_mtime")
         if source_mtime is not None:
             self.last_used_detection_mtime = float(source_mtime)
-        try:
-            image_bytes = controller.get_channel_preview_image()
-        except Exception:
-            image_bytes = None
-        if image_bytes is not None:
-            preview_mtime = float(source_mtime) if source_mtime is not None else None
-            self.ui_queue.put(("remote_preview", image_bytes, preview_mtime))
         return {
             "result": {
                 "fly_remaining": bool(detection_summary.get("fly_remaining", False)),

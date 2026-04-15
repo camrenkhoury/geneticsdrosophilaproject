@@ -67,6 +67,9 @@ class DetectionSummaryModel(BaseModel):
     source_path: str
     source_exists: bool
     source_mtime: float | None
+    preview_path: str
+    preview_exists: bool
+    preview_mtime: float | None
     status: str
     fly_remaining: bool | None
     x_positions_mm: list[float]
@@ -78,6 +81,9 @@ class DetectionSummaryModel(BaseModel):
             source_path=summary.source_path,
             source_exists=summary.source_exists,
             source_mtime=summary.source_mtime,
+            preview_path=summary.preview_path,
+            preview_exists=summary.preview_exists,
+            preview_mtime=summary.preview_mtime,
             status=summary.status,
             fly_remaining=summary.fly_remaining,
             x_positions_mm=list(summary.x_positions_mm),

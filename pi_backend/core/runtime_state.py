@@ -35,6 +35,9 @@ class DetectionSummary:
     source_path: str = ""
     source_exists: bool = False
     source_mtime: float | None = None
+    preview_path: str = ""
+    preview_exists: bool = False
+    preview_mtime: float | None = None
     status: str = "unknown"
     fly_remaining: bool | None = None
     x_positions_mm: list[float] = field(default_factory=list)

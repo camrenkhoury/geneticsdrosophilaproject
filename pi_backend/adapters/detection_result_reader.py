@@ -22,20 +22,28 @@ class DetectionResultReader:
         source_exists = self.result_path.exists()
         source_mtime_ns: int | None = None
         source_size: int | None = None
+        preview_path = self.result_path.with_name("last_channel_annotated.png")
+        preview_exists = preview_path.exists()
+        preview_mtime_ns: int | None = None
 
         if source_exists:
             stat_result = self.result_path.stat()
             source_mtime_ns = stat_result.st_mtime_ns
             source_size = stat_result.st_size
+        if preview_exists:
+            preview_mtime_ns = preview_path.stat().st_mtime_ns
 
-        signature = (source_exists, source_mtime_ns, source_size)
+        signature = (source_exists, source_mtime_ns, source_size, preview_exists, preview_mtime_ns)
         if self._cached_signature == signature and self._cached_summary is not None:
             return deepcopy(self._cached_summary)
 
         summary = DetectionSummary(
             source_path=str(self.result_path),
             source_exists=source_exists,
+            preview_path=str(preview_path),
+            preview_exists=preview_exists,
         )
+        summary.preview_mtime = preview_mtime_ns / 1_000_000_000 if preview_mtime_ns is not None else None
 
         if not source_exists:
             summary.status = "missing"
