@@ -67,19 +67,22 @@ class BackendApiContext:
 
     def _trace(self, event: str, **fields: Any) -> None:
         snapshot = self.runtime_state.snapshot()
+        trace_fields = {
+            "active_command": self._active_command,
+            "busy": self.is_busy(),
+            "status_revision": snapshot.status_revision,
+            "orchestrator_state": str(snapshot.orchestrator_state),
+            "task_state": None if snapshot.task_state is None else str(snapshot.task_state),
+            "current_task": snapshot.current_task,
+            "stop_requested": snapshot.stop_requested,
+            "latest_message": snapshot.latest_message,
+        }
+        trace_fields.update(fields)
         append_operation_trace(
             PI_OPERATION_TRACE_FILENAME,
             "backend_api",
             event,
-            active_command=self._active_command,
-            busy=self.is_busy(),
-            status_revision=snapshot.status_revision,
-            orchestrator_state=str(snapshot.orchestrator_state),
-            task_state=None if snapshot.task_state is None else str(snapshot.task_state),
-            current_task=snapshot.current_task,
-            stop_requested=snapshot.stop_requested,
-            latest_message=snapshot.latest_message,
-            **fields,
+            **trace_fields,
         )
 
     def is_busy(self) -> bool:

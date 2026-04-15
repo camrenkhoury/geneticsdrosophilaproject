@@ -355,22 +355,25 @@ def run_operation(
     get_operational_max_mm_callable = get_operational_max_mm or motion.get_operational_max_mm
 
     def op_trace(event: str, **fields: Any) -> None:
+        trace_fields = {
+            "cycle_index": cycle_index,
+            "pending_pickup_positions": list(pending_pickup_positions),
+            "flies_taken_from_current_detection": flies_taken_from_current_detection,
+            "first_pickup_after_detection": first_pickup_after_detection,
+            "last_detection_count": last_detection_count,
+            "lost_fly_count": lost_fly_count,
+            "retry_pickup_count": retry_pickup_count,
+            "discarded_overflow_count": discarded_overflow_count,
+            "last_destination": None if last_destination is None else last_destination.key,
+            "last_classification_class": None if last_classification is None else last_classification.get("class"),
+            "last_classification_count": None if last_classification is None else last_classification.get("count"),
+        }
+        trace_fields.update(fields)
         append_operation_trace(
             HOST_OPERATION_TRACE_FILENAME,
             "final_operation",
             event,
-            cycle_index=cycle_index,
-            pending_pickup_positions=list(pending_pickup_positions),
-            flies_taken_from_current_detection=flies_taken_from_current_detection,
-            first_pickup_after_detection=first_pickup_after_detection,
-            last_detection_count=last_detection_count,
-            lost_fly_count=lost_fly_count,
-            retry_pickup_count=retry_pickup_count,
-            discarded_overflow_count=discarded_overflow_count,
-            last_destination=None if last_destination is None else last_destination.key,
-            last_classification_class=None if last_classification is None else last_classification.get("class"),
-            last_classification_count=None if last_classification is None else last_classification.get("count"),
-            **fields,
+            **trace_fields,
         )
 
     chamber_drop_s = 2.0
