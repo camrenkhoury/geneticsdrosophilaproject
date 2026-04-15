@@ -58,6 +58,54 @@ class TaskCancelled(Exception):
     """Raised when the operator stops an automated run."""
 
 
+class OperatorChoiceDialog:
+    def __init__(self, parent: tk.Misc, *, title: str, message: str, primary_text: str, cancel_text: str = "Cancel"):
+        self.result = False
+        self.window = tk.Toplevel(parent)
+        self.window.title(title)
+        self.window.transient(parent)
+        self.window.grab_set()
+        self.window.resizable(False, False)
+        self.window.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        frame = ttk.Frame(self.window, padding=16)
+        frame.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        frame.columnconfigure(0, weight=1)
+
+        ttk.Label(frame, text=message, justify="left", wraplength=420).grid(
+            row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 14)
+        )
+
+        button_row = ttk.Frame(frame)
+        button_row.grid(row=1, column=0, sticky=tk.E)
+        ttk.Button(button_row, text=primary_text, command=self._accept).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(button_row, text=cancel_text, command=self._cancel).grid(row=0, column=1)
+
+        self.window.update_idletasks()
+        try:
+            parent.update_idletasks()
+            parent_x = parent.winfo_rootx()
+            parent_y = parent.winfo_rooty()
+            parent_w = parent.winfo_width()
+            parent_h = parent.winfo_height()
+            width = self.window.winfo_width()
+            height = self.window.winfo_height()
+            pos_x = parent_x + max(0, (parent_w - width) // 2)
+            pos_y = parent_y + max(0, (parent_h - height) // 2)
+            self.window.geometry(f"+{pos_x}+{pos_y}")
+        except Exception:
+            pass
+        self.window.focus_force()
+
+    def _accept(self) -> None:
+        self.result = True
+        self.window.destroy()
+
+    def _cancel(self) -> None:
+        self.result = False
+        self.window.destroy()
+
+
 @dataclass(frozen=True)
 class GUIPlatformProfile:
     is_macos: bool
@@ -595,6 +643,7 @@ class DrosophilaGUI:
         self._channel_setup_panel: ChannelSetupPanel | None = None
         self._open_channel_setup_after_prep = False
         self._camera_role_panel: CameraRolePanel | None = None
+        self._acknowledged_channel_setup_signatures: set[tuple[str, str]] = set()
         self.entry_page_scale = self.entry_profile["scale"]
 
         self.state_var = tk.StringVar(value="IDLE")
@@ -787,11 +836,21 @@ class DrosophilaGUI:
 
     def _automated_start_motion_message(self) -> str:
         return (
-            "Automated Run is ready to start.\n\n"
-            "The machine will home first, then begin the automated motion sequence and move "
-            "through the imaging/classification positions.\n\n"
-            "Is it okay to start that motion now?"
+            "Load the flies now and make sure they are distributed in the channel before starting.\n\n"
+            "When you continue, the machine will home first and then begin the automated loading "
+            "and classification sequence."
         )
+
+    def _confirm_automated_run_loaded(self) -> bool:
+        dialog = OperatorChoiceDialog(
+            self.root,
+            title="Start Automated Run?",
+            message=self._automated_start_motion_message(),
+            primary_text="Flies Are Loaded",
+            cancel_text="Cancel",
+        )
+        self.root.wait_window(dialog.window)
+        return bool(dialog.result)
 
     def _refresh_workspace_copy(self) -> None:
         location = "the Pi" if self.is_remote_mode() else "this machine"
@@ -1101,9 +1160,34 @@ class DrosophilaGUI:
             fetch_preview_bytes=self._get_channel_setup_preview_bytes,
         )
 
+    def _channel_setup_signature(self, fin6_status: dict[str, Any] | None) -> tuple[str, str] | None:
+        if not isinstance(fin6_status, dict):
+            return None
+        if not self._channel_setup_ready(fin6_status):
+            return None
+        channel = fin6_status.get("channel")
+        if not isinstance(channel, dict):
+            return None
+        background_path = str(channel.get("background_path") or "").strip()
+        calibration_path = str(channel.get("calibration_path") or "").strip()
+        if not background_path or not calibration_path:
+            return None
+        return (background_path, calibration_path)
+
+    def _remember_channel_setup_for_session(self, fin6_status: dict[str, Any] | None) -> None:
+        signature = self._channel_setup_signature(fin6_status)
+        if signature is not None:
+            self._acknowledged_channel_setup_signatures.add(signature)
+
     def _handle_channel_setup_ready(self) -> None:
         action_label = self._pending_channel_setup_action_label
         resume_callable = self._pending_channel_setup_resume
+        try:
+            self._remember_channel_setup_for_session(
+                self._get_fin6_setup_status(action_label or "Channel Detection Setup", show_errors=False)
+            )
+        except Exception:
+            pass
         self._channel_setup_panel = None
         self._pending_channel_setup_action_label = None
         self._pending_channel_setup_resume = None
@@ -1245,6 +1329,9 @@ class DrosophilaGUI:
         if fin6_status is None:
             return False
         if self._channel_setup_ready(fin6_status):
+            signature = self._channel_setup_signature(fin6_status)
+            if signature is not None and signature in self._acknowledged_channel_setup_signatures:
+                return True
             decision = messagebox.askyesnocancel(
                 "Use Saved Setup?",
                 self._channel_setup_reuse_message(action_label),
@@ -1253,6 +1340,7 @@ class DrosophilaGUI:
                 self.set_status("idle", f"{action_label} cancelled.")
                 return False
             if decision:
+                self._remember_channel_setup_for_session(fin6_status)
                 return True
             self._startup_preview_requested = False
             self._startup_preview_completed = False
@@ -4627,12 +4715,9 @@ class DrosophilaGUI:
                 return
         if not self._ensure_channel_setup_ready_or_begin_setup("Automated Run", self.run_automated):
             return
-        should_start_motion = messagebox.askyesno(
-            "Start Automated Run?",
-            self._automated_start_motion_message(),
-        )
+        should_start_motion = self._confirm_automated_run_loaded()
         if not should_start_motion:
-            self.set_status("idle", "Automated Run cancelled before homing.")
+            self.set_status("idle", "Automated Run cancelled. Load or redistribute flies, then press START when ready.")
             return
         self._begin_new_detection_session(placeholder="Waiting for current channel detection image...")
         self._reset_sorting_status_display()
