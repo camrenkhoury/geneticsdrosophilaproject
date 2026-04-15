@@ -2572,6 +2572,15 @@ class DrosophilaGUI:
         deadline = time.monotonic() + 30.0
         last_status: dict | None = None
         saw_busy = False
+        saw_off_target_sample = False
+        initial_status: dict | None = None
+        with contextlib.suppress(Exception):
+            initial_status = controller.get_status_fresh()
+        initial_position = (
+            float(initial_status.get("current_position_mm", 0.0) or 0.0)
+            if isinstance(initial_status, dict)
+            else None
+        )
         while time.monotonic() < deadline:
             self._check_stop()
             status = self._poll_remote_status_fresh()
@@ -2582,7 +2591,13 @@ class DrosophilaGUI:
             busy = self._backend_busy_from_status(status)
             if busy:
                 saw_busy = True
-            if abs(current_position - float(target_mm)) <= 1.0 and (not busy) and (saw_busy or status.get("current_task") is None):
+            if abs(current_position - float(target_mm)) > 1.0:
+                saw_off_target_sample = True
+            if (
+                abs(current_position - float(target_mm)) <= 1.0
+                and (not busy)
+                and (saw_busy or saw_off_target_sample or (initial_position is not None and abs(initial_position - float(target_mm)) > 1.0))
+            ):
                 return
             time.sleep(0.1)
         self._request_remote_emergency_stop_now()
