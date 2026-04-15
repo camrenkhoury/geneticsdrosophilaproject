@@ -235,6 +235,10 @@ def run_operation(
     snapshot_callback: Callable[[dict[str, Any]], None] | None = None,
     stop_requested: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
+    # This function is the single orchestration loop for the automated sorter.
+    # The host GUI should only trigger it and display snapshots/logs. Hardware
+    # authority, motion sequencing, channel detection, chamber classification,
+    # and tube routing all flow through this routine.
     motion = None
     vacuum = None
     if home is None or move_absolute is None or set_vacuum is None or get_operational_max_mm is None:
@@ -257,6 +261,8 @@ def run_operation(
     chamber_settle_s = 6.0
     chamber_pickup_s = 2.0
     tube_drop_s = 2.0
+    # Re-detect after every two flies from the same batch to reduce repeated
+    # channel image captures while still keeping the pickup list reasonably fresh.
     max_flies_per_detection = 2
 
     tube_states = _build_tube_states()
@@ -279,6 +285,9 @@ def run_operation(
     def clamp_operational(position_mm: float) -> float:
         return max(0.0, min(float(position_mm), float(get_operational_max_mm_callable())))
 
+    # Channel detection photo and chamber observation both currently use the
+    # same explicit machine position. This is intentionally not derived from
+    # chamber center so the observation point does not drift with later tuning.
     channel_photo_position_mm = 191.0
     chamber_observe_position_mm = 191.0
     camera_photo_position = clamp_operational(channel_photo_position_mm)
@@ -294,6 +303,9 @@ def run_operation(
                 previous_detection_count = last_detection_count
                 attempted_from_previous_detection = flies_taken_from_current_detection
 
+                # Each detection cycle starts from a known reference:
+                # vacuum off, home, move to the fixed channel photo position,
+                # then trigger the Pi-side channel detection pipeline.
                 status("running", f"Cycle {cycle_index}: homing gantry.")
                 log(f"Cycle {cycle_index}: homing gantry.")
                 set_vacuum_callable(False)
@@ -383,6 +395,8 @@ def run_operation(
                     stage="detecting",
                 )
 
+                # "done" means the detector explicitly reported no flies remaining.
+                # That is the only normal path that ends the sorting loop.
                 if pickup_positions == "done":
                     log("Detection reported no flies remaining. Sorting run is complete.")
                     break
@@ -401,6 +415,8 @@ def run_operation(
             )
 
             if first_pickup_after_detection:
+                # After a fresh channel photo, go directly to the first pickup
+                # position without an extra home so we do not add avoidable drift.
                 status("moving", f"Cycle {cycle_index}: moving directly from detection position to pickup.")
                 log(f"Cycle {cycle_index}: skipping redundant home before first pickup after detection.")
                 first_pickup_after_detection = False
@@ -416,6 +432,8 @@ def run_operation(
             set_vacuum_callable(True)
             _sleep_with_stop(2.0, stop_requested)
 
+            # Chamber center is the true drop/pick location. Offsets are used only
+            # for observation, not for the actual release or pickup position.
             status("moving", f"Cycle {cycle_index}: moving to chamber.")
             move_absolute_callable(config.CHAMBER_CENTER)
 
@@ -424,6 +442,8 @@ def run_operation(
             set_vacuum_callable(False)
             _sleep_with_stop(chamber_drop_s, stop_requested)
 
+            # Move away from chamber center so the chamber camera can observe the
+            # specimen without the nozzle/cover blocking the view.
             status("moving", f"Cycle {cycle_index}: moving nozzle out of chamber view.")
             move_absolute_callable(chamber_observe_position)
 
@@ -453,6 +473,8 @@ def run_operation(
                 f"confidence={confidence:.4f} count={chamber_count} errors={last_classification.get('errors', [])}"
             )
 
+            # Tube routing is determined strictly from the classification result
+            # plus current tube capacities.
             destination_tube, destination_reason = _resolve_destination(last_classification, tube_states)
             last_destination = destination_tube
             _publish_snapshot(
@@ -522,6 +544,7 @@ def run_operation(
             status("running", f"Cycle {cycle_index}: returning home.")
             home_callable()
 
+        # Assay handoff occurs once, after the sorting loop genuinely ends.
         status("running", "No more flies detected. Awaiting assay confirmation.")
         should_launch_assay = ask_callable(
             "Start Assay",

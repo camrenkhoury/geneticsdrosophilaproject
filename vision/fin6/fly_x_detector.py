@@ -611,6 +611,21 @@ def process_fly_detection(
         "alignment_warp_2x3": warp.tolist(),
         "cropped_output": crop_meta,
         "auto_crop_from_background": crop_auto_meta,
+        "input_shapes": {
+            "background_bgr": [int(bg_color.shape[0]), int(bg_color.shape[1]), int(bg_color.shape[2])],
+            "frame_bgr": [int(frame_color.shape[0]), int(frame_color.shape[1]), int(frame_color.shape[2])],
+            "background_gray": [int(bg_gray.shape[0]), int(bg_gray.shape[1])],
+            "frame_gray": [int(frame_gray.shape[0]), int(frame_gray.shape[1])],
+            "aligned_gray": [int(aligned_gray.shape[0]), int(aligned_gray.shape[1])],
+            "aligned_color": [int(aligned_color.shape[0]), int(aligned_color.shape[1]), int(aligned_color.shape[2])],
+            "mask": [int(mask.shape[0]), int(mask.shape[1])],
+            "annotated_cropped": [int(annotated_cropped.shape[0]), int(annotated_cropped.shape[1]), int(annotated_cropped.shape[2])],
+            "cropped_mask": [int(cropped_mask.shape[0]), int(cropped_mask.shape[1])],
+        },
+        "detection_debug": {
+            "detections_before_annotation": int(len(detections)),
+            "annotation_output_mode": "cropped_channel_roi",
+        },
     }
 
     return result, annotated_cropped, cropped_mask

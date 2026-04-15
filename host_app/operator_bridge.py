@@ -52,6 +52,7 @@ def _append_channel_artifact_trace(event: str, **fields: Any) -> None:
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "subsystem": "channel_artifacts",
         "event": str(event),
+        "module_path": str(Path(__file__).resolve()),
     }
     for key, value in fields.items():
         if isinstance(value, Path):
@@ -755,6 +756,8 @@ def capture_channel_preview_from_saved_settings() -> dict[str, Any]:
     return {
         "preview_path": str(preview_path.resolve()),
         "source_path": str(source_path.resolve()),
+        "source_size": [int(frame_bgr.shape[1]), int(frame_bgr.shape[0])],
+        "preview_size": [int(preview_bgr.shape[1]), int(preview_bgr.shape[0])],
         "background_path": str(channel.background_path.resolve()),
         "preview_jpeg_base64": preview_b64,
         "camera_description": _camera_description(
@@ -917,6 +920,13 @@ def detect_channel_once_from_saved_settings() -> dict[str, Any]:
         fly_remaining=payload.get("fly_remaining"),
         count=len(payload.get("x_positions_mm", []) or []),
         x_positions_mm=payload.get("x_positions_mm"),
+        left_point_px=payload.get("left_point_px"),
+        right_point_px=payload.get("right_point_px"),
+        channel_length_mm=payload.get("channel_length_mm"),
+        cropped_output=payload.get("cropped_output"),
+        auto_crop_from_background=payload.get("auto_crop_from_background"),
+        input_shapes=payload.get("input_shapes"),
+        detection_debug=payload.get("detection_debug"),
         raw_path=raw_path,
         annotated_path=annotated_path,
         mask_path=mask_path,

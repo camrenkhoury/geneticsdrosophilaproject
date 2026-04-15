@@ -71,6 +71,7 @@ class ChannelSetupPanel:
         self._pil_image = None
         self._display_box: tuple[int, int, int, int] | None = None
         self._selected_points: list[tuple[int, int]] = []
+        self._source_image_size: tuple[int, int] | None = None
         self._camera_choice_map: dict[str, tuple[str, str]] = {
             "Auto-detect channel camera": ("auto:channel", "")
         }
@@ -537,6 +538,14 @@ class ChannelSetupPanel:
         camera_description = str(payload.get("camera_description", "")).strip()
         if camera_description:
             self.camera_status_var.set(f"Current photo from {camera_description}.")
+        source_size = payload.get("source_size")
+        if isinstance(source_size, (list, tuple)) and len(source_size) == 2:
+            try:
+                self._source_image_size = (int(source_size[0]), int(source_size[1]))
+            except Exception:
+                self._source_image_size = None
+        else:
+            self._source_image_size = None
         if not self._load_preview_from_payload(payload):
             self._refresh_preview_bytes()
         if callable(self.log_callback):
@@ -670,6 +679,7 @@ class ChannelSetupPanel:
             return
 
         left_pt, right_pt = self._selected_points
+        left_pt, right_pt = self._map_selected_points_to_source(left_pt, right_pt)
         self._run_worker(
             "Saving channel calibration...",
             lambda: self.actions.save_calibration(left_pt, right_pt, channel_mm),
@@ -781,6 +791,34 @@ class ChannelSetupPanel:
         image_x = max(0, min(self._pil_image.width - 1, image_x))
         image_y = max(0, min(self._pil_image.height - 1, image_y))
         return (image_x, image_y)
+
+    def _map_selected_points_to_source(
+        self,
+        left_point: tuple[int, int],
+        right_point: tuple[int, int],
+    ) -> tuple[tuple[int, int], tuple[int, int]]:
+        if self._pil_image is None or self._source_image_size is None:
+            return left_point, right_point
+
+        source_width, source_height = self._source_image_size
+        preview_width = int(self._pil_image.width)
+        preview_height = int(self._pil_image.height)
+        if source_width <= 0 or source_height <= 0 or preview_width <= 0 or preview_height <= 0:
+            return left_point, right_point
+        if source_width == preview_width and source_height == preview_height:
+            return left_point, right_point
+
+        scale_x = source_width / float(preview_width)
+        scale_y = source_height / float(preview_height)
+
+        def remap(point: tuple[int, int]) -> tuple[int, int]:
+            x = int(round(point[0] * scale_x))
+            y = int(round(point[1] * scale_y))
+            x = max(0, min(source_width - 1, x))
+            y = max(0, min(source_height - 1, y))
+            return (x, y)
+
+        return remap(left_point), remap(right_point)
 
     def _image_to_canvas(self, image_point: tuple[int, int]) -> tuple[int, int] | None:
         if self._display_box is None or self._pil_image is None:
