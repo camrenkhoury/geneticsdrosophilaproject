@@ -378,6 +378,7 @@ def run_operation(
 
     chamber_drop_s = 2.0
     chamber_release_settle_s = 0.25
+    chamber_drop_arrival_settle_s = chamber_release_settle_s + 0.5
     chamber_settle_s = 6.0
     chamber_pickup_s = 2.0
     tube_drop_s = 2.0
@@ -618,7 +619,7 @@ def run_operation(
             move_absolute_callable(config.CHAMBER_CENTER)
 
             status("running", f"Cycle {cycle_index}: dropping in chamber.")
-            _sleep_with_stop(chamber_release_settle_s, stop_requested)
+            _sleep_with_stop(chamber_drop_arrival_settle_s, stop_requested)
             set_vacuum_callable(False)
             _sleep_with_stop(chamber_drop_s, stop_requested)
 
