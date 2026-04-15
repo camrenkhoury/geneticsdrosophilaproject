@@ -264,9 +264,9 @@ def run_operation(
         return max(0.0, min(float(position_mm), float(get_operational_max_mm_callable())))
 
     channel_photo_offset_mm = 26.0
-    chamber_observe_offset_mm = 23.0
+    chamber_observe_position_mm = 191.0
     camera_photo_position = clamp_operational(config.CHAMBER_CENTER + channel_photo_offset_mm)
-    chamber_observe_position = clamp_operational(config.CHAMBER_CENTER + chamber_observe_offset_mm)
+    chamber_observe_position = clamp_operational(chamber_observe_position_mm)
     _publish_snapshot(tube_states, snapshot_callback=snapshot_callback, stage="idle")
 
     try:

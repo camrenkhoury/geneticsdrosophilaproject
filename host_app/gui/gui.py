@@ -643,7 +643,7 @@ class DrosophilaGUI:
         self._channel_setup_panel: ChannelSetupPanel | None = None
         self._open_channel_setup_after_prep = False
         self._camera_role_panel: CameraRolePanel | None = None
-        self._acknowledged_channel_setup_signatures: set[tuple[str, str]] = set()
+        self._channel_setup_completed_this_session = False
         self.entry_page_scale = self.entry_profile["scale"]
 
         self.state_var = tk.StringVar(value="IDLE")
@@ -818,14 +818,6 @@ class DrosophilaGUI:
             "Run channel calibration\n"
             "Save the setup\n\n"
             "Open Channel Detection Setup now?"
-        )
-
-    def _channel_setup_reuse_message(self, action_label: str) -> str:
-        return (
-            f"{action_label} found a saved Channel Detection Setup.\n\n"
-            "Yes: use the saved channel background and calibration for this run.\n"
-            "No: open Channel Detection Setup and recalibrate before continuing.\n"
-            "Cancel: stop here."
         )
 
     def _assay_setup_required_message(self, action_label: str) -> str:
@@ -1160,40 +1152,10 @@ class DrosophilaGUI:
             fetch_preview_bytes=self._get_channel_setup_preview_bytes,
         )
 
-    @staticmethod
-    def _status_get(obj: Any, key: str, default: Any = None) -> Any:
-        if obj is None:
-            return default
-        if isinstance(obj, dict):
-            return obj.get(key, default)
-        return getattr(obj, key, default)
-
-    def _channel_setup_signature(self, fin6_status: Any) -> tuple[str, str] | None:
-        if not self._channel_setup_ready(fin6_status):
-            return None
-        channel = self._status_get(fin6_status, "channel")
-        if channel is None:
-            return None
-        background_path = str(self._status_get(channel, "background_path", "") or "").strip()
-        calibration_path = str(self._status_get(channel, "calibration_path", "") or "").strip()
-        if not background_path or not calibration_path:
-            return None
-        return (background_path, calibration_path)
-
-    def _remember_channel_setup_for_session(self, fin6_status: dict[str, Any] | None) -> None:
-        signature = self._channel_setup_signature(fin6_status)
-        if signature is not None:
-            self._acknowledged_channel_setup_signatures.add(signature)
-
     def _handle_channel_setup_ready(self) -> None:
         action_label = self._pending_channel_setup_action_label
         resume_callable = self._pending_channel_setup_resume
-        try:
-            self._remember_channel_setup_for_session(
-                self._get_fin6_setup_status(action_label or "Channel Detection Setup", show_errors=False)
-            )
-        except Exception:
-            pass
+        self._channel_setup_completed_this_session = True
         self._channel_setup_panel = None
         self._pending_channel_setup_action_label = None
         self._pending_channel_setup_resume = None
@@ -1334,24 +1296,24 @@ class DrosophilaGUI:
         fin6_status = self._get_fin6_setup_status(action_label, show_errors=True)
         if fin6_status is None:
             return False
-        if self._channel_setup_ready(fin6_status):
-            signature = self._channel_setup_signature(fin6_status)
-            if signature is not None and signature in self._acknowledged_channel_setup_signatures:
-                return True
-            decision = messagebox.askyesnocancel(
-                "Use Saved Setup?",
-                self._channel_setup_reuse_message(action_label),
+        if self._channel_setup_ready(fin6_status) and self._channel_setup_completed_this_session:
+            return True
+
+        if self._channel_setup_ready(fin6_status) and not self._channel_setup_completed_this_session:
+            should_open = messagebox.askyesno(
+                "Calibration Required",
+                (
+                    f"{action_label} needs Channel Detection Setup completed for this control-panel session.\n\n"
+                    "Open Channel Detection Setup now?"
+                ),
             )
-            if decision is None:
-                self.set_status("idle", f"{action_label} cancelled.")
+            if not should_open:
+                self.set_status("idle", f"{action_label} cancelled. Channel Detection Setup is still required.")
                 return False
-            if decision:
-                self._remember_channel_setup_for_session(fin6_status)
-                return True
             self._startup_preview_requested = False
             self._startup_preview_completed = False
             self._begin_new_detection_session(
-                placeholder="Waiting for new channel detection setup calibration..."
+                placeholder="Waiting for Channel Detection Setup calibration in this session..."
             )
             if action_label == "Automated Run":
                 self._prepare_for_automated_channel_setup(action_label, resume_callable)
@@ -4020,6 +3982,9 @@ class DrosophilaGUI:
     def _maybe_request_startup_channel_preview(self) -> None:
         if self._startup_preview_requested or self._startup_preview_completed:
             return
+        if not self._channel_setup_completed_this_session:
+            self._begin_new_detection_session(placeholder="Waiting for calibration before channel preview...")
+            return
         if self.worker_thread and self.worker_thread.is_alive():
             return
         if self.remote_request_in_flight or self.remote_backend_busy:
@@ -4029,7 +3994,7 @@ class DrosophilaGUI:
 
         fin6_status = self._get_fin6_setup_status("Startup Channel Preview", show_errors=False)
         if fin6_status is None or not self._channel_setup_ready(fin6_status):
-            self._begin_new_detection_session(placeholder="Waiting for current channel detection image...")
+            self._begin_new_detection_session(placeholder="Waiting for calibration before channel preview...")
             return
 
         self._startup_preview_requested = True
@@ -4107,6 +4072,9 @@ class DrosophilaGUI:
         if self.is_remote_mode():
             if not self.remote_connected:
                 self.set_preview_placeholder("Remote mode preview unavailable while disconnected.")
+            elif not self._channel_setup_completed_this_session:
+                self.detection_var.set("Waiting for calibration before channel detection output.")
+                self.set_preview_placeholder("Waiting for calibration before channel preview...")
             elif self._awaiting_current_detection:
                 self.set_preview_placeholder("Waiting for current remote channel detection image...")
             elif not self._startup_preview_completed:
@@ -4121,6 +4089,12 @@ class DrosophilaGUI:
         if output_text != self._last_output_dir_text:
             self._last_output_dir_text = output_text
             self.output_dir_var.set(output_text)
+
+        if not self._channel_setup_completed_this_session:
+            self.detection_var.set("Waiting for calibration before channel detection output.")
+            self.set_preview_placeholder("Waiting for calibration before channel preview...")
+            self.root.after(1000, self.update_channel_preview)
+            return
 
         preview_path = self._resolve_channel_file("last_channel_annotated.png")
         result_path = self._resolve_channel_file("last_channel_result.json")
