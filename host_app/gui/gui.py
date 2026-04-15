@@ -926,6 +926,27 @@ class DrosophilaGUI:
             return
         self._open_fin6_setup_with_bridge(fin6_bridge)
 
+    def open_assay_setup(self):
+        if not self._ensure_remote_connection_for_action("Open Assay Setup"):
+            return
+        fin6_bridge = self._ensure_fin6_bridge_or_warn("Open Assay Setup")
+        if fin6_bridge is None:
+            return
+        try:
+            process = fin6_bridge.launch_fin6_gui(start_tab="assay")
+        except Exception as exc:
+            self.set_status("error", f"Could not open Assay Setup: {exc}")
+            self.log_message(f"Could not open Assay Setup: {exc}")
+            messagebox.showerror("Assay Setup Error", str(exc))
+            return
+
+        pid_text = getattr(process, "pid", None)
+        if pid_text is None:
+            self.log_message("Opened Assay Setup.")
+        else:
+            self.log_message(f"Opened Assay Setup (pid {pid_text}).")
+        self.set_status("running", "Opened Assay Setup.")
+
     def open_channel_setup(self):
         if not self._ensure_remote_connection_for_action("Open Channel Detection Setup"):
             return
@@ -1344,9 +1365,7 @@ class DrosophilaGUI:
             self.set_status("idle", f"{action_label} cancelled. Assay Setup is still required.")
             return False
 
-        fin6_bridge = self._ensure_fin6_bridge_or_warn("Open Assay Setup")
-        if fin6_bridge is not None:
-            self._open_fin6_setup_with_bridge(fin6_bridge)
+        self.open_assay_setup()
         return False
 
     def _ask_user_yes_no_from_worker(self, title: str, message: str) -> bool:
@@ -3250,7 +3269,7 @@ class DrosophilaGUI:
         button_row = ttk.Frame(assay_card)
         button_row.grid(row=1, column=0, sticky=tk.W, pady=(10, 0))
 
-        self.assay_setup_button = self.make_button(button_row, "Open Assay Setup", "#607D8B", self.open_fin6_setup)
+        self.assay_setup_button = self.make_button(button_row, "Open Assay Setup", "#607D8B", self.open_assay_setup)
         self.assay_setup_button.grid(row=0, column=0, sticky=tk.W)
         self.local_vision_widgets.append(self.assay_setup_button)
 
@@ -4471,6 +4490,13 @@ class DrosophilaGUI:
         source_mtime = detection_summary.get("source_mtime")
         if source_mtime is not None:
             self.last_used_detection_mtime = float(source_mtime)
+        try:
+            image_bytes = controller.get_channel_preview_image()
+        except Exception:
+            image_bytes = None
+        if image_bytes is not None:
+            preview_mtime = float(source_mtime) if source_mtime is not None else None
+            self.ui_queue.put(("remote_preview", image_bytes, preview_mtime))
         return {
             "result": {
                 "fly_remaining": bool(detection_summary.get("fly_remaining", False)),
@@ -4589,7 +4615,7 @@ class DrosophilaGUI:
 
     def _launch_assay_gui_from_worker(self):
         fin6_bridge = self._load_fin6_bridge()
-        process = fin6_bridge.launch_fin6_gui()
+        process = fin6_bridge.launch_fin6_gui(start_tab="assay")
         pid_text = getattr(process, "pid", None)
         if pid_text is None:
             self.worker_log("Opened the current fin6 assay GUI.")

@@ -900,11 +900,12 @@ def run_assay_from_saved_settings(
     )
 
 
-def launch_fin6_gui() -> subprocess.Popen:
+def launch_fin6_gui(*, start_tab: str = "channel") -> subprocess.Popen:
     normalize_settings_file()
     script_path = FIN6_DIR / "fly_tracking_gui.py"
     env = os.environ.copy()
     env["DROSOPHILA_FIN6_RAISE"] = "1"
+    env["DROSOPHILA_FIN6_START_TAB"] = str(start_tab or "channel").strip().lower()
     return subprocess.Popen([sys.executable, str(script_path)], cwd=str(FIN6_DIR), env=env)
 
 

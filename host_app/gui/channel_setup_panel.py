@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import base64
 import threading
+import time
 import tkinter as tk
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -293,7 +294,12 @@ class ChannelSetupPanel:
         is_select_points = self._workflow_phase == "select_points"
 
         try:
-            retake_enabled = not self._action_busy and len(self._selected_points) == 0
+            retake_enabled = (
+                not self._action_busy
+                and self._workflow_phase == "select_points"
+                and self._pil_image is not None
+                and len(self._selected_points) == 0
+            )
             self.preview_button.config(state=tk.NORMAL if retake_enabled else tk.DISABLED)
         except tk.TclError:
             pass
@@ -459,7 +465,62 @@ class ChannelSetupPanel:
             return
         self._initial_preview_started = True
         self._needs_preview_refresh = False
-        self.window.after(10, self._capture_preview)
+        self._workflow_phase = "capturing"
+        self._action_busy = True
+        self.status_var.set("Preparing the channel camera, then capturing the current setup photo...")
+        self.selection_var.set("Preparing the channel camera. A current photo will be taken automatically.")
+        self._update_control_states()
+        self.window.after(10, self._capture_initial_preview_with_sync_cycle)
+
+    def _capture_initial_preview_with_sync_cycle(self) -> None:
+        self._preview_request_id += 1
+        request_id = self._preview_request_id
+        self._latest_preview_request_id = request_id
+        selected_label = self.camera_choice_var.get().strip()
+        auto_label, auto_selection = next(
+            (
+                (label, selection)
+                for label, selection in self._camera_choice_map.items()
+                if str(selection[0]).strip().lower() in {"auto", "auto:channel", "channel"}
+            ),
+            ("Auto-detect channel camera", ("auto:channel", "")),
+        )
+        explicit_options = [
+            (label, selection)
+            for label, selection in self._camera_choice_map.items()
+            if label != auto_label and str(selection[0]).strip()
+        ]
+
+        def worker() -> dict[str, Any]:
+            current_selection = self._camera_choice_map.get(selected_label, auto_selection)
+            current_device = str(current_selection[0] or "").strip()
+            current_hint = str(current_selection[1] or "").strip()
+
+            # Some Pi/UVC setups only stabilize after a quick role-selection bounce.
+            # Do this once automatically on initial setup open so the operator starts
+            # with a current photo instead of a dead/blank window.
+            if current_device.lower() in {"", "auto", "auto:channel", "channel"}:
+                if explicit_options:
+                    explicit_device, explicit_hint = explicit_options[0][1]
+                    self.actions.save_camera_selection(explicit_device, explicit_hint)
+                    time.sleep(3.0)
+                self.actions.save_camera_selection(auto_selection[0], auto_selection[1])
+                time.sleep(3.0)
+            else:
+                self.actions.save_camera_selection(current_device, current_hint)
+                time.sleep(3.0)
+
+            return self._capture_preview_cycle()
+
+        def on_success(payload: dict[str, Any]) -> None:
+            self._handle_preview_complete(payload, request_id=request_id)
+
+        self._run_worker(
+            "Preparing the channel camera and capturing the setup photo...",
+            worker,
+            on_success,
+            lock_controls=False,
+        )
 
     def _handle_preview_complete(self, payload: dict[str, Any], *, request_id: int | None = None) -> None:
         if self._closed:
@@ -533,7 +594,26 @@ class ChannelSetupPanel:
         )
         self._update_selection_label()
         self._update_control_states()
-        self._capture_preview()
+        self.window.after(10, self._capture_preview_after_camera_settle)
+
+    def _capture_preview_after_camera_settle(self) -> None:
+        self._preview_request_id += 1
+        request_id = self._preview_request_id
+        self._latest_preview_request_id = request_id
+
+        def worker() -> dict[str, Any]:
+            time.sleep(3.0)
+            return self._capture_preview_cycle()
+
+        def on_success(payload: dict[str, Any]) -> None:
+            self._handle_preview_complete(payload, request_id=request_id)
+
+        self._run_worker(
+            "Waiting for the camera to settle, then capturing a fresh setup photo...",
+            worker,
+            on_success,
+            lock_controls=False,
+        )
 
     def _refresh_preview_bytes(self) -> None:
         try:

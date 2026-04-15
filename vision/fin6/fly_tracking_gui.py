@@ -859,6 +859,7 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         if os.environ.get("DROSOPHILA_FIN6_RAISE") == "1":
             self.after(120, self._raise_window_on_startup)
+        self.after(80, self._apply_startup_tab_selection)
         self.after(self._assay_poll_interval_ms, self._poll_ui_queue)
 
     def _raise_window_on_startup(self) -> None:
@@ -870,6 +871,15 @@ class App(tk.Tk):
             self.attributes("-topmost", True)
             self.after(300, lambda: self.winfo_exists() and self.attributes("-topmost", False))
         except tk.TclError:
+            return
+
+    def _apply_startup_tab_selection(self) -> None:
+        tab_name = str(os.environ.get("DROSOPHILA_FIN6_START_TAB", "channel") or "channel").strip().lower()
+        target_index = 1 if tab_name == "assay" else 0
+        try:
+            if hasattr(self, "notebook"):
+                self.notebook.select(target_index)
+        except Exception:
             return
 
     def _build_vars(self) -> None:

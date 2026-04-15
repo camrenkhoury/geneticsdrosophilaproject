@@ -68,6 +68,7 @@ def _publish_snapshot(
     destination_key: str | None = None,
     destination_label: str | None = None,
     stage: str | None = None,
+    lost_count: int = 0,
 ) -> None:
     if snapshot_callback is None:
         return
@@ -87,6 +88,7 @@ def _publish_snapshot(
             },
             "destination_key": destination_key,
             "destination_label": destination_label,
+            "lost_count": int(lost_count),
             "tube_counts": {
                 key: {
                     "label": tube.label,
@@ -262,6 +264,7 @@ def run_operation(
     recent_route_history: list[str] = []
     repeated_count_signature: tuple[int, int, int] | None = None
     repeated_count_streak = 0
+    lost_fly_count = 0
 
     def check_stop() -> None:
         if stop_requested is not None and stop_requested():
@@ -320,7 +323,14 @@ def run_operation(
                             f"from a batch of {previous_detection_count}, but detected {current_detection_count}."
                         )
 
-                        if repeated_count_streak >= 2:
+                        immediate_lost_fly_case = (
+                            previous_detection_count == 1
+                            and attempted_from_previous_detection >= 1
+                            and current_detection_count == 1
+                            and len(recent_route_history) >= 1
+                        )
+
+                        if immediate_lost_fly_case or repeated_count_streak >= 2:
                             missed_pickups = min(
                                 max(current_detection_count - expected_remaining, 0),
                                 len(recent_route_history),
@@ -333,9 +343,11 @@ def run_operation(
                                     if routed_tube.count > 0:
                                         routed_tube.count -= 1
                                     reconciled_keys.append(routed_key)
+                                lost_fly_count += missed_pickups
                                 log(
-                                    f"Cycle {cycle_index}: repeated unchanged channel count detected twice. "
-                                    f"Reverted {missed_pickups} recent tube count(s): {', '.join(reconciled_keys)}."
+                                    f"Cycle {cycle_index}: detected the same channel count after a completed sort. "
+                                    f"Marked {missed_pickups} fly/flies as lost and reverted the recent tube count(s): "
+                                    f"{', '.join(reconciled_keys)}. Lost total={lost_fly_count}."
                                 )
                                 _publish_snapshot(
                                     tube_states,
@@ -345,7 +357,8 @@ def run_operation(
                                     classification_result=last_classification,
                                     destination_key=None if last_destination is None else last_destination.key,
                                     destination_label=None if last_destination is None else last_destination.label,
-                                    stage="reconciled",
+                                    stage="lost",
+                                    lost_count=lost_fly_count,
                                 )
                             repeated_count_signature = None
                             repeated_count_streak = 0
@@ -359,6 +372,7 @@ def run_operation(
                     snapshot_callback=snapshot_callback,
                     cycle_index=cycle_index,
                     detection_count=last_detection_count,
+                    lost_count=lost_fly_count,
                     stage="detecting",
                 )
 
@@ -418,6 +432,7 @@ def run_operation(
                 classification_result=last_classification,
                 destination_key=None if last_destination is None else last_destination.key,
                 destination_label=None if last_destination is None else last_destination.label,
+                lost_count=lost_fly_count,
                 stage="classifying",
             )
             status("running", f"Cycle {cycle_index}: classifying fly.")
@@ -442,6 +457,7 @@ def run_operation(
                 classification_result=last_classification,
                 destination_key=destination_tube.key,
                 destination_label=destination_tube.label,
+                lost_count=lost_fly_count,
                 stage="classified",
             )
 
@@ -492,6 +508,7 @@ def run_operation(
                 classification_result=last_classification,
                 destination_key=destination_tube.key,
                 destination_label=destination_tube.label,
+                lost_count=lost_fly_count,
                 stage="routed",
             )
 
@@ -523,6 +540,7 @@ def run_operation(
         classification_result=last_classification,
         destination_key=None if last_destination is None else last_destination.key,
         destination_label=None if last_destination is None else last_destination.label,
+        lost_count=lost_fly_count,
         stage="complete",
     )
     status("idle", "Automated run complete.")
@@ -531,6 +549,7 @@ def run_operation(
             key: {"count": int(tube.count), "capacity": int(tube.capacity), "role": tube.role}
             for key, tube in tube_states.items()
         },
+        "lost_count": int(lost_fly_count),
         "last_classification": last_classification,
         "last_destination": None if last_destination is None else last_destination.key,
     }
