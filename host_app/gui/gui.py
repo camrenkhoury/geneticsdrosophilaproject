@@ -586,6 +586,7 @@ class DrosophilaGUI:
         self._pending_channel_setup_resume = None
         self._pending_channel_setup_action_label: str | None = None
         self._channel_setup_panel: ChannelSetupPanel | None = None
+        self._open_channel_setup_after_prep = False
         self._camera_role_panel: CameraRolePanel | None = None
         self.entry_page_scale = self.entry_profile["scale"]
 
@@ -632,6 +633,7 @@ class DrosophilaGUI:
         self.create_widgets()
         self._set_window_icon()
         self._reset_sorting_status_display()
+        self._clear_channel_preview_state(clear_artifacts=True, placeholder="Waiting for calibration or a current channel detection image...")
         self.set_status("idle", "Ready")
         self.log_message(f"Channel output directory: {self.output_dir_var.get()}")
         self.update_position()
@@ -1195,6 +1197,45 @@ class DrosophilaGUI:
         self._update_control_interactivity()
         return True
 
+    def _prepare_for_automated_channel_setup(self, action_label: str, resume_callable) -> None:
+        should_position = messagebox.askyesno(
+            "Prepare for Channel Detection Setup?",
+            (
+                "The machine will home and move to the initial channel image position so you can "
+                "calibrate from the current empty-channel view.\n\n"
+                "Is it okay to do that now?"
+            ),
+        )
+        if not should_position:
+            self.set_status("idle", f"{action_label} cancelled before Channel Detection Setup.")
+            return
+
+        self._pending_channel_setup_action_label = action_label
+        self._pending_channel_setup_resume = resume_callable
+        self._open_channel_setup_after_prep = True
+        self.start_task(
+            "channel setup prep",
+            "moving",
+            "Preparing the machine for Channel Detection Setup.",
+            self._run_channel_setup_prep_worker,
+        )
+
+    def _run_channel_setup_prep_worker(self) -> None:
+        target_position = float(config.CHAMBER_CENTER + 23.0)
+        if self.is_remote_mode():
+            self.worker_status("moving", "Homing before Channel Detection Setup.")
+            self._run_remote_home_for_automation()
+            self.worker_status("moving", "Moving to the initial channel image position for calibration.")
+            self._run_remote_move_absolute_for_automation(target_position)
+            return
+
+        runtime = self._load_local_runtime()
+        motion = runtime["motion"]
+        self.worker_status("moving", "Homing before Channel Detection Setup.")
+        motion.home_to_zero()
+        self.worker_status("moving", "Moving to the initial channel image position for calibration.")
+        motion.move_to_absolute(target_position)
+
     def _ensure_channel_setup_ready_or_begin_setup(self, action_label: str, resume_callable) -> bool:
         fin6_status = self._get_fin6_setup_status(action_label, show_errors=True)
         if fin6_status is None:
@@ -1214,7 +1255,10 @@ class DrosophilaGUI:
             self._begin_new_detection_session(
                 placeholder="Waiting for new channel detection setup calibration..."
             )
-            self._open_channel_setup_panel(action_label, resume_callable)
+            if action_label == "Automated Run":
+                self._prepare_for_automated_channel_setup(action_label, resume_callable)
+            else:
+                self._open_channel_setup_panel(action_label, resume_callable)
             return False
 
         should_open = messagebox.askyesno("Setup Required", self._channel_setup_required_message(action_label))
@@ -1222,7 +1266,10 @@ class DrosophilaGUI:
             self.set_status("idle", f"{action_label} cancelled. Channel Detection Setup is still required.")
             return False
 
-        self._open_channel_setup_panel(action_label, resume_callable)
+        if action_label == "Automated Run":
+            self._prepare_for_automated_channel_setup(action_label, resume_callable)
+        else:
+            self._open_channel_setup_panel(action_label, resume_callable)
         return False
 
     def _ensure_assay_setup_ready_or_prompt(self, action_label: str) -> bool:
@@ -3504,6 +3551,12 @@ class DrosophilaGUI:
                     self.set_status(item[1], item[2])
                 elif kind == "task_finished":
                     self.finish_task(item[1], item[2], item[3])
+                    if item[1] == "channel setup prep" and item[2] and self._open_channel_setup_after_prep:
+                        self._open_channel_setup_after_prep = False
+                        self._open_channel_setup_panel(
+                            self._pending_channel_setup_action_label or "Channel Detection Setup",
+                            self._pending_channel_setup_resume,
+                        )
                 elif kind == "actuator":
                     self.update_actuator_state(item[1], item[2])
                 elif kind == "classification_result":
@@ -3790,6 +3843,27 @@ class DrosophilaGUI:
         if self.is_remote_mode():
             self._last_remote_preview_source_mtime = None
         self.set_preview_placeholder(placeholder)
+
+    def _clear_channel_preview_state(self, *, clear_artifacts: bool, placeholder: str) -> None:
+        self.preview_image = None
+        self.preview_source_image = None
+        self.last_preview_mtime = None
+        self.last_result_mtime = None
+        self.last_used_detection_mtime = None
+        self._last_remote_preview_source_mtime = None
+        self._awaiting_current_detection = False
+        self._current_detection_baseline_mtime = None
+        self._startup_preview_requested = False
+        self._startup_preview_completed = False
+        self.detection_var.set(placeholder)
+        self.set_preview_placeholder(placeholder)
+
+        if clear_artifacts and not self.is_remote_mode():
+            for filename in ("last_channel_annotated.png", "last_channel_result.json"):
+                artifact_path = self._resolve_channel_file(filename)
+                with contextlib.suppress(OSError):
+                    if artifact_path.exists():
+                        artifact_path.unlink()
 
     def _maybe_request_startup_channel_preview(self) -> None:
         if self._startup_preview_requested or self._startup_preview_completed:
@@ -4487,6 +4561,10 @@ class DrosophilaGUI:
             messagebox.showwarning("Busy", "Wait for the current task to finish before resetting.")
             return
         if self.is_remote_mode():
+            self._clear_channel_preview_state(
+                clear_artifacts=False,
+                placeholder="Waiting for calibration or a current remote channel detection image...",
+            )
             self._apply_connection_state(self.connection_state, self.connection_var.get())
             self.set_status("idle", "Remote UI reset.")
             self.remote_seen_log_keys.clear()
@@ -4494,6 +4572,10 @@ class DrosophilaGUI:
         runtime = self._ensure_local_runtime_or_warn("Reset")
         if runtime is None:
             return
+        self._clear_channel_preview_state(
+            clear_artifacts=True,
+            placeholder="Waiting for calibration or a current channel detection image...",
+        )
         self.start_task("reset", "running", "Resetting system.", self._reset_worker)
 
     def on_close(self):
