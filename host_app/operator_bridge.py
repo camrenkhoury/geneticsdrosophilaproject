@@ -15,6 +15,8 @@ import config
 
 
 SETTINGS_PATH = FIN6_DIR / ".fly_tracking_gui_settings.json"
+CHANNEL_ARTIFACT_TRACE_PATH = FIN6_DIR / ".channel_artifact_trace.log"
+CHANNEL_SETUP_SOURCE_PATH = FIN6_DIR / "backgrounds" / "channel_setup_source.png"
 
 _DEFAULT_PROJECT_PATHS: dict[str, Path] = {
     "channel_background_var": FIN6_DIR / "backgrounds" / "channel_bg.png",
@@ -43,6 +45,25 @@ _LEGACY_DEVICE_DEFAULTS: dict[str, set[str]] = {
     "channel_device_var": {"/dev/video8"},
     "assay_camera_device_var": {"/dev/video10"},
 }
+
+
+def _append_channel_artifact_trace(event: str, **fields: Any) -> None:
+    payload = {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "subsystem": "channel_artifacts",
+        "event": str(event),
+    }
+    for key, value in fields.items():
+        if isinstance(value, Path):
+            payload[key] = str(value)
+        else:
+            payload[key] = value
+    try:
+        CHANNEL_ARTIFACT_TRACE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with CHANNEL_ARTIFACT_TRACE_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+    except OSError:
+        pass
 
 
 @dataclass(frozen=True)
@@ -678,8 +699,8 @@ def capture_channel_preview_from_saved_settings() -> dict[str, Any]:
     status = get_setup_status()
     channel = status.channel
     preview_path = FIN6_DIR / "backgrounds" / "channel_setup_preview.jpg"
+    source_path = CHANNEL_SETUP_SOURCE_PATH
     preview_path.parent.mkdir(parents=True, exist_ok=True)
-    channel.background_path.parent.mkdir(parents=True, exist_ok=True)
 
     with BrioCamera(
         BrioConfig(
@@ -698,8 +719,8 @@ def capture_channel_preview_from_saved_settings() -> dict[str, Any]:
     ) as camera:
         frame_bgr = camera.read()
 
-    if not cv2.imwrite(str(channel.background_path), frame_bgr):
-        raise IOError(f"Could not save setup background image to {channel.background_path}")
+    if not cv2.imwrite(str(source_path), frame_bgr):
+        raise IOError(f"Could not save setup source image to {source_path}")
 
     preview_bgr = frame_bgr
     preview_max_width = 1280
@@ -719,8 +740,21 @@ def capture_channel_preview_from_saved_settings() -> dict[str, Any]:
     except Exception:
         preview_b64 = ""
 
+    _append_channel_artifact_trace(
+        "capture_setup_preview",
+        camera_device=channel.device,
+        preferred_hint=channel.preferred_hint,
+        source_path=source_path,
+        source_shape=list(frame_bgr.shape),
+        preview_path=preview_path,
+        preview_shape=list(preview_bgr.shape),
+        saved_background_path=channel.background_path,
+        saved_background_touched=False,
+    )
+
     return {
         "preview_path": str(preview_path.resolve()),
+        "source_path": str(source_path.resolve()),
         "background_path": str(channel.background_path.resolve()),
         "preview_jpeg_base64": preview_b64,
         "camera_description": _camera_description(
@@ -738,19 +772,22 @@ def save_channel_calibration_from_points(
     channel_mm: float | None = None,
 ) -> dict[str, Any]:
     import cv2
+    import shutil
 
     from vision.fin6.fly_x_detector import estimate_channel_crop_from_background, save_calibration
 
     status = get_setup_status()
     channel = status.channel
-    if not channel.background_path.exists():
+    background_source_path = CHANNEL_SETUP_SOURCE_PATH if CHANNEL_SETUP_SOURCE_PATH.exists() else channel.background_path
+
+    if not background_source_path.exists():
         raise FileNotFoundError(_missing_channel_setup_message(status))
 
     channel.background_path.parent.mkdir(parents=True, exist_ok=True)
     channel.calibration_path.parent.mkdir(parents=True, exist_ok=True)
-    background_gray = cv2.imread(str(channel.background_path), cv2.IMREAD_GRAYSCALE)
+    background_gray = cv2.imread(str(background_source_path), cv2.IMREAD_GRAYSCALE)
     if background_gray is None:
-        raise FileNotFoundError(f"Could not read saved channel background image: {channel.background_path}")
+        raise FileNotFoundError(f"Could not read channel setup image: {background_source_path}")
 
     left_pt = (int(left_point_px[0]), int(left_point_px[1]))
     right_pt = (int(right_point_px[0]), int(right_point_px[1]))
@@ -768,6 +805,19 @@ def save_channel_calibration_from_points(
         crop_x_pad=crop_x_pad,
         crop_above_px=crop_above_px,
         crop_below_px=crop_below_px,
+    )
+    if background_source_path.resolve() != channel.background_path.resolve():
+        shutil.copyfile(background_source_path, channel.background_path)
+    _append_channel_artifact_trace(
+        "save_channel_calibration",
+        background_source_path=background_source_path,
+        background_source_shape=list(background_gray.shape),
+        saved_background_path=channel.background_path,
+        calibration_path=channel.calibration_path,
+        left_point_px=list(left_pt),
+        right_point_px=list(right_pt),
+        channel_mm=resolved_channel_mm,
+        copied_source_into_saved_background=background_source_path.resolve() != channel.background_path.resolve(),
     )
     return {
         "background_path": str(Path(channel.background_path).resolve()),
@@ -811,6 +861,19 @@ def detect_channel_once_from_saved_settings() -> dict[str, Any]:
     ) as camera:
         frame_bgr = camera.read()
 
+    _append_channel_artifact_trace(
+        "runtime_detect_inputs",
+        saved_background_path=channel.background_path,
+        saved_background_shape=list(background_bgr.shape),
+        calibration_path=channel.calibration_path,
+        runtime_frame_source="camera.read",
+        runtime_frame_shape=list(frame_bgr.shape),
+        raw_output_path=channel.output_dir / "last_channel_raw.jpg",
+        annotated_output_path=channel.output_dir / "last_channel_annotated.png",
+        mask_output_path=channel.output_dir / "last_channel_mask.png",
+        result_output_path=channel.output_dir / "last_channel_result.json",
+    )
+
     result, annotated, mask = process_fly_detection(
         background=background_bgr,
         frame=frame_bgr,
@@ -848,6 +911,17 @@ def detect_channel_once_from_saved_settings() -> dict[str, Any]:
         }
     )
     result_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _append_channel_artifact_trace(
+        "runtime_detect_outputs",
+        result_status=payload.get("status"),
+        fly_remaining=payload.get("fly_remaining"),
+        count=len(payload.get("x_positions_mm", []) or []),
+        x_positions_mm=payload.get("x_positions_mm"),
+        raw_path=raw_path,
+        annotated_path=annotated_path,
+        mask_path=mask_path,
+        result_path=result_path,
+    )
 
     return {
         "result": payload,
