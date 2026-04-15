@@ -2432,8 +2432,6 @@ class DrosophilaGUI:
             normalized_count = int(raw_count or 0)
         except Exception:
             normalized_count = 0
-        if normalized_count <= 0 and class_name.strip().lower() in {"male", "female"} and confidence > 0.0 and not errors:
-            normalized_count = 1
         normalized = {
             "class": class_name,
             "confidence": confidence,

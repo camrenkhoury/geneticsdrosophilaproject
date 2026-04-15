@@ -442,11 +442,7 @@ class ChannelSetupPanel:
         self.camera_choice_var.set(selected_label)
 
     def _capture_preview_cycle(self) -> dict[str, Any]:
-        preview_payload = dict(self.actions.capture_preview() or {})
-        background_payload = dict(self.actions.capture_background() or {})
-        merged = dict(background_payload)
-        merged.update(preview_payload)
-        return merged
+        return dict(self.actions.capture_preview() or {})
 
     def _capture_preview(self) -> None:
         self._preview_request_id += 1

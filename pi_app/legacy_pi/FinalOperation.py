@@ -426,17 +426,31 @@ def run_operation(
             chamber_count = int(last_classification.get("count", 0) or 0)
             class_name = str(last_classification.get("class", "UNCERTAIN") or "UNCERTAIN").strip().lower()
             classification_errors = list(last_classification.get("errors", []) or [])
-            if chamber_count <= 0 and class_name in {"male", "female"} and confidence > 0.0 and not classification_errors:
-                log(
-                    f"Cycle {cycle_index}: classifier returned {class_name} with confidence "
-                    f"{confidence:.4f} but chamber count was {chamber_count}. Treating chamber count as 1."
-                )
-                chamber_count = 1
-                last_classification["count"] = 1
             log(
                 f"Cycle {cycle_index}: classification={last_classification.get('class', 'UNCERTAIN')} "
                 f"confidence={confidence:.4f} count={chamber_count} errors={last_classification.get('errors', [])}"
             )
+
+            if chamber_count <= 0:
+                log(
+                    f"Cycle {cycle_index}: chamber classification reported no fly present. "
+                    "Treating this as a pickup/drop error and restarting from fresh channel detection."
+                )
+                pending_pickup_positions = []
+                flies_taken_from_current_detection = max_flies_per_detection
+                first_pickup_after_detection = False
+                _publish_snapshot(
+                    tube_states,
+                    snapshot_callback=snapshot_callback,
+                    cycle_index=cycle_index,
+                    detection_count=last_detection_count,
+                    pickup_position_mm=pickup_position,
+                    classification_result=last_classification,
+                    destination_key=None if last_destination is None else last_destination.key,
+                    destination_label=None if last_destination is None else last_destination.label,
+                    stage="retrying",
+                )
+                continue
 
             chamber_count_error = chamber_count != 1
             if chamber_count_error:

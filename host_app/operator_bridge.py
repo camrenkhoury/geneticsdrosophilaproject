@@ -679,6 +679,7 @@ def capture_channel_preview_from_saved_settings() -> dict[str, Any]:
     channel = status.channel
     preview_path = FIN6_DIR / "backgrounds" / "channel_setup_preview.jpg"
     preview_path.parent.mkdir(parents=True, exist_ok=True)
+    channel.background_path.parent.mkdir(parents=True, exist_ok=True)
 
     with BrioCamera(
         BrioConfig(
@@ -688,25 +689,40 @@ def capture_channel_preview_from_saved_settings() -> dict[str, Any]:
             fps=channel.fps,
             preferred_hint=channel.preferred_hint,
             role="channel",
-            warmup_frames=8,
-            flush_grabs=2,
-            reconnect_attempts=1,
-            reconnect_sleep_s=0.15,
-            post_open_settle_s=0.03,
+            warmup_frames=4,
+            flush_grabs=1,
+            reconnect_attempts=0,
+            reconnect_sleep_s=0.05,
+            post_open_settle_s=0.01,
         )
     ) as camera:
         frame_bgr = camera.read()
 
-    if not cv2.imwrite(str(preview_path), frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 90]):
+    # The setup flow uses this exact captured frame as the saved background.
+    if not cv2.imwrite(str(channel.background_path), frame_bgr):
+        raise IOError(f"Could not save setup background image to {channel.background_path}")
+
+    preview_bgr = frame_bgr
+    preview_max_width = 1280
+    if preview_bgr.shape[1] > preview_max_width:
+        scale = preview_max_width / float(preview_bgr.shape[1])
+        preview_bgr = cv2.resize(
+            preview_bgr,
+            (preview_max_width, max(1, int(round(preview_bgr.shape[0] * scale)))),
+            interpolation=cv2.INTER_AREA,
+        )
+
+    if not cv2.imwrite(str(preview_path), preview_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 80]):
         raise IOError(f"Could not save setup preview image to {preview_path}")
     try:
-        preview_bytes = preview_path.read_bytes()
-        preview_b64 = base64.b64encode(preview_bytes).decode("ascii")
-    except OSError:
+        ok, encoded = cv2.imencode(".jpg", preview_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        preview_b64 = base64.b64encode(encoded.tobytes()).decode("ascii") if ok else ""
+    except Exception:
         preview_b64 = ""
 
     return {
         "preview_path": str(preview_path.resolve()),
+        "background_path": str(channel.background_path.resolve()),
         "preview_jpeg_base64": preview_b64,
         "camera_description": _camera_description(
             channel.device,

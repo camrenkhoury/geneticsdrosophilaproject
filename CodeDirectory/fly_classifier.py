@@ -56,6 +56,9 @@ HARD_ERROR_FLAGS = {
     'CAPTURE_FAILED',
     'LOAD_FAILED',
     'CLASSIFIER_FAILED',
+    'COUNT_FAILED',
+    'EMPTY_CHAMBER',
+    'MULTIPLE_FLIES_IN_CHAMBER',
 }
 
 BG_TOLERANCE = 65
@@ -192,6 +195,7 @@ def classify_fly() -> dict:
             fly_count = _count_flies(image)
         except Exception:
             fly_count = 0
+            errors.append('COUNT_FAILED')
 
     # ── Classification ────────────────────────────────────────────────────────
     if not ULTRALYTICS_AVAILABLE:
@@ -203,6 +207,14 @@ def classify_fly() -> dict:
         if cls_out == 'UNCERTAIN':
             errors.append('SIMULATION_MODE')
         print(f"Simulated classification: {cls_out} with confidence {confidence:.2f}")
+    elif fly_count <= 0:
+        errors.append('EMPTY_CHAMBER')
+        cls_out = 'UNCERTAIN'
+        confidence = 0.0
+    elif fly_count > 1:
+        errors.append(f'MULTIPLE_FLIES_IN_CHAMBER({fly_count})')
+        cls_out = 'UNCERTAIN'
+        confidence = 0.0
     else:
         cls_results = _classifier_model(image, verbose=False)
 
