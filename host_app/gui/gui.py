@@ -2724,6 +2724,9 @@ class DrosophilaGUI:
         last_status: dict | None = None
         saw_busy = False
         saw_off_target_sample = False
+        target_tolerance_mm = 1.0
+        stable_target_window_s = 0.35
+        stable_in_tolerance_since: float | None = None
         initial_status: dict | None = None
         with contextlib.suppress(Exception):
             initial_status = controller.get_status_fresh()
@@ -2732,6 +2735,7 @@ class DrosophilaGUI:
             if isinstance(initial_status, dict)
             else None
         )
+        initial_busy = self._backend_busy_from_status(initial_status) if isinstance(initial_status, dict) else False
         while time.monotonic() < deadline:
             self._check_stop()
             status = self._poll_remote_status_fresh()
@@ -2742,28 +2746,74 @@ class DrosophilaGUI:
             busy = self._backend_busy_from_status(status)
             if busy:
                 saw_busy = True
-            if abs(current_position - float(target_mm)) > 1.0:
+            in_tolerance = abs(current_position - float(target_mm)) <= target_tolerance_mm
+            if not in_tolerance:
                 saw_off_target_sample = True
+                stable_in_tolerance_since = None
+            elif stable_in_tolerance_since is None:
+                stable_in_tolerance_since = time.monotonic()
             self._trace_runtime(
                 "remote-move-poll",
                 (
                     f"target={target_mm:.2f} current={current_position:.2f} busy={busy} "
                     f"saw_busy={saw_busy} saw_off_target={saw_off_target_sample} "
+                    f"in_tolerance={in_tolerance} "
+                    f"stable_target_s="
+                    f"{0.0 if stable_in_tolerance_since is None else max(0.0, time.monotonic() - stable_in_tolerance_since):.2f} "
                     f"task={status.get('current_task')} task_state={status.get('task_state')} "
                     f"orchestrator={status.get('orchestrator_state')} revision={status.get('status_revision')}"
                 ),
                 echo_to_log=False,
             )
             if (
-                abs(current_position - float(target_mm)) <= 1.0
+                in_tolerance
                 and (not busy)
-                and (saw_busy or saw_off_target_sample or (initial_position is not None and abs(initial_position - float(target_mm)) > 1.0))
+                and (
+                    saw_busy
+                    or saw_off_target_sample
+                    or (initial_position is not None and abs(initial_position - float(target_mm)) > target_tolerance_mm)
+                )
             ):
-                self._trace_runtime("remote-move-exit", f"target={target_mm:.2f} current={current_position:.2f}", echo_to_log=False)
+                self._trace_runtime(
+                    "remote-move-exit",
+                    f"target={target_mm:.2f} current={current_position:.2f} completion=idle_at_target",
+                    echo_to_log=False,
+                )
+                return
+            if (
+                in_tolerance
+                and stable_in_tolerance_since is not None
+                and (time.monotonic() - stable_in_tolerance_since) >= stable_target_window_s
+                and (
+                    saw_busy
+                    or saw_off_target_sample
+                    or (initial_position is not None and abs(initial_position - float(target_mm)) <= target_tolerance_mm)
+                    or initial_busy
+                )
+            ):
+                self._trace_runtime(
+                    "remote-move-exit",
+                    (
+                        f"target={target_mm:.2f} current={current_position:.2f} "
+                        f"completion=stable_target busy={busy} task={status.get('current_task')} "
+                        f"task_state={status.get('task_state')} orchestrator={status.get('orchestrator_state')}"
+                    ),
+                    echo_to_log=False,
+                )
                 return
             time.sleep(0.1)
         self._request_remote_emergency_stop_now()
         if last_status is not None:
+            self._trace_runtime(
+                "remote-move-timeout",
+                (
+                    f"target={target_mm:.2f} current={float(last_status.get('current_position_mm', 0.0) or 0.0):.2f} "
+                    f"busy={self._backend_busy_from_status(last_status)} task={last_status.get('current_task')} "
+                    f"task_state={last_status.get('task_state')} orchestrator={last_status.get('orchestrator_state')} "
+                    f"revision={last_status.get('status_revision')}"
+                ),
+                echo_to_log=False,
+            )
             raise RuntimeError(
                 f"Timed out moving to {target_mm:.2f} mm. "
                 f"Last position={float(last_status.get('current_position_mm', 0.0) or 0.0):.2f} mm."
