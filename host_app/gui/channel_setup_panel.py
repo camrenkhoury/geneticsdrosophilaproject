@@ -205,12 +205,23 @@ class ChannelSetupPanel:
             pass
 
     def _handle_cancel(self) -> None:
+        message = (
+            "Close Channel Detection Setup?\n\n"
+            "Any unsaved background or calibration work in this window will be discarded."
+        )
         if self._busy:
-            messagebox.showwarning(
-                "Channel Detection Setup",
-                "Wait for the current setup action to finish before closing this window.",
-                parent=self.window,
+            message = (
+                "Close Channel Detection Setup?\n\n"
+                "A setup action is still running. Closing this window will stop waiting here and return "
+                "you to the main GUI. If the camera action finishes in the background, it will not keep "
+                "this setup window open."
             )
+        should_close = messagebox.askyesno(
+            "Close Channel Detection Setup",
+            message,
+            parent=self.window,
+        )
+        if not should_close:
             return
         self.close()
         if callable(self.on_cancel):
@@ -263,6 +274,8 @@ class ChannelSetupPanel:
         threading.Thread(target=runner, daemon=True).start()
 
     def _handle_worker_error(self, message: str) -> None:
+        if self._closed:
+            return
         self._set_busy(False, "Channel Detection Setup needs attention.")
         self.detail_var.set(message)
         if callable(self.status_callback):
@@ -282,6 +295,8 @@ class ChannelSetupPanel:
         }
 
     def _apply_status_payload(self, payload: dict[str, Any]) -> None:
+        if self._closed:
+            return
         self._set_busy(False)
         status = self._to_namespace(payload["status"])
         cameras = payload.get("cameras") or {}
@@ -353,6 +368,8 @@ class ChannelSetupPanel:
         )
 
     def _handle_capture_complete(self, payload: dict[str, Any]) -> None:
+        if self._closed:
+            return
         self._selected_points.clear()
         self.selection_var.set("Background saved. Click the left channel end, then the right channel end.")
         camera_description = str(payload.get("camera_description", "")).strip()
@@ -381,6 +398,8 @@ class ChannelSetupPanel:
         )
 
     def _handle_camera_selection_complete(self, payload: dict[str, Any]) -> None:
+        if self._closed:
+            return
         self._set_busy(False, "Channel camera selection saved.")
         message = str(payload.get("message", "Channel camera selection saved."))
         self.camera_status_var.set(message)
@@ -410,6 +429,8 @@ class ChannelSetupPanel:
         )
 
     def _handle_save_complete(self, payload: dict[str, Any]) -> None:
+        if self._closed:
+            return
         self._set_busy(False, "Channel Detection Setup saved.")
         if callable(self.log_callback):
             self.log_callback("Channel Detection Setup saved.")
