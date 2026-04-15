@@ -999,11 +999,27 @@ class DrosophilaGUI:
                 return None
             try:
                 payload = self.remote_controller.get_fin6_setup_status()
-            except (ControllerConnectionError, ControllerError) as exc:
+            except ControllerConnectionError as exc:
                 if show_errors:
-                    self.set_status("error", str(exc))
-                    self.log_message(f"{action_label} unavailable: {exc}")
-                    messagebox.showerror("Channel Detection Setup Error", f"{action_label} could not read setup on the Pi.\n\n{exc}")
+                    message = (
+                        f"{action_label} could not reach the Pi backend while reading fin6 setup status.\n\n"
+                        "This is a backend availability problem, not a missing-setup result.\n\n"
+                        f"{exc}"
+                    )
+                    self.set_status("error", f"{action_label} could not reach fin6 setup status on the Pi.")
+                    self.log_message(f"{action_label} setup status unreachable: {exc}")
+                    messagebox.showerror("Pi Backend Unreachable", message)
+                return None
+            except ControllerError as exc:
+                if show_errors:
+                    message = (
+                        f"{action_label} could not read fin6 setup status from the Pi backend.\n\n"
+                        "The backend responded, but returned an error while reading setup status.\n\n"
+                        f"{exc}"
+                    )
+                    self.set_status("error", f"{action_label} could not read fin6 setup status from the Pi.")
+                    self.log_message(f"{action_label} setup status error: {exc}")
+                    messagebox.showerror("Pi Backend Setup Error", message)
                 return None
             return self._to_namespace(payload)
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import requests
@@ -75,7 +76,12 @@ class RemoteController(BaseController):
         return self._command_request("POST", "/detect_channel", timeout_s=20.0)
 
     def get_fin6_setup_status(self) -> ControllerPayload:
-        return self._request_json("GET", "/fin6/setup_status")
+        return self._request_json_with_retries(
+            "GET",
+            "/fin6/setup_status",
+            timeout_sequence=((2.5, 5.0), (3.5, 6.0), (5.0, 8.0)),
+            retry_delays_s=(0.35, 0.75),
+        )
 
     def launch_fin6_setup(self) -> ControllerPayload:
         return self._request_json("POST", "/fin6/launch_setup")
@@ -202,11 +208,14 @@ class RemoteController(BaseController):
         path: str,
         *,
         json_payload: dict[str, Any] | None = None,
-        timeout_s: float | None = None,
+        timeout_s: float | tuple[float, float] | None = None,
     ) -> ControllerPayload:
         url = f"{self.base_url}{path}"
         headers = {"X-API-Key": self.api_key}
-        request_timeout_s = float(timeout_s if timeout_s is not None else self.timeout_s)
+        if timeout_s is None:
+            request_timeout_s: float | tuple[float, float] = float(self.timeout_s)
+        else:
+            request_timeout_s = timeout_s
 
         try:
             response = self.session.request(
@@ -220,6 +229,55 @@ class RemoteController(BaseController):
             raise ControllerConnectionError(f"Failed to reach Pi backend at {self.base_url}: {exc}") from exc
 
         return self._decode_json_response(response, path)
+
+    def _request_json_with_retries(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_payload: dict[str, Any] | None = None,
+        timeout_sequence: tuple[float | tuple[float, float], ...] = (5.0,),
+        retry_delays_s: tuple[float, ...] = (),
+    ) -> ControllerPayload:
+        attempt_count = max(1, len(timeout_sequence))
+        last_exception: ControllerError | None = None
+
+        for attempt_index, request_timeout in enumerate(timeout_sequence, start=1):
+            normalized_timeout: float | tuple[float, float]
+            if isinstance(request_timeout, tuple):
+                if len(request_timeout) != 2:
+                    raise ValueError("timeout_sequence entries must be floats or (connect, read) tuples.")
+                normalized_timeout = (float(request_timeout[0]), float(request_timeout[1]))
+            else:
+                normalized_timeout = float(request_timeout)
+            try:
+                return self._request_json(
+                    method,
+                    path,
+                    json_payload=json_payload,
+                    timeout_s=normalized_timeout,
+                )
+            except ControllerConnectionError as exc:
+                last_exception = exc
+            except ControllerError as exc:
+                last_exception = exc
+                if "HTTP 5" not in str(exc):
+                    raise
+
+            if attempt_index < attempt_count:
+                delay = retry_delays_s[min(attempt_index - 1, len(retry_delays_s) - 1)] if retry_delays_s else 0.0
+                if delay > 0.0:
+                    time.sleep(float(delay))
+
+        if isinstance(last_exception, ControllerConnectionError):
+            raise ControllerConnectionError(
+                f"Pi backend was unreachable while reading {path} after {attempt_count} attempts: {last_exception}"
+            ) from last_exception
+        if last_exception is not None:
+            raise ControllerError(
+                f"Pi backend returned an error while reading {path} after {attempt_count} attempts: {last_exception}"
+            ) from last_exception
+        raise ControllerError(f"Failed to read {path}.")
 
     def _request_bytes(
         self,

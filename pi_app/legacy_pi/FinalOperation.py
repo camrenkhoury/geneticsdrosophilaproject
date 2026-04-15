@@ -25,6 +25,10 @@ class OperationCancelled(Exception):
     """Raised when the operator stops the automated flow."""
 
 
+class OperationalReferenceLostError(RuntimeError):
+    """Raised when automated operation loses absolute reference after startup."""
+
+
 @dataclass
 class TubeState:
     key: str
@@ -433,6 +437,7 @@ def run_operation(
     POSITION_REFERENCE_KNOWN_ABSOLUTE = "known_absolute"
     next_detection_cycle_kind = DETECTION_CYCLE_STARTUP
     position_reference_state = POSITION_REFERENCE_UNKNOWN
+    startup_home_consumed = False
 
     def publish_snapshot(**kwargs: Any) -> None:
         _publish_snapshot(
@@ -454,6 +459,22 @@ def run_operation(
     def set_position_reference(state: str) -> None:
         nonlocal position_reference_state
         position_reference_state = str(state)
+
+    def _raise_operational_reference_loss(reason: str) -> None:
+        message = (
+            f"Operational reference lost during automated run ({reason}). "
+            "Automatic homing is disabled after startup. Reset to safe idle and restart the run."
+        )
+        status("error", message)
+        log(message)
+        op_trace(
+            "reference_lost",
+            reason=reason,
+            reference_state=position_reference_state,
+            next_detection_cycle_kind=next_detection_cycle_kind,
+            startup_home_consumed=startup_home_consumed,
+        )
+        raise OperationalReferenceLostError(message)
 
     def prepare_for_detection_cycle() -> None:
         nonlocal next_detection_cycle_kind
@@ -489,24 +510,30 @@ def run_operation(
         next_detection_cycle_kind = DETECTION_CYCLE_NORMAL_AFTER_ROUTE
 
     def ensure_home_reference(reason: str, status_message: str, log_message: str) -> None:
+        nonlocal startup_home_consumed
         if position_reference_state == POSITION_REFERENCE_HOME:
             log(f"Cycle {cycle_index}: skipping redundant home ({reason}); already at home reference.")
             op_trace("home_skip", reason=reason)
             return
-        if (
-            reason == "pickup_accuracy_reset"
-            and position_reference_state == POSITION_REFERENCE_KNOWN_ABSOLUTE
-        ):
+        if position_reference_state == POSITION_REFERENCE_KNOWN_ABSOLUTE:
             log(
                 f"Cycle {cycle_index}: skipping redundant home ({reason}); current absolute position is known "
-                "and the next pickup can be reached directly."
+                "and the next commanded move can be reached directly."
             )
             op_trace("home_skip", reason=reason, reference_state=position_reference_state)
             return
+        allow_startup_home = (
+            reason == "detect_cycle_position_unknown"
+            and next_detection_cycle_kind == DETECTION_CYCLE_STARTUP
+            and not startup_home_consumed
+        )
+        if not allow_startup_home:
+            _raise_operational_reference_loss(reason)
         status("running", status_message)
         log(log_message)
         op_trace("home_enter", reason=reason)
         home_callable()
+        startup_home_consumed = True
         set_position_reference(POSITION_REFERENCE_HOME)
         op_trace("home_complete", reason=reason)
 

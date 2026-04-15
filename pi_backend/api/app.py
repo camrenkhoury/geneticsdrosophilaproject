@@ -87,6 +87,30 @@ class BackendApiContext:
             **trace_fields,
         )
 
+    @staticmethod
+    def _snapshot_has_stale_task_error(snapshot: RuntimeStateSnapshot) -> bool:
+        task_state = "" if snapshot.task_state is None else str(snapshot.task_state)
+        return (
+            snapshot.current_task is None
+            and (
+                task_state.endswith("_ERROR")
+                or snapshot.orchestrator_state == OrchestratorState.TASK_ERROR
+            )
+        )
+
+    def _clear_stale_error_state_if_idle(self, *, reason: str) -> None:
+        snapshot = self.runtime_state.snapshot()
+        if self.is_busy() or not self._snapshot_has_stale_task_error(snapshot):
+            return
+        self._trace(
+            "clear_stale_error_state",
+            reason=reason,
+            previous_task_state=None if snapshot.task_state is None else str(snapshot.task_state),
+            previous_orchestrator_state=str(snapshot.orchestrator_state),
+            previous_latest_message=snapshot.latest_message,
+        )
+        self.runtime_state.reset_to_idle("Machine idle.")
+
     def is_busy(self) -> bool:
         worker = self._active_worker
         return worker is not None and worker.is_alive()
@@ -211,9 +235,11 @@ class BackendApiContext:
                         self.runtime_state.snapshot(),
                         ok=False,
                         accepted=False,
-                        command=command,
-                        message=error_message,
-                    )
+                    command=command,
+                    message=error_message,
+                )
+
+        self._clear_stale_error_state_if_idle(reason=f"actuator:{command}")
 
         try:
             self._trace("apply_actuator_enter", command=command)
@@ -258,11 +284,7 @@ class BackendApiContext:
             )
         else:
             self.runtime_state.append_log("INFO", "Stop requested while machine is idle.")
-            self.runtime_state.set_stop_requested(False)
-            self.runtime_state.set_orchestrator_state(
-                OrchestratorState.SYSTEM_IDLE,
-                "Machine idle.",
-            )
+            self.runtime_state.reset_to_idle("Machine idle.", clear_stop_requested=True)
             message = "Emergency stop acknowledged. Motion drive and outputs were forced to a safe state."
         self._trace("request_stop_exit", busy=busy, message=message)
         return CommandResponse.from_snapshot(
@@ -324,10 +346,20 @@ class BackendApiContext:
             self.logger.exception("Background command %s failed.", command)
             self.runtime_state.append_log("ERROR", f"Background command {command} failed.")
         finally:
-            self.runtime_state.set_stop_requested(False)
             with self._worker_lock:
                 self._active_worker = None
                 self._active_command = None
+            snapshot = self.runtime_state.snapshot()
+            if snapshot.stop_requested:
+                self._trace(
+                    "worker_wrapper_reset_after_stop",
+                    command=command,
+                    final_task_state=None if snapshot.task_state is None else str(snapshot.task_state),
+                    final_orchestrator_state=str(snapshot.orchestrator_state),
+                )
+                self.runtime_state.reset_to_idle("Machine idle.", clear_stop_requested=True)
+            else:
+                self.runtime_state.set_stop_requested(False)
             self._trace("worker_wrapper_exit", command=command)
 
 

@@ -241,6 +241,32 @@ class RuntimeStateStore:
                 self._bump_status_revision_locked()
                 self._trace_locked("fail_task", task_state=str(task_state), message=message)
 
+    def reset_to_idle(self, message: str = "Machine idle.", *, clear_stop_requested: bool = False) -> None:
+        with self._lock:
+            changed = False
+            if self._snapshot.current_task is not None:
+                self._snapshot.current_task = None
+                changed = True
+            if self._snapshot.task_state is not None:
+                self._snapshot.task_state = None
+                changed = True
+            if self._snapshot.orchestrator_state != OrchestratorState.SYSTEM_IDLE:
+                self._snapshot.orchestrator_state = OrchestratorState.SYSTEM_IDLE
+                changed = True
+            if clear_stop_requested and self._snapshot.stop_requested:
+                self._snapshot.stop_requested = False
+                changed = True
+            if self._snapshot.latest_message != message:
+                self._snapshot.latest_message = message
+                changed = True
+            if changed:
+                self._bump_status_revision_locked()
+                self._trace_locked(
+                    "reset_to_idle",
+                    message=message,
+                    clear_stop_requested=clear_stop_requested,
+                )
+
     def set_current_position_mm(self, position_mm: float) -> None:
         with self._lock:
             if self._snapshot.current_position_mm == position_mm:
