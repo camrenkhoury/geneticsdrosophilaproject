@@ -37,6 +37,9 @@ vision/fin6/.host_gui_crash_trace.log
 vision/fin6/.channel_artifact_trace.log
 vision/fin6/.host_operation_trace.log
 vision/fin6/.pi_operation_trace.log
+Avi Detection GUI code/Integrated1/fin6/.fly_tracking_gui_settings.json
+Avi Detection GUI code/Integrated1/fin6/profiles/.last_profile.json
+Avi Detection GUI code/Integrated1/fin6/profiles/stitch_operator.json
 box_tokens.json
 .drosophila_remote_gui.json
 deployment/pi/config/backend.env

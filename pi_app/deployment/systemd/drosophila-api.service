@@ -11,7 +11,6 @@ RuntimeDirectory=drosophila-api
 ExecStart=%h/geneticsdrosophilaproject/start_backend.sh
 Restart=always
 RestartSec=5
-RestartPreventExitStatus=77
 
 [Install]
 WantedBy=multi-user.target

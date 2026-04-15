@@ -42,41 +42,12 @@ DROSOPHILA_BACKEND_PORT="${DROSOPHILA_BACKEND_PORT:-8000}"
 DROSOPHILA_BACKEND_RELOAD="${DROSOPHILA_BACKEND_RELOAD:-0}"
 
 STATE_DIR="${DROSOPHILA_STATE_DIR:-${XDG_RUNTIME_DIR:-/tmp}/drosophila-api}"
-STOP_COUNT_FILE="$STATE_DIR/user-stop-count"
-STOP_TIME_FILE="$STATE_DIR/user-stop-last-epoch"
-STOP_RESET_WINDOW_SEC="${DROSOPHILA_STOP_RESET_WINDOW_SEC:-300}"
 mkdir -p "$STATE_DIR"
 
-reset_stop_counter_if_stale() {
-  if [ ! -f "$STOP_COUNT_FILE" ] || [ ! -f "$STOP_TIME_FILE" ]; then
-    return
-  fi
-
-  local now_epoch last_epoch
-  now_epoch="$(date +%s)"
-  last_epoch="$(cat "$STOP_TIME_FILE" 2>/dev/null || echo 0)"
-  if [ $((now_epoch - last_epoch)) -gt "$STOP_RESET_WINDOW_SEC" ]; then
-    rm -f "$STOP_COUNT_FILE" "$STOP_TIME_FILE"
-  fi
-}
-
 handle_user_stop() {
-  reset_stop_counter_if_stale
-
-  local stop_count now_epoch
-  stop_count="$(cat "$STOP_COUNT_FILE" 2>/dev/null || echo 0)"
-  stop_count=$((stop_count + 1))
-  now_epoch="$(date +%s)"
-  printf '%s\n' "$stop_count" > "$STOP_COUNT_FILE"
-  printf '%s\n' "$now_epoch" > "$STOP_TIME_FILE"
-
   if [ -n "${backend_pid:-}" ]; then
     kill -TERM "$backend_pid" 2>/dev/null || true
     wait "$backend_pid" 2>/dev/null || true
-  fi
-
-  if [ "$stop_count" -ge 3 ]; then
-    exit 77
   fi
   exit 0
 }
@@ -102,7 +73,7 @@ exit_code=$?
 set -e
 
 if [ "$exit_code" -eq 0 ]; then
-  rm -f "$STOP_COUNT_FILE" "$STOP_TIME_FILE"
+  :
 fi
 
 exit "$exit_code"
