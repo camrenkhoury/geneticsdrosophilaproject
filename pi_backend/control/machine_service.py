@@ -266,6 +266,16 @@ class MachineService:
         fin6_bridge = self._load_fin6_bridge()
         return fin6_bridge.setup_status_to_dict(fin6_bridge.get_setup_status())
 
+    def list_channel_setup_cameras(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        return fin6_bridge.list_available_cameras()
+
+    def update_channel_setup_camera(self, device_reference: str, preferred_hint: str = "") -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.update_channel_camera_selection(device_reference, preferred_hint=preferred_hint)
+        self.runtime_state.append_log("INFO", f"Updated channel camera selection to {device_reference or 'auto:channel'}.")
+        return payload
+
     def launch_fin6_setup(self) -> dict[str, Any]:
         fin6_bridge = self._load_fin6_bridge()
         process = fin6_bridge.launch_fin6_gui()

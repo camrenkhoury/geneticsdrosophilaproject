@@ -18,6 +18,8 @@ class RemoteController(BaseController):
         "/fin6/setup_status": "Pi-side fin6 setup status",
         "/fin6/launch_setup": "Pi-side fin6 setup launch",
         "/detect_channel": "Pi-side channel detection",
+        "/channel_setup/cameras": "Pi-side channel camera discovery",
+        "/channel_setup/select_camera": "Pi-side channel camera selection",
         "/channel_setup/capture_background": "Pi-side channel setup background capture",
         "/channel_setup/save_calibration": "Pi-side channel setup calibration save",
     }
@@ -68,6 +70,19 @@ class RemoteController(BaseController):
 
     def launch_fin6_setup(self) -> ControllerPayload:
         return self._request_json("POST", "/fin6/launch_setup")
+
+    def get_channel_setup_cameras(self) -> ControllerPayload:
+        return self._request_json("GET", "/channel_setup/cameras")
+
+    def select_channel_setup_camera(self, device_reference: str, *, preferred_hint: str = "") -> ControllerPayload:
+        return self._request_json(
+            "POST",
+            "/channel_setup/select_camera",
+            json_payload={
+                "device_reference": str(device_reference or ""),
+                "preferred_hint": str(preferred_hint or ""),
+            },
+        )
 
     def capture_channel_setup_background(self) -> ControllerPayload:
         return self._request_json("POST", "/channel_setup/capture_background")

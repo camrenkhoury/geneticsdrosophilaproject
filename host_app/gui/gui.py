@@ -967,9 +967,44 @@ class DrosophilaGUI:
             raise RuntimeError("Channel Detection Setup integration is unavailable.") from exc
         return fin6_bridge.get_setup_status()
 
+    def _get_channel_setup_camera_options(self) -> dict[str, Any]:
+        if self.is_remote_mode():
+            if not self.remote_connected or self.remote_controller is None:
+                raise RuntimeError("Connect to the Pi backend before loading channel cameras.")
+            return self.remote_controller.get_channel_setup_cameras()
+
+        try:
+            fin6_bridge = self._load_fin6_bridge()
+        except RuntimeError as exc:
+            raise RuntimeError("Channel camera discovery is unavailable.") from exc
+        return fin6_bridge.list_available_cameras()
+
+    def _save_channel_setup_camera_selection(self, device_reference: str, preferred_hint: str) -> dict[str, Any]:
+        if self.is_remote_mode():
+            if not self.remote_connected or self.remote_controller is None:
+                raise RuntimeError("Connect to the Pi backend before saving channel camera selection.")
+            payload = self.remote_controller.select_channel_setup_camera(
+                device_reference,
+                preferred_hint=preferred_hint,
+            )
+        else:
+            try:
+                fin6_bridge = self._load_fin6_bridge()
+            except RuntimeError as exc:
+                raise RuntimeError("Channel camera selection is unavailable.") from exc
+            payload = fin6_bridge.update_channel_camera_selection(
+                device_reference,
+                preferred_hint=preferred_hint,
+            )
+        if not payload.get("ok", True):
+            raise RuntimeError(str(payload.get("message", "Channel camera selection failed.")))
+        return payload
+
     def _build_channel_setup_actions(self) -> ChannelSetupActions:
         return ChannelSetupActions(
             fetch_status=self._get_channel_setup_status_for_panel,
+            fetch_camera_options=self._get_channel_setup_camera_options,
+            save_camera_selection=self._save_channel_setup_camera_selection,
             capture_background=self._capture_channel_setup_background,
             save_calibration=self._save_channel_setup_calibration,
             fetch_background_bytes=self._get_channel_setup_background_bytes,

@@ -78,6 +78,23 @@ def post_fin6_launch_setup(request: Request) -> dict:
     return context.launch_fin6_setup()
 
 
+@router.get("/channel_setup/cameras", dependencies=[Depends(require_api_key)])
+def get_channel_setup_cameras(request: Request) -> dict:
+    context = request.app.state.backend_context
+    return context.machine_service.list_channel_setup_cameras()
+
+
+@router.post("/channel_setup/select_camera", dependencies=[Depends(require_api_key)])
+def post_channel_setup_select_camera(request: Request, payload: dict[str, Any]) -> dict:
+    context = request.app.state.backend_context
+    try:
+        device_reference = str(payload.get("device_reference", "") or "")
+        preferred_hint = str(payload.get("preferred_hint", "") or "")
+        return context.machine_service.update_channel_setup_camera(device_reference, preferred_hint=preferred_hint)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.post("/channel_setup/capture_background", dependencies=[Depends(require_api_key)])
 def post_channel_setup_capture_background(request: Request) -> dict:
     context = request.app.state.backend_context

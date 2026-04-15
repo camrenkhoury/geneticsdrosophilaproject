@@ -12,6 +12,8 @@ from tkinter import messagebox, ttk
 @dataclass
 class ChannelSetupActions:
     fetch_status: Callable[[], Any]
+    fetch_camera_options: Callable[[], dict[str, Any]]
+    save_camera_selection: Callable[[str, str], dict[str, Any]]
     capture_background: Callable[[], dict[str, Any]]
     save_calibration: Callable[[tuple[int, int], tuple[int, int], float], dict[str, Any]]
     fetch_background_bytes: Callable[[], bytes | None]
@@ -53,11 +55,14 @@ class ChannelSetupPanel:
         self.calibration_state_var = tk.StringVar(value="Calibration: checking")
         self.selection_var = tk.StringVar(value="Pick the left channel end, then the right channel end.")
         self.channel_mm_var = tk.StringVar(value="111.0")
+        self.camera_choice_var = tk.StringVar(value="Auto-detect channel camera")
+        self.camera_status_var = tk.StringVar(value="Camera: detecting")
 
         self._photo = None
         self._pil_image = None
         self._display_box: tuple[int, int, int, int] | None = None
         self._selected_points: list[tuple[int, int]] = []
+        self._camera_choice_map: dict[str, tuple[str, str]] = {}
         self._busy = False
         self._closed = False
 
@@ -155,14 +160,22 @@ class ChannelSetupPanel:
         self.channel_mm_entry = ttk.Entry(controls, textvariable=self.channel_mm_var, width=18)
         self.channel_mm_entry.grid(row=1, column=0, sticky="ew", pady=(4, 10))
 
+        ttk.Label(controls, text="Channel camera").grid(row=2, column=0, sticky="w")
+        self.camera_combo = ttk.Combobox(controls, textvariable=self.camera_choice_var, state="readonly", width=42)
+        self.camera_combo.grid(row=3, column=0, sticky="ew", pady=(4, 0))
+        self.camera_combo.bind("<<ComboboxSelected>>", self._handle_camera_change)
+        ttk.Label(controls, textvariable=self.camera_status_var, wraplength=260, justify=tk.LEFT).grid(
+            row=4, column=0, sticky="ew", pady=(6, 10)
+        )
+
         self.capture_button = ttk.Button(controls, text="Capture Background", command=self._capture_background)
-        self.capture_button.grid(row=2, column=0, sticky="ew")
+        self.capture_button.grid(row=5, column=0, sticky="ew")
         self.reset_points_button = ttk.Button(controls, text="Reset Point Selection", command=self._reset_points)
-        self.reset_points_button.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        self.reset_points_button.grid(row=6, column=0, sticky="ew", pady=(8, 0))
         self.save_button = ttk.Button(controls, text="Save Calibration", command=self._save_calibration)
-        self.save_button.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        self.save_button.grid(row=7, column=0, sticky="ew", pady=(8, 0))
         self.refresh_button = ttk.Button(controls, text="Refresh", command=self.refresh_status_and_preview)
-        self.refresh_button.grid(row=5, column=0, sticky="ew", pady=(8, 0))
+        self.refresh_button.grid(row=8, column=0, sticky="ew", pady=(8, 0))
 
         footer = ttk.Frame(right)
         footer.grid(row=2, column=0, sticky="sew", pady=(12, 0))
@@ -221,6 +234,10 @@ class ChannelSetupPanel:
             self.channel_mm_entry.config(state=entry_state)
         except tk.TclError:
             pass
+        try:
+            self.camera_combo.config(state="disabled" if self._busy else "readonly")
+        except tk.TclError:
+            pass
         if not self._selected_points:
             try:
                 self.save_button.config(state=tk.DISABLED)
@@ -256,20 +273,26 @@ class ChannelSetupPanel:
 
     def _load_status_payload(self) -> dict[str, Any]:
         status = self.actions.fetch_status()
+        cameras = self.actions.fetch_camera_options()
         image_bytes = self.actions.fetch_background_bytes()
         return {
             "status": status,
+            "cameras": cameras,
             "image_bytes": image_bytes,
         }
 
     def _apply_status_payload(self, payload: dict[str, Any]) -> None:
         self._set_busy(False)
         status = self._to_namespace(payload["status"])
+        cameras = payload.get("cameras") or {}
         image_bytes = payload.get("image_bytes")
         self.background_state_var.set("Saved" if getattr(status, "channel_background_ready", False) else "Missing")
         self.calibration_state_var.set("Saved" if getattr(status, "channel_calibration_ready", False) else "Missing")
         if getattr(status, "channel", None) is not None:
             self.channel_mm_var.set(f"{float(getattr(status.channel, 'channel_mm', 111.0)):.1f}")
+            camera_description = str(getattr(status.channel, "camera_description", "") or "").strip()
+            self.camera_status_var.set(camera_description or "Camera will be auto-detected.")
+        self._apply_camera_options(cameras)
         if getattr(status, "channel_background_ready", False):
             self.status_var.set("Background ready. Capture again if you need a new clean reference.")
         else:
@@ -291,6 +314,37 @@ class ChannelSetupPanel:
         self._render_preview()
         self._update_selection_label()
 
+    def _apply_camera_options(self, payload: dict[str, Any]) -> None:
+        auto_label = str(payload.get("auto_label", "Auto-detect channel camera"))
+        selected_device = str(payload.get("selected_device", "") or "")
+        selected_hint = str(payload.get("selected_hint", "") or "")
+        devices = list(payload.get("devices", []) or [])
+
+        choice_map: dict[str, tuple[str, str]] = {
+            auto_label: ("auto:channel", selected_hint),
+        }
+        labels = [auto_label]
+        selected_label = auto_label
+        for device in devices:
+            label = str(device.get("label", "") or "").strip()
+            stable_path = str(device.get("stable_path", "") or "").strip()
+            preferred_hint = str(device.get("card_name", "") or "").strip()
+            if not label or not stable_path:
+                continue
+            choice_map[label] = (stable_path, preferred_hint)
+            labels.append(label)
+            if bool(device.get("selected", False)) or stable_path == selected_device:
+                selected_label = label
+
+        self._camera_choice_map = choice_map
+        try:
+            self.camera_combo["values"] = labels
+        except tk.TclError:
+            return
+        if selected_device.lower() in {"", "auto", "auto:channel", "channel"}:
+            selected_label = auto_label
+        self.camera_choice_var.set(selected_label)
+
     def _capture_background(self) -> None:
         self._run_worker(
             "Capturing clean channel background...",
@@ -308,6 +362,28 @@ class ChannelSetupPanel:
         self.status_var.set(message)
         if callable(self.status_callback):
             self.status_callback("running", message)
+        if callable(self.log_callback):
+            self.log_callback(message)
+        self.refresh_status_and_preview()
+
+    def _handle_camera_change(self, _event=None) -> None:
+        if self._busy:
+            return
+        selected_label = self.camera_choice_var.get().strip()
+        selection = self._camera_choice_map.get(selected_label)
+        if selection is None:
+            return
+        device_reference, preferred_hint = selection
+        self._run_worker(
+            "Saving channel camera selection...",
+            lambda: self.actions.save_camera_selection(device_reference, preferred_hint),
+            self._handle_camera_selection_complete,
+        )
+
+    def _handle_camera_selection_complete(self, payload: dict[str, Any]) -> None:
+        self._set_busy(False, "Channel camera selection saved.")
+        message = str(payload.get("message", "Channel camera selection saved."))
+        self.camera_status_var.set(message)
         if callable(self.log_callback):
             self.log_callback(message)
         self.refresh_status_and_preview()

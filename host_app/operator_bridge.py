@@ -340,6 +340,66 @@ def setup_status_to_dict(status: Fin6SetupStatus) -> dict[str, Any]:
     }
 
 
+def list_available_cameras() -> dict[str, Any]:
+    from vision.fin6.camera_sources import describe_camera_selection, list_video_devices
+
+    status = get_setup_status()
+    devices = list_video_devices(prefer_index_zero=True)
+    selected = describe_camera_selection(
+        status.channel.device,
+        role="channel",
+        preferred_hint=status.channel.preferred_hint,
+    )
+    items: list[dict[str, Any]] = []
+    for device in devices:
+        label_parts = [device.card_name]
+        if device.is_brio:
+            label_parts.append("Brio")
+        stable = device.stable_path or device.device_path
+        if stable:
+            label_parts.append(stable)
+        role_guess = "channel" if device.is_brio else "other"
+        items.append(
+            {
+                "label": " | ".join(label_parts),
+                "device_path": device.device_path,
+                "stable_path": device.stable_path,
+                "card_name": device.card_name,
+                "symlink_name": device.symlink_name,
+                "by_id_path": device.by_id_path,
+                "by_path_path": device.by_path_path,
+                "is_brio": bool(device.is_brio),
+                "role_guess": role_guess,
+                "selected": bool(selected is not None and stable == selected.stable_path),
+            }
+        )
+    return {
+        "auto_label": "Auto-detect channel camera",
+        "selected_device": str(status.channel.device),
+        "selected_hint": str(status.channel.preferred_hint),
+        "devices": items,
+    }
+
+
+def update_channel_camera_selection(device_reference: str, preferred_hint: str = "") -> dict[str, Any]:
+    normalized = normalize_settings_file(persist=False)
+    device_text = str(device_reference or "").strip()
+    hint_text = str(preferred_hint or "").strip()
+    if not device_text or device_text.lower() in {"auto", "auto:channel", "channel"}:
+        normalized["channel_device_var"] = "auto:channel"
+        normalized["channel_preferred_hint_var"] = hint_text
+    else:
+        normalized["channel_device_var"] = device_text
+        normalized["channel_preferred_hint_var"] = hint_text
+    _save_settings_file(normalized)
+    status = get_setup_status()
+    return {
+        "ok": True,
+        "message": "Channel camera selection saved.",
+        "channel": setup_status_to_dict(status)["channel"],
+    }
+
+
 def _missing_channel_setup_message(status: Fin6SetupStatus) -> str:
     missing: list[str] = []
     if not status.channel_background_ready:
@@ -576,8 +636,10 @@ __all__ = [
     "detect_channel_once_from_saved_settings",
     "get_setup_status",
     "launch_fin6_gui",
+    "list_available_cameras",
     "normalize_settings_file",
     "run_assay_from_saved_settings",
     "save_channel_calibration_from_points",
     "setup_status_to_dict",
+    "update_channel_camera_selection",
 ]
