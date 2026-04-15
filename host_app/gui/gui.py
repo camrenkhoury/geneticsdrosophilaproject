@@ -3657,16 +3657,27 @@ class DrosophilaGUI:
                 except tk.TclError:
                     banner_label.config(text="")
 
-    def make_button(self, parent, text: str, color: str, command):
+    def make_button(
+        self,
+        parent,
+        text: str,
+        color: str,
+        command,
+        *,
+        font: tuple[str, int, str] | None = None,
+        padx: int | None = None,
+        pady: int | None = None,
+        active_color: str | None = None,
+    ):
         button = ActionButton(
             parent,
             text=text,
             color=color,
-            font=("Arial", 10, "bold"),
+            font=font or ("Arial", 10, "bold"),
             command=command,
-            active_color=self._blend_hex(color, "#111111", 0.18),
-            padx=12,
-            pady=self.gui_profile.standard_button_pady,
+            active_color=active_color or self._blend_hex(color, "#111111", 0.18),
+            padx=12 if padx is None else padx,
+            pady=self.gui_profile.standard_button_pady if pady is None else pady,
         )
         self.register_control(button)
         return button
