@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import random
 import subprocess
 import sys
 import time
@@ -201,7 +202,7 @@ def _resolve_destination(
     confidence = float(classification_result.get("confidence", 0.0) or 0.0)
     chamber_count = int(classification_result.get("count", 0) or 0)
 
-    if chamber_count >= 2:
+    if chamber_count == 2:
         reject_tube = tube_states["T1"]
         if reject_tube.count < reject_tube.capacity:
             return reject_tube, "multiple flies in chamber"
@@ -233,6 +234,57 @@ def _resolve_destination(
         return reject_tube, reject_reason
 
     raise RuntimeError("No destination tube with remaining capacity is available.")
+
+
+def _return_grouped_flies_to_channel(
+    *,
+    cycle_index: int,
+    move_absolute: Callable[[float], Any],
+    set_vacuum: Callable[[bool], Any],
+    clamp_operational: Callable[[float], float],
+    status: Callable[[str, str], None],
+    log: Callable[[str], None],
+    stop_requested: Callable[[], bool] | None,
+    chamber_release_settle_s: float,
+    chamber_pickup_s: float,
+) -> None:
+    channel_end_position = clamp_operational(float(config.CHANNEL_LOCATION_END))
+    channel_home_position = clamp_operational(float(config.CHANNEL_LOCATION_START))
+    pulse_count = 5
+
+    status("moving", f"Cycle {cycle_index}: returning to chamber for grouped-fly recovery.")
+    move_absolute(float(config.CHAMBER_CENTER))
+    _sleep_with_stop(chamber_release_settle_s, stop_requested)
+
+    status("picking", f"Cycle {cycle_index}: picking grouped flies from chamber.")
+    set_vacuum(True)
+    _sleep_with_stop(chamber_pickup_s, stop_requested)
+
+    status("moving", f"Cycle {cycle_index}: moving grouped flies back to channel end.")
+    log(
+        f"Cycle {cycle_index}: chamber count >= 3. Returning grouped flies to channel from "
+        f"{channel_end_position:.2f} mm toward home with {pulse_count} vacuum pulses."
+    )
+    move_absolute(channel_end_position)
+    _sleep_with_stop(0.4, stop_requested)
+    set_vacuum(False)
+    _sleep_with_stop(0.4, stop_requested)
+
+    span = max(channel_end_position - channel_home_position, 0.0)
+    for pulse_index in range(1, pulse_count + 1):
+        pulse_target = clamp_operational(channel_end_position - (span * pulse_index / pulse_count))
+        vacuum_enabled = bool(random.getrandbits(1))
+        set_vacuum(vacuum_enabled)
+        status("moving", f"Cycle {cycle_index}: channel recovery sweep {pulse_index}/{pulse_count}.")
+        log(
+            f"Cycle {cycle_index}: recovery pulse {pulse_index}/{pulse_count} "
+            f"vacuum={'on' if vacuum_enabled else 'off'} target={pulse_target:.2f} mm."
+        )
+        move_absolute(pulse_target)
+        _sleep_with_stop(0.25, stop_requested)
+
+    set_vacuum(False)
+    _sleep_with_stop(0.25, stop_requested)
 
 
 def run_operation(
@@ -487,6 +539,49 @@ def run_operation(
                 f"Cycle {cycle_index}: classification={last_classification.get('class', 'UNCERTAIN')} "
                 f"confidence={confidence:.4f} count={chamber_count} errors={last_classification.get('errors', [])}"
             )
+
+            if chamber_count >= 3:
+                _publish_snapshot(
+                    tube_states,
+                    snapshot_callback=snapshot_callback,
+                    cycle_index=cycle_index,
+                    detection_count=last_detection_count,
+                    pickup_position_mm=pickup_position,
+                    classification_result=last_classification,
+                    destination_key=None,
+                    destination_label="Channel Recovery",
+                    lost_count=lost_fly_count,
+                    stage="recovering",
+                )
+                _return_grouped_flies_to_channel(
+                    cycle_index=cycle_index,
+                    move_absolute=move_absolute_callable,
+                    set_vacuum=set_vacuum_callable,
+                    clamp_operational=clamp_operational,
+                    status=status,
+                    log=log,
+                    stop_requested=stop_requested,
+                    chamber_release_settle_s=chamber_release_settle_s,
+                    chamber_pickup_s=chamber_pickup_s,
+                )
+                pending_pickup_positions = []
+                flies_taken_from_current_detection = max_flies_per_detection
+                first_pickup_after_detection = False
+                last_destination = None
+                _publish_snapshot(
+                    tube_states,
+                    snapshot_callback=snapshot_callback,
+                    cycle_index=cycle_index,
+                    detection_count=last_detection_count,
+                    pickup_position_mm=None,
+                    classification_result=last_classification,
+                    destination_key=None,
+                    destination_label="Channel Recovery",
+                    lost_count=lost_fly_count,
+                    stage="recovered",
+                )
+                log(f"Cycle {cycle_index}: grouped-fly recovery complete. Triggering a fresh channel detection.")
+                continue
 
             # Tube routing is determined strictly from the classification result
             # plus current tube capacities.

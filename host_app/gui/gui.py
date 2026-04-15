@@ -2163,10 +2163,16 @@ class DrosophilaGUI:
         if not result:
             return
 
+        raw_result = result.get("raw") if isinstance(result.get("raw"), dict) else {}
+        chamber_count = result.get("count")
+        if chamber_count is None:
+            chamber_count = raw_result.get("count")
+        normalized_count = None if chamber_count is None else int(chamber_count)
         signature = (
             str(result.get("result_class", "UNCERTAIN")),
             float(result.get("confidence", 0.0)),
             tuple(str(error) for error in result.get("errors", [])),
+            normalized_count,
         )
 
         if not self._remote_classification_seen_once:
@@ -2178,16 +2184,19 @@ class DrosophilaGUI:
             return
 
         self._last_remote_classification_signature = signature
-        raw_result = result.get("raw") if isinstance(result.get("raw"), dict) else {}
-        chamber_count = result.get("count")
-        if chamber_count is None:
-            chamber_count = raw_result.get("count")
         normalized_result = {
             "class": result.get("result_class", "UNCERTAIN"),
             "confidence": float(result.get("confidence", 0.0)),
             "errors": list(result.get("errors", [])),
-            "count": None if chamber_count is None else int(chamber_count),
+            "count": normalized_count,
             "image_path": raw_result.get("image_path"),
+            "raw": raw_result,
+            "preview_key": (
+                f"remote:{str(result.get('result_class', 'UNCERTAIN')).strip().lower()}:"
+                f"{float(result.get('confidence', 0.0)):.8f}:"
+                f"{'' if normalized_count is None else int(normalized_count)}:"
+                f"{'|'.join(str(error) for error in result.get('errors', []))}"
+            ),
         }
         self._trace_runtime(
             "classification-remote",
@@ -3334,7 +3343,8 @@ class DrosophilaGUI:
 
         summary_card = ttk.LabelFrame(content, text="Sexing / Routing", padding="10")
         summary_card.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E), padx=(0, 10))
-        summary_card.columnconfigure(1, weight=0)
+        summary_card.columnconfigure(1, weight=1, minsize=140)
+        summary_card.columnconfigure(4, weight=1, minsize=160)
 
         preview_card = ttk.LabelFrame(content, text="Classification Preview", padding="10")
         preview_card.grid(row=0, column=1, sticky=(tk.N, tk.S, tk.W, tk.E), padx=(0, 10))
@@ -3363,19 +3373,28 @@ class DrosophilaGUI:
             anchor="w",
             justify="left",
             wraplength=360,
-        ).grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 8))
+        ).grid(row=0, column=0, columnspan=5, sticky=(tk.W, tk.E), pady=(0, 8))
 
-        sexing_rows = [
+        left_rows = [
             ("Stage", self.sort_stage_var),
             ("Cycle", self.sort_cycle_var),
             ("In Chamber", self.sort_detected_var),
             ("Pickup X", self.sort_pickup_var),
+        ]
+        right_rows = [
             ("Last Sex", self.sort_last_sex_var),
             ("Confidence", self.sort_confidence_var),
             ("Destination", self.sort_destination_var),
+            ("Notes", self.sort_notes_var),
         ]
-        for row_index, (label_text, value_var) in enumerate(sexing_rows, start=1):
-            ttk.Label(summary_card, text=f"{label_text}:", font=("Arial", 9, "bold")).grid(row=row_index, column=0, sticky=tk.W, pady=2)
+
+        for row_index, (label_text, value_var) in enumerate(left_rows, start=1):
+            ttk.Label(summary_card, text=f"{label_text}:", font=("Arial", 9, "bold")).grid(
+                row=row_index,
+                column=0,
+                sticky=tk.W,
+                pady=2,
+            )
             tk.Label(
                 summary_card,
                 textvariable=value_var,
@@ -3386,8 +3405,35 @@ class DrosophilaGUI:
                 pady=2,
                 anchor="w",
                 justify="left",
-                width=18,
-            ).grid(row=row_index, column=1, sticky=tk.W, pady=2)
+                width=14,
+            ).grid(row=row_index, column=1, sticky=(tk.W, tk.E), pady=2, padx=(0, 10))
+
+        for row_index, (label_text, value_var) in enumerate(right_rows, start=1):
+            ttk.Label(summary_card, text=f"{label_text}:", font=("Arial", 9, "bold")).grid(
+                row=row_index,
+                column=3,
+                sticky=tk.W,
+                pady=2,
+            )
+            label_kwargs = {
+                "textvariable": value_var,
+                "bg": "#FFFFFF" if label_text != "Notes" else "#F7F7F7",
+                "relief": "sunken",
+                "font": ("Arial", 9 if label_text != "Notes" else 8),
+                "padx": 5,
+                "pady": 2 if label_text != "Notes" else 4,
+                "anchor": "w",
+                "justify": "left",
+                "width": 18,
+            }
+            if label_text == "Notes":
+                label_kwargs["wraplength"] = 220
+            tk.Label(summary_card, **label_kwargs).grid(
+                row=row_index,
+                column=4,
+                sticky=(tk.W, tk.E),
+                pady=2,
+            )
 
         tube_frame = ttk.LabelFrame(content, text="Tube Counts", padding="10")
         tube_frame.grid(row=0, column=2, sticky=(tk.N, tk.E))
@@ -3424,21 +3470,6 @@ class DrosophilaGUI:
                 width=8,
                 anchor="center",
             ).grid(row=row_index, column=2, sticky=tk.E, padx=(8, 0), pady=2)
-
-        ttk.Label(summary_card, text="Notes:", font=("Arial", 9, "bold")).grid(row=len(sexing_rows) + 1, column=0, sticky=tk.NW, pady=(8, 2))
-        tk.Label(
-            summary_card,
-            textvariable=self.sort_notes_var,
-            bg="#F7F7F7",
-            relief="sunken",
-            font=("Arial", 8),
-            padx=5,
-            pady=4,
-            anchor="w",
-            justify="left",
-            wraplength=320,
-            width=18,
-        ).grid(row=len(sexing_rows) + 1, column=1, sticky=tk.W, pady=(8, 2))
 
     def create_assay_tab(self, parent):
         assay_card = ttk.LabelFrame(parent, text="Assay", padding="10")
@@ -4657,8 +4688,9 @@ class DrosophilaGUI:
         self.preview_source_image = None
         self.preview_label.config(image="", text=message, bg="black", fg="white")
 
-    def set_sexing_preview_placeholder(self, message: str):
-        self.sexing_preview_source_image = None
+    def set_sexing_preview_placeholder(self, message: str, *, clear_image: bool = True):
+        if clear_image:
+            self.sexing_preview_source_image = None
         if hasattr(self, "sexing_preview_label"):
             self.sexing_preview_label.config(image="", text=message, bg="black", fg="white")
 
@@ -4710,39 +4742,61 @@ class DrosophilaGUI:
         except Exception:
             self.sexing_preview_image = None
 
+    def _build_sexing_preview_key(self, result: dict[str, Any], image_path: str) -> str:
+        explicit_key = str(result.get("preview_key") or "").strip()
+        if explicit_key:
+            return explicit_key
+
+        if image_path and not self.is_remote_mode():
+            preview_path = Path(image_path)
+            if preview_path.exists():
+                with contextlib.suppress(OSError):
+                    return f"{preview_path.resolve()}::{preview_path.stat().st_mtime:.6f}"
+
+        class_name = str(result.get("class") or "UNCERTAIN").strip().lower()
+        confidence = float(result.get("confidence", 0.0) or 0.0)
+        chamber_count = result.get("count")
+        errors = tuple(str(error) for error in list(result.get("errors", []) or []))
+        return f"{image_path}|{class_name}|{confidence:.8f}|{chamber_count}|{'|'.join(errors)}"
+
     def _update_sexing_preview_from_result(self, result: dict[str, Any]) -> None:
         image_path = str(result.get("image_path") or "")
         raw = result.get("raw")
         if not image_path and isinstance(raw, dict):
             image_path = str(raw.get("image_path") or "")
+        preview_key = self._build_sexing_preview_key(result, image_path) if image_path else ""
         if not image_path:
-            self._last_sexing_preview_key = None
-            self.set_sexing_preview_placeholder("Waiting for classification image...")
+            if self.sexing_preview_source_image is None:
+                self._last_sexing_preview_key = None
+                self.set_sexing_preview_placeholder("Waiting for classification image...")
             return
 
-        if image_path == self._last_sexing_preview_key:
+        if preview_key and preview_key == self._last_sexing_preview_key:
             return
-        self._last_sexing_preview_key = image_path
 
         if self.is_remote_mode():
             if not self.remote_connected or self.remote_controller is None:
-                self.set_sexing_preview_placeholder("Remote classification preview unavailable while disconnected.")
+                if self.sexing_preview_source_image is None:
+                    self.set_sexing_preview_placeholder("Remote classification preview unavailable while disconnected.")
                 return
             try:
                 image_bytes = self.remote_controller.get_classification_preview_image()
             except (ControllerConnectionError, ControllerError) as exc:
-                self.set_sexing_preview_placeholder(f"Remote classification preview unavailable:\n{exc}")
+                if self.sexing_preview_source_image is None:
+                    self.set_sexing_preview_placeholder(f"Remote classification preview unavailable:\n{exc}")
                 return
             if image_bytes:
+                self._last_sexing_preview_key = preview_key or image_path
                 self.load_sexing_preview_bytes(image_bytes)
-            else:
+            elif self.sexing_preview_source_image is None:
                 self.set_sexing_preview_placeholder("Waiting for classification image...")
             return
 
         preview_path = Path(image_path)
         if preview_path.exists():
+            self._last_sexing_preview_key = preview_key or image_path
             self.load_sexing_preview(preview_path)
-        else:
+        elif self.sexing_preview_source_image is None:
             self.set_sexing_preview_placeholder("Waiting for classification image...")
 
     def worker_log(self, message: str):
