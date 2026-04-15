@@ -424,6 +424,15 @@ def run_operation(
             last_classification = dict(classify_callable() or {})
             confidence = float(last_classification.get("confidence", 0.0) or 0.0)
             chamber_count = int(last_classification.get("count", 0) or 0)
+            class_name = str(last_classification.get("class", "UNCERTAIN") or "UNCERTAIN").strip().lower()
+            classification_errors = list(last_classification.get("errors", []) or [])
+            if chamber_count <= 0 and class_name in {"male", "female"} and confidence > 0.0 and not classification_errors:
+                log(
+                    f"Cycle {cycle_index}: classifier returned {class_name} with confidence "
+                    f"{confidence:.4f} but chamber count was {chamber_count}. Treating chamber count as 1."
+                )
+                chamber_count = 1
+                last_classification["count"] = 1
             log(
                 f"Cycle {cycle_index}: classification={last_classification.get('class', 'UNCERTAIN')} "
                 f"confidence={confidence:.4f} count={chamber_count} errors={last_classification.get('errors', [])}"
@@ -516,6 +525,10 @@ def run_operation(
             if stop_requested is not None and stop_requested():
                 raise OperationCancelled
             move_absolute_callable(destination_tube.position_mm)
+            log(
+                f"Cycle {cycle_index}: arrived for drop at {destination_tube.label} target "
+                f"{destination_tube.position_mm:.2f} mm."
+            )
 
             status("running", f"Cycle {cycle_index}: dropping into {destination_tube.label}.")
             if stop_requested is not None and stop_requested():

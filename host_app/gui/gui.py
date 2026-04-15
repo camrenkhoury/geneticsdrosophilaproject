@@ -2424,11 +2424,21 @@ class DrosophilaGUI:
         if not result:
             raise RuntimeError("Remote classification completed without returning a classification result.")
         raw = dict(result.get("raw", {}) or {})
+        class_name = str(result.get("result_class", "UNCERTAIN"))
+        confidence = float(result.get("confidence", 0.0))
+        errors = list(result.get("errors", []) or [])
+        raw_count = raw.get("count", result.get("count", 0))
+        try:
+            normalized_count = int(raw_count or 0)
+        except Exception:
+            normalized_count = 0
+        if normalized_count <= 0 and class_name.strip().lower() in {"male", "female"} and confidence > 0.0 and not errors:
+            normalized_count = 1
         normalized = {
-            "class": str(result.get("result_class", "UNCERTAIN")),
-            "confidence": float(result.get("confidence", 0.0)),
-            "errors": list(result.get("errors", []) or []),
-            "count": int(raw.get("count", 0) or 0),
+            "class": class_name,
+            "confidence": confidence,
+            "errors": errors,
+            "count": normalized_count,
             "image_path": raw.get("image_path"),
             "raw": raw,
         }
