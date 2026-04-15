@@ -85,6 +85,14 @@ def _publish_snapshot(
                 "count": int(classification_result.get("count", 0) or 0),
                 "confidence": float(classification_result.get("confidence", 0.0)),
                 "errors": list(classification_result.get("errors", []) or []),
+                "image_path": classification_result.get("image_path"),
+                "raw": dict(classification_result.get("raw", {}) or {}),
+                "preview_key": (
+                    f"{str(classification_result.get('class', 'UNCERTAIN')).strip().lower()}:"
+                    f"{float(classification_result.get('confidence', 0.0) or 0.0):.8f}:"
+                    f"{int(classification_result.get('count', 0) or 0)}:"
+                    f"{'|'.join(str(error) for error in list(classification_result.get('errors', []) or []))}"
+                ),
             },
             "destination_key": destination_key,
             "destination_label": destination_label,
@@ -191,6 +199,13 @@ def _resolve_destination(
     class_name = str(classification_result.get("class") or "UNCERTAIN").strip().lower()
     errors = list(classification_result.get("errors", []) or [])
     confidence = float(classification_result.get("confidence", 0.0) or 0.0)
+    chamber_count = int(classification_result.get("count", 0) or 0)
+
+    if chamber_count >= 2:
+        reject_tube = tube_states["T1"]
+        if reject_tube.count < reject_tube.capacity:
+            return reject_tube, "multiple flies in chamber"
+        raise RuntimeError("No destination tube with remaining capacity is available.")
 
     if class_name not in {"male", "female"} or errors or confidence <= 0.0:
         reject_tube = tube_states["T1"]
