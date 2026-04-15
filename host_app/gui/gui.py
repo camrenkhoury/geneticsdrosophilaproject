@@ -3340,19 +3340,21 @@ class DrosophilaGUI:
 
         content = self._create_vertical_scroll_container(parent)
         content.columnconfigure(0, weight=1)
-        content.columnconfigure(1, weight=0, minsize=280)
-        content.columnconfigure(2, weight=0, minsize=280)
+        content.columnconfigure(1, weight=0, minsize=300)
+        content.columnconfigure(2, weight=0, minsize=260)
+        content.rowconfigure(0, weight=1, minsize=315)
 
         summary_card = ttk.LabelFrame(content, text="Sexing / Routing", padding="10")
-        summary_card.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E), padx=(0, 10))
+        summary_card.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E), padx=(0, 6))
         summary_card.columnconfigure(1, weight=0, minsize=140)
         summary_card.columnconfigure(2, weight=0, minsize=20)
         summary_card.columnconfigure(4, weight=0, minsize=140)
 
-        preview_card = ttk.LabelFrame(content, text="Classification Preview", padding="10")
-        preview_card.grid(row=0, column=1, sticky=(tk.N, tk.S, tk.W, tk.E), padx=(0, 10))
+        preview_card = ttk.LabelFrame(content, text="Classification Preview", padding="12")
+        preview_card.grid(row=0, column=1, sticky=(tk.N, tk.S, tk.W, tk.E), padx=(0, 6))
         preview_card.columnconfigure(0, weight=1)
         preview_card.rowconfigure(0, weight=1)
+        preview_card.grid_propagate(False)
         self.sexing_preview_label = tk.Label(
             preview_card,
             bg="black",
@@ -3363,7 +3365,7 @@ class DrosophilaGUI:
         )
         self.sexing_preview_label.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
         self.sexing_preview_label.bind("<Configure>", self._refresh_sexing_preview_image)
-        preview_card.configure(width=280)
+        preview_card.configure(width=300, height=320)
 
         tk.Label(
             summary_card,
@@ -3372,11 +3374,11 @@ class DrosophilaGUI:
             relief="sunken",
             font=("Arial", 9),
             padx=8,
-            pady=6,
+            pady=7,
             anchor="w",
             justify="left",
             wraplength=360,
-        ).grid(row=0, column=0, columnspan=5, sticky=(tk.W, tk.E), pady=(0, 8))
+        ).grid(row=0, column=0, columnspan=5, sticky=(tk.W, tk.E), pady=(0, 10))
 
         left_rows = [
             ("Stage", self.sort_stage_var),
@@ -3395,7 +3397,7 @@ class DrosophilaGUI:
                 row=row_index,
                 column=0,
                 sticky=tk.W,
-                pady=2,
+                pady=3,
             )
             tk.Label(
                 summary_card,
@@ -3404,18 +3406,18 @@ class DrosophilaGUI:
                 relief="sunken",
                 font=("Arial", 9),
                 padx=5,
-                pady=2,
+                pady=3,
                 anchor="w",
                 justify="left",
                 width=13,
-            ).grid(row=row_index, column=1, sticky=(tk.W, tk.E), pady=2, padx=(0, 10))
+            ).grid(row=row_index, column=1, sticky=(tk.W, tk.E), pady=3, padx=(0, 12))
 
         for row_index, (label_text, value_var) in enumerate(right_rows, start=1):
             ttk.Label(summary_card, text=f"{label_text}:", font=("Arial", 9, "bold")).grid(
                 row=row_index,
                 column=3,
                 sticky=tk.W,
-                pady=2,
+                pady=3,
             )
             label_kwargs = {
                 "textvariable": value_var,
@@ -3423,7 +3425,7 @@ class DrosophilaGUI:
                 "relief": "sunken",
                 "font": ("Arial", 9),
                 "padx": 5,
-                "pady": 2,
+                "pady": 3,
                 "anchor": "w",
                 "justify": "left",
                 "width": 13,
@@ -3432,7 +3434,7 @@ class DrosophilaGUI:
                 row=row_index,
                 column=4,
                 sticky=(tk.W, tk.E),
-                pady=2,
+                pady=3,
             )
 
         notes_row = max(len(left_rows), len(right_rows)) + 1
@@ -3440,7 +3442,7 @@ class DrosophilaGUI:
             row=notes_row,
             column=0,
             sticky=tk.NW,
-            pady=(8, 2),
+            pady=(10, 3),
         )
         tk.Label(
             summary_card,
@@ -3449,7 +3451,7 @@ class DrosophilaGUI:
             relief="sunken",
             font=("Arial", 8),
             padx=5,
-            pady=4,
+            pady=5,
             anchor="w",
             justify="left",
             wraplength=430,
@@ -3459,7 +3461,7 @@ class DrosophilaGUI:
             column=1,
             columnspan=4,
             sticky=(tk.W, tk.E),
-            pady=(8, 2),
+            pady=(10, 3),
         )
 
         tube_frame = ttk.LabelFrame(content, text="Tube Counts", padding="10")
@@ -3479,12 +3481,12 @@ class DrosophilaGUI:
             ("T5", 4),
         )
         for tube_key, row_index in tube_layout:
-            ttk.Label(tube_frame, text=f"{tube_key}:", font=("Arial", 9, "bold")).grid(row=row_index, column=0, sticky=tk.W, pady=2)
+            ttk.Label(tube_frame, text=f"{tube_key}:", font=("Arial", 9, "bold")).grid(row=row_index, column=0, sticky=tk.W, pady=3)
             ttk.Label(tube_frame, text=tube_roles[tube_key], font=("Arial", 8), foreground="#52606D").grid(
                 row=row_index,
                 column=1,
                 sticky=tk.W,
-                pady=2,
+                pady=3,
             )
             tk.Label(
                 tube_frame,
@@ -3493,10 +3495,10 @@ class DrosophilaGUI:
                 relief="sunken",
                 font=("Arial", 9),
                 padx=5,
-                pady=2,
+                pady=3,
                 width=8,
                 anchor="center",
-            ).grid(row=row_index, column=2, sticky=tk.E, padx=(8, 0), pady=2)
+            ).grid(row=row_index, column=2, sticky=tk.E, padx=(8, 0), pady=3)
 
     def create_assay_tab(self, parent):
         assay_card = ttk.LabelFrame(parent, text="Assay", padding="10")
@@ -4746,8 +4748,11 @@ class DrosophilaGUI:
         try:
             from PIL import Image, ImageTk
 
-            target_width = max(self.sexing_preview_label.winfo_width(), 420)
-            target_height = max(self.sexing_preview_label.winfo_height(), 280)
+            preview_container = self.sexing_preview_label.master
+            container_width = preview_container.winfo_width() if preview_container is not None else 0
+            container_height = preview_container.winfo_height() if preview_container is not None else 0
+            target_width = max(min(container_width - 12, 360), 260)
+            target_height = max(min(container_height - 12, 360), 260)
             if target_width <= 1 or target_height <= 1:
                 return
 
