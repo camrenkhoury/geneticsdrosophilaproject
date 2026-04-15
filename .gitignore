@@ -33,6 +33,8 @@ vision/fin6/backgrounds/
 vision/fin6/calibrations/
 vision/fin6/outputs/
 vision/fin6/.fly_tracking_gui_settings.json
+vision/fin6/.host_gui_crash_trace.log
+vision/fin6/.channel_artifact_trace.log
 box_tokens.json
 .drosophila_remote_gui.json
 deployment/pi/config/backend.env

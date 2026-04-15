@@ -592,6 +592,8 @@ class DrosophilaGUI:
         self.remote_vibration_available = True
         self.remote_classifier_available = True
         self.remote_assay_available = True
+        self._resume_tube_counts_after_stop = False
+        self._pending_automated_initial_tube_counts: dict[str, int] | None = None
         self.remote_seen_log_keys: set[tuple[str, str, str]] = set()
         self._last_remote_status_revision: int | None = None
         self._last_remote_preview_source_mtime: float | None = None
@@ -2702,10 +2704,17 @@ class DrosophilaGUI:
         return normalized
 
     def _update_control_interactivity(self) -> None:
+        worker_alive = self.worker_thread is not None and self.worker_thread.is_alive()
+        allow_restart_after_stop = (
+            self._resume_tube_counts_after_stop
+            and not worker_alive
+            and not self.remote_request_in_flight
+            and self.current_task_name is None
+        )
         busy = (
             self.local_task_busy
             or self.remote_request_in_flight
-            or (self.is_remote_mode() and self.remote_backend_busy)
+            or (self.is_remote_mode() and self.remote_backend_busy and not allow_restart_after_stop)
             or self._pending_channel_setup_resume is not None
         )
         entry_state = "disabled" if busy else "normal"
@@ -4412,6 +4421,28 @@ class DrosophilaGUI:
         self.local_task_cancellable = cancellable
         self._update_control_interactivity()
 
+    def _current_sort_tube_count_snapshot(self) -> dict[str, int]:
+        snapshot: dict[str, int] = {}
+        for key, var in self.sort_tube_count_vars.items():
+            raw_value = str(var.get() or "0").split("/", 1)[0].strip()
+            try:
+                snapshot[key] = max(0, int(raw_value))
+            except ValueError:
+                snapshot[key] = 0
+        return snapshot
+
+    def _prepare_sorting_display_for_restart(self) -> None:
+        self.sort_stage_var.set("Restarting")
+        self.sort_cycle_var.set("0")
+        self.sort_detected_var.set("--")
+        self.sort_pickup_var.set("--")
+        self.sort_last_sex_var.set("--")
+        self.sort_confidence_var.set("--")
+        self.sort_destination_var.set("--")
+        self.sort_notes_var.set(
+            "Emergency stop acknowledged. Restarting automated loading while preserving current tube counts."
+        )
+
     def start_task(self, name: str, state: str, message: str, target, cancellable: bool = False):
         if self.worker_thread and self.worker_thread.is_alive():
             messagebox.showwarning("Busy", f"Finish the current task before starting {name}.")
@@ -4420,6 +4451,8 @@ class DrosophilaGUI:
         self.stop_requested.clear()
         self.current_task_name = name
         self.current_task_cancellable = cancellable
+        if name != "automated run":
+            self._resume_tube_counts_after_stop = False
         self.set_controls_busy(True, cancellable=cancellable)
         self.set_status(state, message)
         self.log_message(f"Starting {name}.")
@@ -4438,12 +4471,18 @@ class DrosophilaGUI:
         self.current_task_cancellable = False
         self.set_controls_busy(False)
         self.stop_requested.clear()
+        resume_after_stop = (not ok) and name == "automated run" and "stopped" in message.lower()
+        self._resume_tube_counts_after_stop = resume_after_stop
 
         if ok:
+            self._resume_tube_counts_after_stop = False
             self.set_status("idle", message)
         else:
             state = "stopped" if "stopped" in message.lower() else "error"
-            self.set_status(state, f"{message} System reset to safe idle state. Press START to try again.")
+            followup_message = "Press START to try again."
+            if resume_after_stop:
+                followup_message = "Press START to restart from a fresh channel detect while preserving current tube counts."
+            self.set_status(state, f"{message} System reset to safe idle state. {followup_message}")
             self._begin_safe_failure_recovery(message)
 
         self.log_message(message)
@@ -5255,6 +5294,7 @@ class DrosophilaGUI:
         move_callable = None
         vacuum_callable = None
         get_operational_max_mm_callable = None
+        initial_tube_counts = dict(self._pending_automated_initial_tube_counts or {})
 
         if self.is_remote_mode():
             self._get_remote_controller_for_automation()
@@ -5295,9 +5335,12 @@ class DrosophilaGUI:
                 log_callback=self.worker_log,
                 snapshot_callback=publish_snapshot,
                 stop_requested=self.stop_requested.is_set,
+                initial_tube_counts=initial_tube_counts,
             )
         except getattr(final_operation, "OperationCancelled"):
             raise TaskCancelled
+        finally:
+            self._pending_automated_initial_tube_counts = None
 
     def home_gantry(self):
         if self.is_remote_mode():
@@ -5436,9 +5479,15 @@ class DrosophilaGUI:
             self.set_status("idle", "Automated Run cancelled. Load or redistribute flies, then press START when ready.")
             return
         self._begin_new_detection_session(placeholder="Waiting for current channel detection image...")
-        self._reset_sorting_status_display()
-        self.sort_stage_var.set("Channel setup ready")
-        self.sort_notes_var.set("Automated loading is starting. No further prompts will appear during the sorting loop unless Emergency Stop is used.")
+        resume_existing_counts = self._resume_tube_counts_after_stop
+        if resume_existing_counts:
+            self._pending_automated_initial_tube_counts = self._current_sort_tube_count_snapshot()
+            self._prepare_sorting_display_for_restart()
+        else:
+            self._pending_automated_initial_tube_counts = None
+            self._reset_sorting_status_display()
+            self.sort_stage_var.set("Channel setup ready")
+            self.sort_notes_var.set("Automated loading is starting. No further prompts will appear during the sorting loop unless Emergency Stop is used.")
         self.start_task(
             "automated run",
             "running",
@@ -5482,12 +5531,16 @@ class DrosophilaGUI:
             if not self.remote_connected:
                 messagebox.showinfo("Stop", "Remote backend is not connected.")
                 return
+            if self.current_task_name == "automated run":
+                self._resume_tube_counts_after_stop = True
             self.stop_requested.set()
             self.set_status("stopped", "Emergency stop triggered. Sending immediate stop to Pi backend.")
             self.log_message("Emergency stop triggered for remote operation.")
             self._request_remote_emergency_stop_now()
             return
 
+        if self.current_task_name == "automated run":
+            self._resume_tube_counts_after_stop = True
         self.stop_requested.set()
         self.set_status("stopped", "Emergency stop triggered. Forcing local outputs to a safe state.")
         self.log_message("Emergency stop triggered for local operation.")
@@ -5497,6 +5550,8 @@ class DrosophilaGUI:
         if self.worker_thread and self.worker_thread.is_alive():
             messagebox.showwarning("Busy", "Wait for the current task to finish before resetting.")
             return
+        self._resume_tube_counts_after_stop = False
+        self._pending_automated_initial_tube_counts = None
         if self.is_remote_mode():
             self._clear_channel_preview_state(
                 clear_artifacts=False,

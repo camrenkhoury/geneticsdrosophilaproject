@@ -125,6 +125,20 @@ def _build_tube_states() -> dict[str, TubeState]:
     }
 
 
+def _seed_tube_counts(tube_states: dict[str, TubeState], initial_tube_counts: dict[str, int] | None) -> None:
+    if not initial_tube_counts:
+        return
+    for key, count in initial_tube_counts.items():
+        tube = tube_states.get(str(key))
+        if tube is None:
+            continue
+        try:
+            normalized_count = int(count)
+        except Exception:
+            continue
+        tube.count = max(0, min(normalized_count, int(tube.capacity)))
+
+
 def _sorted_pickup_positions(result: dict[str, Any], clamp_operational: Callable[[float], float]) -> list[float] | str | None:
     if not result.get("fly_remaining", False):
         return "done"
@@ -305,6 +319,7 @@ def run_operation(
     log_callback: Callable[[str], None] | None = None,
     snapshot_callback: Callable[[dict[str, Any]], None] | None = None,
     stop_requested: Callable[[], bool] | None = None,
+    initial_tube_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     # This function is the single orchestration loop for the automated sorter.
     # The host GUI should only trigger it and display snapshots/logs. Hardware
@@ -337,6 +352,7 @@ def run_operation(
     max_flies_per_detection = 2
 
     tube_states = _build_tube_states()
+    _seed_tube_counts(tube_states, initial_tube_counts)
     cycle_index = 0
     last_detection_count = 0
     last_classification: dict[str, Any] | None = None
@@ -551,20 +567,11 @@ def run_operation(
 
             if chamber_count <= 0:
                 retry_pickup_count += 1
-                publish_snapshot(
-                    cycle_index=cycle_index,
-                    detection_count=last_detection_count,
-                    pickup_position_mm=pickup_position,
-                    classification_result=last_classification,
-                    destination_key=None,
-                    destination_label="Channel Recheck",
-                    stage="redetecting",
-                )
                 log(
                     f"Cycle {cycle_index}: chamber classification detected 0 flies. "
-                    "Skipping chamber pickup/routing and forcing a fresh channel detection pass."
+                    "Skipping chamber pickup/routing and restarting the normal channel detection cycle."
                 )
-                status("moving", f"Cycle {cycle_index}: chamber appears empty. Resetting to channel re-detect position.")
+                status("moving", f"Cycle {cycle_index}: chamber appears empty. Returning to channel photo position.")
                 set_vacuum_callable(False)
                 move_absolute_callable(chamber_observe_position)
                 pending_pickup_positions = []
@@ -575,10 +582,10 @@ def run_operation(
                     cycle_index=cycle_index,
                     detection_count=last_detection_count,
                     pickup_position_mm=None,
-                    classification_result=last_classification,
+                    classification_result=None,
                     destination_key=None,
-                    destination_label="Channel Recheck",
-                    stage="rechecking",
+                    destination_label="Channel Retry",
+                    stage="detecting",
                 )
                 continue
 
