@@ -573,6 +573,8 @@ class DrosophilaGUI:
         self.last_used_detection_mtime: float | None = None
         self._awaiting_current_detection = False
         self._current_detection_baseline_mtime: float | None = None
+        self._startup_preview_requested = False
+        self._startup_preview_completed = False
         self._last_output_dir_text = ""
         self.remote_settings = load_remote_connection_settings(self.repo_root)
         self.remote_controller: RemoteController | None = None
@@ -636,6 +638,7 @@ class DrosophilaGUI:
         self.update_channel_preview()
         self.process_queue()
         self._apply_connection_state(ConnectionState.LOCAL, "Local controller active.")
+        self.root.after(600, self._maybe_request_startup_channel_preview)
 
     def _load_local_runtime(self) -> dict[str, object]:
         if self._local_runtime_cache is not None:
@@ -1206,6 +1209,11 @@ class DrosophilaGUI:
                 return False
             if decision:
                 return True
+            self._startup_preview_requested = False
+            self._startup_preview_completed = False
+            self._begin_new_detection_session(
+                placeholder="Waiting for new channel detection setup calibration..."
+            )
             self._open_channel_setup_panel(action_label, resume_callable)
             return False
 
@@ -1833,6 +1841,9 @@ class DrosophilaGUI:
             self.remote_connected = False
             self.remote_home_calibration_required = False
             self.remote_home_prompt_scheduled = False
+            if self.controller_mode_choice.get() != "Remote":
+                self._startup_preview_requested = False
+                self._startup_preview_completed = False
         elif state in {ConnectionState.CLIENT_CONNECTED, ConnectionState.CLIENT_RECONNECTED}:
             label_text = "Remote Mode (Degraded)" if self.remote_backend_degraded else "Remote Mode"
             label_color = "#FF9800" if self.remote_backend_degraded else "#4CAF50"
@@ -1840,6 +1851,8 @@ class DrosophilaGUI:
             self.remote_connected = True
             self.remote_home_calibration_required = False
             self.remote_home_prompt_scheduled = False
+            if not self._startup_preview_completed:
+                self.root.after(400, self._maybe_request_startup_channel_preview)
         elif state in {ConnectionState.CONNECTING_TO_PI, ConnectionState.RECONNECT_ATTEMPT, ConnectionState.RETRY_WAIT}:
             label_text = "Remote Mode"
             label_color = "#FF9800"
@@ -1850,6 +1863,8 @@ class DrosophilaGUI:
             self.remote_home_calibration_required = False
             self.remote_home_prompt_scheduled = False
             self._last_remote_status_revision = None
+            self._startup_preview_requested = False
+            self._startup_preview_completed = False
         else:
             label_text = "Remote Mode"
             label_color = "#F44336"
@@ -1860,6 +1875,8 @@ class DrosophilaGUI:
             self.remote_home_calibration_required = False
             self.remote_home_prompt_scheduled = False
             self._last_remote_status_revision = None
+            self._startup_preview_requested = False
+            self._startup_preview_completed = False
 
         self.mode_var.set(label_text)
         self.mode_label.config(bg=label_color)
@@ -1922,14 +1939,20 @@ class DrosophilaGUI:
             else:
                 self._awaiting_current_detection = False
                 self._current_detection_baseline_mtime = source_mtime
+                self._startup_preview_requested = False
+                self._startup_preview_completed = True
                 self.detection_var.set(self._format_remote_detection(detection_summary))
         else:
-            self.detection_var.set(self._format_remote_detection(detection_summary))
+            if self._startup_preview_completed:
+                self.detection_var.set(self._format_remote_detection(detection_summary))
+            else:
+                self.detection_var.set("Waiting for current channel detection output.")
 
         source_path = detection_summary.get("source_path")
-        if source_path and not self._awaiting_current_detection:
+        allow_preview_update = not self._awaiting_current_detection and self._startup_preview_completed
+        if source_path and allow_preview_update:
             self.output_dir_var.set(str(source_path))
-        self._request_remote_preview_if_needed(detection_summary if not self._awaiting_current_detection else {})
+        self._request_remote_preview_if_needed(detection_summary if allow_preview_update else {})
 
         self.update_actuator_state("vacuum", bool(status.get("vacuum_on", False)))
         self.update_actuator_state("vibration", bool(status.get("vibration_on", False)))
@@ -3716,6 +3739,8 @@ class DrosophilaGUI:
         self.last_used_detection_mtime = self.last_result_mtime
         self._awaiting_current_detection = False
         self._current_detection_baseline_mtime = self.last_result_mtime
+        self._startup_preview_requested = False
+        self._startup_preview_completed = True
 
         if annotated_path.exists():
             self.load_channel_preview(annotated_path)
@@ -3748,6 +3773,13 @@ class DrosophilaGUI:
                 float(self.last_result_mtime),
                 float(baseline) if baseline is not None else float(self.last_result_mtime),
             )
+            current_result_path = self._resolve_channel_file("last_channel_result.json")
+            if current_result_path.exists():
+                current_result_mtime = current_result_path.stat().st_mtime
+                baseline = max(
+                    float(current_result_mtime),
+                    float(baseline) if baseline is not None else float(current_result_mtime),
+                )
 
         self._awaiting_current_detection = True
         self._current_detection_baseline_mtime = baseline
@@ -3758,6 +3790,50 @@ class DrosophilaGUI:
         if self.is_remote_mode():
             self._last_remote_preview_source_mtime = None
         self.set_preview_placeholder(placeholder)
+
+    def _maybe_request_startup_channel_preview(self) -> None:
+        if self._startup_preview_requested or self._startup_preview_completed:
+            return
+        if self.worker_thread and self.worker_thread.is_alive():
+            return
+        if self.remote_request_in_flight or self.remote_backend_busy:
+            return
+        if self._channel_setup_panel is not None and self._channel_setup_panel.is_open():
+            return
+
+        fin6_status = self._get_fin6_setup_status("Startup Channel Preview", show_errors=False)
+        if fin6_status is None or not self._channel_setup_ready(fin6_status):
+            self._begin_new_detection_session(placeholder="Waiting for current channel detection image...")
+            return
+
+        self._startup_preview_requested = True
+        self._begin_new_detection_session(placeholder="Capturing current channel detection image...")
+
+        if self.is_remote_mode():
+            if not self.remote_connected or self.remote_controller is None:
+                self._startup_preview_requested = False
+                return
+            threading.Thread(target=self._startup_remote_channel_preview_worker, daemon=True).start()
+            return
+
+        threading.Thread(target=self._startup_local_channel_preview_worker, daemon=True).start()
+
+    def _startup_local_channel_preview_worker(self) -> None:
+        try:
+            capture = self._run_local_channel_detection_capture()
+            self.ui_queue.put(("local_channel_detection", capture))
+        except Exception as exc:
+            self.ui_queue.put(("log", f"Startup channel preview failed: {exc}"))
+            self.ui_queue.put(("status", "idle", "Waiting for current channel detection output."))
+            self._startup_preview_requested = False
+
+    def _startup_remote_channel_preview_worker(self) -> None:
+        try:
+            self._run_remote_channel_detection_capture()
+        except Exception as exc:
+            self.ui_queue.put(("log", f"Startup remote channel preview failed: {exc}"))
+            self.ui_queue.put(("status", "idle", "Waiting for current channel detection output."))
+            self._startup_preview_requested = False
 
     def _apply_automation_snapshot(self, snapshot: dict[str, Any]) -> None:
         stage = str(snapshot.get("stage") or "running").strip() or "running"
@@ -3801,6 +3877,8 @@ class DrosophilaGUI:
                 self.set_preview_placeholder("Remote mode preview unavailable while disconnected.")
             elif self._awaiting_current_detection:
                 self.set_preview_placeholder("Waiting for current remote channel detection image...")
+            elif not self._startup_preview_completed:
+                self.set_preview_placeholder("Capturing current remote channel detection image...")
             elif self.preview_image is None and not self._remote_preview_fetch_in_flight:
                 self.set_preview_placeholder("Waiting for remote channel detection image...")
             self.root.after(1000, self.update_channel_preview)
@@ -3815,13 +3893,17 @@ class DrosophilaGUI:
         preview_path = self._resolve_channel_file("last_channel_annotated.png")
         result_path = self._resolve_channel_file("last_channel_result.json")
 
-        result = self._read_detection_result(result_path) if result_path.exists() else None
+        allow_startup_local_artifacts = self._startup_preview_completed or self._awaiting_current_detection
+        result = self._read_detection_result(result_path) if result_path.exists() and allow_startup_local_artifacts else None
         current_result_mtime = result_path.stat().st_mtime if result_path.exists() else None
         if self._awaiting_current_detection and current_result_mtime is not None:
             baseline = self._current_detection_baseline_mtime
             if baseline is None or current_result_mtime > baseline:
                 self._awaiting_current_detection = False
                 self._current_detection_baseline_mtime = current_result_mtime
+                self._startup_preview_requested = False
+                self._startup_preview_completed = True
+                result = self._read_detection_result(result_path)
             else:
                 result = None
 
@@ -3836,10 +3918,12 @@ class DrosophilaGUI:
         else:
             if self._awaiting_current_detection:
                 self.detection_var.set("Waiting for current channel detection output.")
+            elif not self._startup_preview_completed:
+                self.detection_var.set("Capturing current channel detection output...")
             else:
                 self.detection_var.set("Waiting for channel detection output.")
 
-        if preview_path.exists() and not self._awaiting_current_detection:
+        if preview_path.exists() and not self._awaiting_current_detection and self._startup_preview_completed:
             preview_mtime = preview_path.stat().st_mtime
             if preview_mtime != self.last_preview_mtime:
                 self.load_channel_preview(preview_path)
@@ -3847,6 +3931,8 @@ class DrosophilaGUI:
         else:
             if self._awaiting_current_detection:
                 self.set_preview_placeholder("Waiting for current channel detection image...")
+            elif not self._startup_preview_completed:
+                self.set_preview_placeholder("Capturing current channel detection image...")
             else:
                 self.set_preview_placeholder("Waiting for channel detection image...")
 

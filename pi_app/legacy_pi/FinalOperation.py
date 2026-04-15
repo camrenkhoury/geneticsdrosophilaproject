@@ -236,12 +236,15 @@ def run_operation(
     chamber_settle_s = 6.0
     chamber_pickup_s = 2.0
     tube_drop_s = 2.0
+    max_flies_per_detection = 2
 
     tube_states = _build_tube_states()
     cycle_index = 0
     last_detection_count = 0
     last_classification: dict[str, Any] | None = None
     last_destination: TubeState | None = None
+    pending_pickup_positions: list[float] = []
+    flies_taken_from_current_detection = 0
 
     def check_stop() -> None:
         if stop_requested is not None and stop_requested():
@@ -258,36 +261,44 @@ def run_operation(
             check_stop()
             cycle_index += 1
 
-            status("running", f"Cycle {cycle_index}: homing gantry.")
-            log(f"Cycle {cycle_index}: homing gantry.")
-            set_vacuum_callable(False)
-            home_callable()
+            if not pending_pickup_positions or flies_taken_from_current_detection >= max_flies_per_detection:
+                status("running", f"Cycle {cycle_index}: homing gantry.")
+                log(f"Cycle {cycle_index}: homing gantry.")
+                set_vacuum_callable(False)
+                home_callable()
 
-            status("moving", f"Cycle {cycle_index}: moving to channel photo position.")
-            move_absolute_callable(camera_photo_position)
+                status("moving", f"Cycle {cycle_index}: moving to channel photo position.")
+                move_absolute_callable(camera_photo_position)
 
-            status("detecting", f"Cycle {cycle_index}: capturing channel detection image.")
-            log(f"Cycle {cycle_index}: running channel detection.")
-            detection_payload = detect_callable()
-            detection_result = dict(detection_payload.get("result") or {})
-            pickup_positions = _sorted_pickup_positions(detection_result, clamp_operational)
-            last_detection_count = int(detection_result.get("count", 0) or 0)
-            _publish_snapshot(
-                tube_states,
-                snapshot_callback=snapshot_callback,
-                cycle_index=cycle_index,
-                detection_count=last_detection_count,
-                stage="detecting",
+                status("detecting", f"Cycle {cycle_index}: capturing channel detection image.")
+                log(f"Cycle {cycle_index}: running channel detection.")
+                detection_payload = detect_callable()
+                detection_result = dict(detection_payload.get("result") or {})
+                pickup_positions = _sorted_pickup_positions(detection_result, clamp_operational)
+                last_detection_count = int(detection_result.get("count", 0) or 0)
+                _publish_snapshot(
+                    tube_states,
+                    snapshot_callback=snapshot_callback,
+                    cycle_index=cycle_index,
+                    detection_count=last_detection_count,
+                    stage="detecting",
+                )
+
+                if pickup_positions == "done":
+                    log("Detection reported no flies remaining. Sorting run is complete.")
+                    break
+                if pickup_positions is None:
+                    raise RuntimeError("Channel detection did not return usable x_positions_mm data.")
+
+                pending_pickup_positions = list(pickup_positions)
+                flies_taken_from_current_detection = 0
+
+            pickup_position = float(pending_pickup_positions.pop(0))
+            flies_taken_from_current_detection += 1
+            log(
+                f"Cycle {cycle_index}: selected pickup position {pickup_position:.2f} mm "
+                f"(detection batch {flies_taken_from_current_detection}/{max_flies_per_detection})."
             )
-
-            if pickup_positions == "done":
-                log("Detection reported no flies remaining. Sorting run is complete.")
-                break
-            if pickup_positions is None:
-                raise RuntimeError("Channel detection did not return usable x_positions_mm data.")
-
-            pickup_position = float(pickup_positions[0])
-            log(f"Cycle {cycle_index}: selected pickup position {pickup_position:.2f} mm.")
 
             status("running", f"Cycle {cycle_index}: reset home before pickup.")
             set_vacuum_callable(False)

@@ -80,6 +80,12 @@ class ChannelSetupPanel:
         self._needs_preview_refresh = True
         self._startup_load_in_flight = False
         self._workflow_phase = "check_camera"
+        self._status_request_id = 0
+        self._latest_status_request_id = 0
+        self._preview_request_id = 0
+        self._latest_preview_request_id = 0
+        self._camera_save_request_id = 0
+        self._latest_camera_save_request_id = 0
 
         self._build_ui()
         self._focus_window()
@@ -109,12 +115,14 @@ class ChannelSetupPanel:
         self._startup_load_in_flight = True
         self._status_load_busy = True
         self.status_var.set("Loading Channel Detection Setup...")
-        self._run_worker(
-            "Loading Channel Detection Setup...",
-            self._load_status_payload,
-            self._apply_status_payload,
-            lock_controls=False,
-        )
+        self._status_request_id += 1
+        request_id = self._status_request_id
+        self._latest_status_request_id = request_id
+
+        def on_success(payload: dict[str, Any]) -> None:
+            self._apply_status_payload(payload, request_id=request_id)
+
+        self._run_worker("Loading Channel Detection Setup...", self._load_status_payload, on_success, lock_controls=False)
 
     def _reset_transient_state(self) -> None:
         self._selected_points.clear()
@@ -368,12 +376,15 @@ class ChannelSetupPanel:
             "cameras": cameras,
         }
 
-    def _apply_status_payload(self, payload: dict[str, Any]) -> None:
+    def _apply_status_payload(self, payload: dict[str, Any], *, request_id: int | None = None) -> None:
         if self._closed:
+            return
+        if request_id is not None and request_id != self._latest_status_request_id:
             return
         self._startup_load_in_flight = False
         self._status_load_busy = False
         self._busy = False
+        self._action_busy = False
         self._update_control_states()
         status = self._to_namespace(payload["status"])
         cameras = payload.get("cameras") or {}
@@ -466,8 +477,10 @@ class ChannelSetupPanel:
     def _handle_capture_complete(self, payload: dict[str, Any]) -> None:
         if self._closed:
             return
+        self._set_busy(False)
         self._selected_points.clear()
         self._workflow_phase = "select_points"
+        self.background_state_var.set("Saved")
         self.selection_var.set("Background saved. Click the left channel end, then the right channel end.")
         camera_description = str(payload.get("camera_description", "")).strip()
         message = "Background captured."
@@ -478,18 +491,23 @@ class ChannelSetupPanel:
             self.status_callback("running", message)
         if callable(self.log_callback):
             self.log_callback(message)
-        self.refresh_status_and_preview()
+        self._capture_preview()
+        self._update_control_states()
 
     def _capture_preview(self) -> None:
-        self._run_worker(
-            "Capturing setup photo...",
-            self.actions.capture_preview,
-            self._handle_preview_complete,
-            lock_controls=False,
-        )
+        self._preview_request_id += 1
+        request_id = self._preview_request_id
+        self._latest_preview_request_id = request_id
 
-    def _handle_preview_complete(self, payload: dict[str, Any]) -> None:
+        def on_success(payload: dict[str, Any]) -> None:
+            self._handle_preview_complete(payload, request_id=request_id)
+
+        self._run_worker("Capturing setup photo...", self.actions.capture_preview, on_success, lock_controls=False)
+
+    def _handle_preview_complete(self, payload: dict[str, Any], *, request_id: int | None = None) -> None:
         if self._closed:
+            return
+        if request_id is not None and request_id != self._latest_preview_request_id:
             return
         if self._workflow_phase == "check_camera":
             self.status_var.set("Check the camera view, then click Next to capture the background.")
@@ -500,7 +518,7 @@ class ChannelSetupPanel:
             self.camera_status_var.set(f"Setup photo updated from {camera_description}.")
         if not self._load_preview_from_payload(payload):
             self._refresh_preview_bytes()
-        self.refresh_status_and_preview()
+        self._update_control_states()
 
     def _handle_camera_change(self, _event=None) -> None:
         if self._action_busy:
@@ -510,15 +528,24 @@ class ChannelSetupPanel:
         if selection is None:
             return
         device_reference, preferred_hint = selection
+        self._camera_save_request_id += 1
+        request_id = self._camera_save_request_id
+        self._latest_camera_save_request_id = request_id
+
+        def on_success(payload: dict[str, Any]) -> None:
+            self._handle_camera_selection_complete(payload, request_id=request_id)
+
         self._run_worker(
             "Saving channel camera selection...",
             lambda: self.actions.save_camera_selection(device_reference, preferred_hint),
-            self._handle_camera_selection_complete,
+            on_success,
             lock_controls=False,
         )
 
-    def _handle_camera_selection_complete(self, payload: dict[str, Any]) -> None:
+    def _handle_camera_selection_complete(self, payload: dict[str, Any], *, request_id: int | None = None) -> None:
         if self._closed:
+            return
+        if request_id is not None and request_id != self._latest_camera_save_request_id:
             return
         self._workflow_phase = "check_camera"
         self._selected_points.clear()
@@ -527,8 +554,21 @@ class ChannelSetupPanel:
         self.camera_status_var.set(message)
         if callable(self.log_callback):
             self.log_callback(message)
-        self._needs_preview_refresh = True
-        self.refresh_status_and_preview()
+        self._pil_image = None
+        self._photo = None
+        self._display_box = None
+        self.canvas.delete("all")
+        self.canvas.create_text(
+            max(120, self.canvas.winfo_width() // 2),
+            max(80, self.canvas.winfo_height() // 2),
+            text="Camera changed.\nCapturing a fresh setup photo...",
+            fill="#FFFFFF",
+            justify=tk.CENTER,
+            font=("Segoe UI", 12, "bold"),
+        )
+        self._update_selection_label()
+        self._update_control_states()
+        self._capture_preview()
 
     def _refresh_preview_bytes(self) -> None:
         try:
@@ -564,6 +604,13 @@ class ChannelSetupPanel:
         return True
 
     def _save_calibration(self) -> None:
+        if self._workflow_phase != "select_points":
+            messagebox.showwarning(
+                "Channel Detection Setup",
+                "Capture the background first, then click the left and right channel ends.",
+                parent=self.window,
+            )
+            return
         if len(self._selected_points) != 2:
             messagebox.showwarning(
                 "Channel Detection Setup",
