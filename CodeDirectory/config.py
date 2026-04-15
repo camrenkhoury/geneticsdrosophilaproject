@@ -57,7 +57,9 @@ TUBE_SECTION_LENGTH = TUBE_SECTION_LOCATION_END - TUBE_SECTION_LOCATION_START
 #### DELAYS ####
 # Increased gantry speed by ~1.8x by reducing the step pulse delay.
 DEFAULT_STEP_DELAY = 0.00010
-HOME_STEP_DELAY = 0.0001333333
+# Make the initial homing sweep much faster, but keep the fine re-approach
+# slower for repeatable zeroing accuracy.
+HOME_STEP_DELAY = 0.00006
 HOME_FINE_STEP_DELAY = 0.00024
 HOME_BACKOFF_MM = 2.0
 TIMING_FACTOR = 0.78125

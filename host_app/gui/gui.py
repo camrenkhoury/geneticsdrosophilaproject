@@ -2047,10 +2047,12 @@ class DrosophilaGUI:
         orchestrator_state = str(status.get("orchestrator_state") or "")
         if current_task:
             return True
-        busy_tokens = ("RUNNING", "REQUESTED", "STARTING", "VALIDATING", "APPLYING", "STOP")
-        return any(token in task_state.upper() for token in busy_tokens) or any(
-            token in orchestrator_state.upper() for token in busy_tokens
-        )
+        task_state_upper = task_state.upper()
+        orchestrator_state_upper = orchestrator_state.upper()
+        if task_state_upper.endswith("_RUNNING"):
+            return True
+        busy_orchestrator_tokens = ("_REQUESTED", "TASK_VALIDATING", "TASK_STARTING", "ACTUATOR_APPLYING", "TASK_STOPPING")
+        return any(token in orchestrator_state_upper for token in busy_orchestrator_tokens)
 
     def _apply_remote_status(self, status: dict) -> None:
         self._last_remote_status_snapshot = dict(status)
@@ -2465,7 +2467,7 @@ class DrosophilaGUI:
             self.message_var.set(str(payload.get("message", message)))
 
     def _get_remote_controller_for_automation(self) -> RemoteController:
-        if not self.is_remote_mode() or not self.remote_connected or self.remote_controller is None:
+        if not self.is_remote_mode() or self.remote_controller is None:
             raise RuntimeError("Connect to the Pi backend before starting the remote automated process.")
         return self.remote_controller
 
