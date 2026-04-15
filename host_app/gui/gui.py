@@ -2062,7 +2062,9 @@ class DrosophilaGUI:
         self.remote_stop_allowed = self.remote_connected and self.remote_backend_busy
 
         state_text = self._summarize_remote_state(status)
-        self.set_status(state_text, str(status.get("latest_message", "Remote status updated.")))
+        latest_message = str(status.get("latest_message", "Remote status updated."))
+        if self._should_apply_remote_status_banner(state_text):
+            self.set_status(state_text, latest_message)
         self.position_var.set(f"{float(status.get('current_position_mm', 0.0)):.2f} mm")
         self.mode_var.set("Remote Mode (Degraded)" if self.remote_backend_degraded else "Remote Mode")
         self.mode_label.config(bg="#FF9800" if self.remote_backend_degraded else "#4CAF50")
@@ -2100,6 +2102,16 @@ class DrosophilaGUI:
         recent_logs = status.get("recent_logs", []) or []
         self._append_remote_logs(recent_logs)
         self._update_control_interactivity()
+
+    def _should_apply_remote_status_banner(self, state_text: str) -> bool:
+        if not (self.worker_thread and self.worker_thread.is_alive() and self.current_task_name):
+            return True
+
+        normalized = str(state_text or "").upper()
+        if any(token in normalized for token in ("ERROR", "FAILED", "STOPPED", "DISCONNECT")):
+            return True
+
+        return False
 
     def _summarize_remote_state(self, status: dict) -> str:
         task_state = status.get("task_state")
@@ -4641,6 +4653,7 @@ class DrosophilaGUI:
     def _wait_for_remote_detection_result(self, previous_source_mtime: float | None, timeout_s: float = 60.0) -> dict:
         deadline = time.monotonic() + timeout_s
         last_status: dict | None = None
+        first_wait = True
         while time.monotonic() < deadline:
             self._check_stop()
             status = self._poll_remote_status_fresh()
@@ -4650,20 +4663,31 @@ class DrosophilaGUI:
             detection_summary = status.get("detection_summary", {}) or {}
             source_mtime_raw = detection_summary.get("source_mtime")
             source_mtime = float(source_mtime_raw) if source_mtime_raw is not None else None
-            preview_exists = bool(detection_summary.get("preview_exists", False))
-            preview_mtime_raw = detection_summary.get("preview_mtime")
-            preview_mtime = float(preview_mtime_raw) if preview_mtime_raw is not None else None
             if (
                 source_mtime is not None
                 and (previous_source_mtime is None or source_mtime > previous_source_mtime)
-                and preview_exists
-                and preview_mtime is not None
-                and preview_mtime >= source_mtime
             ):
+                self._trace_runtime(
+                    "channel-detect-remote",
+                    f"fresh result source_mtime={source_mtime} status={detection_summary.get('status', 'unknown')}",
+                    echo_to_log=False,
+                )
                 return status
+            if first_wait:
+                self._trace_runtime(
+                    "channel-detect-remote",
+                    f"waiting for fresh detection result after baseline={previous_source_mtime}",
+                    echo_to_log=False,
+                )
+                first_wait = False
             time.sleep(0.2)
         if last_status is not None and self._remote_status_has_terminal_error(last_status):
             raise RuntimeError(str(last_status.get("latest_message", "Remote channel detection failed.")))
+        self._trace_runtime(
+            "channel-detect-remote-timeout",
+            f"timed out waiting for source_mtime newer than {previous_source_mtime}",
+            echo_to_log=False,
+        )
         raise RuntimeError("Timed out waiting for a fresh remote channel detection result.")
 
     def _resolve_tube_for_classification(self, classification_result: dict) -> tuple[str, float]:
