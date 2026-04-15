@@ -644,6 +644,10 @@ class DrosophilaGUI:
         self._open_channel_setup_after_prep = False
         self._camera_role_panel: CameraRolePanel | None = None
         self._channel_setup_completed_this_session = False
+        self._last_debug_event = "Startup"
+        self._last_debug_detail = "GUI created."
+        self._last_debug_snapshot_stage: str | None = None
+        self._last_status_trace_key: tuple[str, str] | None = None
         self.entry_page_scale = self.entry_profile["scale"]
 
         self.state_var = tk.StringVar(value="IDLE")
@@ -674,6 +678,14 @@ class DrosophilaGUI:
             "T4": tk.StringVar(value="0 / 10"),
             "T5": tk.StringVar(value="0 / 10"),
         }
+        self.debug_task_var = tk.StringVar(value="task=idle")
+        self.debug_worker_var = tk.StringVar(value="worker=idle stop=clear")
+        self.debug_remote_var = tk.StringVar(value="remote=local")
+        self.debug_detection_state_var = tk.StringVar(value="detect=idle")
+        self.debug_preview_state_var = tk.StringVar(value="preview=idle")
+        self.debug_workspace_var = tk.StringVar(value="workspace=channel")
+        self.debug_event_var = tk.StringVar(value="Startup | GUI created.")
+        self.debug_trace_text = None
         self.device_state_labels: dict[str, tk.Label] = {}
         self.device_state_text: dict[str, tk.StringVar] = {}
         self.device_detail_text: dict[str, tk.StringVar] = {}
@@ -692,6 +704,7 @@ class DrosophilaGUI:
         self._clear_channel_preview_state(clear_artifacts=True, placeholder="Waiting for calibration or a current channel detection image...")
         self.set_status("idle", "Ready")
         self.log_message(f"Channel output directory: {self.output_dir_var.get()}")
+        self._update_debug_snapshot()
         self.update_position()
         self.update_channel_preview()
         self.process_queue()
@@ -2158,6 +2171,11 @@ class DrosophilaGUI:
             "count": None if chamber_count is None else int(chamber_count),
             "image_path": raw_result.get("image_path"),
         }
+        self._trace_runtime(
+            "classification-remote",
+            f"class={normalized_result['class']} confidence={normalized_result['confidence']:.4f} count={normalized_result['count']}",
+            echo_to_log=False,
+        )
         if self.current_task_name == "automated run":
             self.sort_detected_var.set(
                 "--" if normalized_result["count"] is None else str(int(normalized_result["count"]))
@@ -2237,15 +2255,19 @@ class DrosophilaGUI:
             self.preview_image = None
             self._last_remote_preview_source_mtime = None
             self.set_preview_placeholder("Remote channel detection image not available yet.")
+            self._trace_runtime("channel-preview-remote", "no image bytes returned", echo_to_log=False)
             return
 
         self.load_channel_preview_bytes(image_bytes)
         self._last_remote_preview_source_mtime = preview_mtime
+        self.last_preview_mtime = preview_mtime
+        self._trace_runtime("channel-preview-remote", f"applied preview_mtime={preview_mtime}", echo_to_log=False)
 
     def _fail_remote_preview(self, message: str) -> None:
         self._remote_preview_fetch_in_flight = False
         self.preview_image = None
         self.set_preview_placeholder(f"Remote preview unavailable:\n{message}")
+        self._trace_runtime("channel-preview-remote-error", message, echo_to_log=False)
 
     def _start_remote_command(
         self,
@@ -2271,6 +2293,7 @@ class DrosophilaGUI:
         self.remote_request_in_flight = True
         self.set_status(status_state, message)
         self.log_message(f"Sending remote {label} command.")
+        self._trace_runtime("remote-command-start", f"{label} | {message}", echo_to_log=False)
         self._update_control_interactivity()
 
         threading.Thread(
@@ -2296,6 +2319,7 @@ class DrosophilaGUI:
         message = str(response.get("message", f"Remote {label} request completed."))
         self.log_message(f"Remote {label}: {message}")
         self.set_status("running", message)
+        self._trace_runtime("remote-command-complete", f"{label} | {message}", echo_to_log=False)
         self._update_control_interactivity()
         if self.remote_sync is not None:
             self.remote_sync.request_immediate_poll()
@@ -2307,6 +2331,7 @@ class DrosophilaGUI:
             self.connection_var.set("Connected. Waiting for home calibration approval.")
         self.log_message(f"Remote {label} failed: {message}")
         self.set_status("error", message)
+        self._trace_runtime("remote-command-failed", f"{label} | {message}", echo_to_log=False)
         self._update_control_interactivity()
         if payload:
             self.message_var.set(str(payload.get("message", message)))
@@ -3229,6 +3254,7 @@ class DrosophilaGUI:
         tube_frame = ttk.LabelFrame(parent, text="Tube Counts", padding="10")
         tube_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
         tube_frame.columnconfigure(1, weight=1)
+        tube_frame.columnconfigure(4, weight=1)
         tube_roles = {
             "T1": "Damaged / Rejected",
             "T2": "Male",
@@ -3236,9 +3262,21 @@ class DrosophilaGUI:
             "T4": "Male",
             "T5": "Female",
         }
-        for row_index, tube_key in enumerate(("T1", "T2", "T3", "T4", "T5")):
-            ttk.Label(tube_frame, text=f"{tube_key}:", font=("Arial", 9, "bold")).grid(row=row_index, column=0, sticky=tk.W, pady=2)
-            ttk.Label(tube_frame, text=tube_roles[tube_key], font=("Arial", 8), foreground="#52606D").grid(row=row_index, column=1, sticky=tk.W, pady=2)
+        tube_layout = (
+            ("T1", 0, 0),
+            ("T2", 1, 0),
+            ("T3", 2, 0),
+            ("T4", 0, 3),
+            ("T5", 1, 3),
+        )
+        for tube_key, row_index, start_column in tube_layout:
+            ttk.Label(tube_frame, text=f"{tube_key}:", font=("Arial", 9, "bold")).grid(row=row_index, column=start_column, sticky=tk.W, pady=2)
+            ttk.Label(tube_frame, text=tube_roles[tube_key], font=("Arial", 8), foreground="#52606D").grid(
+                row=row_index,
+                column=start_column + 1,
+                sticky=tk.W,
+                pady=2,
+            )
             tk.Label(
                 tube_frame,
                 textvariable=self.sort_tube_count_vars[tube_key],
@@ -3249,7 +3287,7 @@ class DrosophilaGUI:
                 pady=2,
                 width=8,
                 anchor="center",
-            ).grid(row=row_index, column=2, sticky=tk.E, padx=(8, 0), pady=2)
+            ).grid(row=row_index, column=start_column + 2, sticky=tk.E, padx=(8, 12 if start_column == 0 else 0), pady=2)
 
         ttk.Label(summary_card, text="Notes:", font=("Arial", 9, "bold")).grid(row=len(sexing_rows) + 1, column=0, sticky=tk.NW, pady=(8, 2))
         tk.Label(
@@ -3368,7 +3406,50 @@ class DrosophilaGUI:
         log_frame = ttk.LabelFrame(parent, text="Activity Log", style="Log.TLabelframe", padding="10")
         log_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.N, tk.S, tk.W, tk.E), pady=(15, 0))
         log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
+        log_frame.rowconfigure(2, weight=1)
+
+        debug_frame = ttk.LabelFrame(log_frame, text="Runtime Debug", padding="8")
+        debug_frame.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        for column in range(2):
+            debug_frame.columnconfigure(column, weight=1)
+
+        debug_pairs = (
+            ("Task", self.debug_task_var),
+            ("Worker", self.debug_worker_var),
+            ("Remote", self.debug_remote_var),
+            ("Detection", self.debug_detection_state_var),
+            ("Preview", self.debug_preview_state_var),
+            ("Workspace", self.debug_workspace_var),
+            ("Last Event", self.debug_event_var),
+        )
+        for row_index, (label_text, value_var) in enumerate(debug_pairs):
+            ttk.Label(debug_frame, text=f"{label_text}:", font=("Arial", 8, "bold")).grid(row=row_index, column=0, sticky=tk.NW, pady=1)
+            tk.Label(
+                debug_frame,
+                textvariable=value_var,
+                bg="#111827",
+                fg="#E5E7EB",
+                relief="sunken",
+                font=("Consolas", 8),
+                padx=6,
+                pady=3,
+                anchor="w",
+                justify="left",
+                wraplength=1100,
+            ).grid(row=row_index, column=1, sticky=(tk.W, tk.E), pady=1)
+
+        self.debug_trace_text = scrolledtext.ScrolledText(
+            log_frame,
+            height=6,
+            wrap=tk.WORD,
+            font=("Consolas", 8),
+            bg="#111827",
+            fg="#D1D5DB",
+            insertbackground="#D1D5DB",
+            relief="sunken",
+            borderwidth=1,
+        )
+        self.debug_trace_text.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(8, 8))
 
         self.log_text = scrolledtext.ScrolledText(
             log_frame,
@@ -3379,7 +3460,7 @@ class DrosophilaGUI:
             relief="sunken",
             borderwidth=1,
         )
-        self.log_text.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        self.log_text.grid(row=2, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
 
     def create_footer_banners(self, parent, row: int, column: int, background: str, pady=(12, 0)):
         footer_frame = tk.Frame(parent, bg=background)
@@ -3812,6 +3893,7 @@ class DrosophilaGUI:
         except queue.Empty:
             pass
 
+        self._update_debug_snapshot()
         self.root.after(100, self.process_queue)
 
     def set_status(self, state: str, message: str):
@@ -3832,15 +3914,78 @@ class DrosophilaGUI:
             color = "#9E9E9E"
         self.state_label.config(bg=color)
         self.message_label.config(bg=color)
+        status_key = (str(state).upper(), str(message))
+        if status_key != self._last_status_trace_key:
+            self._last_status_trace_key = status_key
+            self._trace_runtime("status", f"{status_key[0]}: {status_key[1]}", echo_to_log=False)
 
     def log_message(self, message: str):
         timestamp = time.strftime("%H:%M:%S")
         self.log_text.insert(tk.END, f"{timestamp} - {message}\n")
         self.log_text.see(tk.END)
 
+    def _trace_runtime(self, event: str, detail: str = "", *, echo_to_log: bool = False) -> None:
+        normalized_event = str(event).strip() or "event"
+        normalized_detail = str(detail).strip()
+        self._last_debug_event = normalized_event
+        self._last_debug_detail = normalized_detail or "--"
+        display_text = normalized_event if not normalized_detail else f"{normalized_event} | {normalized_detail}"
+        self.debug_event_var.set(display_text)
+
+        if self.debug_trace_text is not None:
+            timestamp = time.strftime("%H:%M:%S")
+            line = f"{timestamp} [{normalized_event}]"
+            if normalized_detail:
+                line += f" {normalized_detail}"
+            self.debug_trace_text.insert(tk.END, line + "\n")
+            self.debug_trace_text.see(tk.END)
+            try:
+                line_count = int(float(self.debug_trace_text.index("end-1c").split(".")[0]))
+            except Exception:
+                line_count = 0
+            if line_count > 250:
+                self.debug_trace_text.delete("1.0", "51.0")
+
+        if echo_to_log:
+            self.log_message(f"[DEBUG] {display_text}")
+
+    def _update_debug_snapshot(self) -> None:
+        task_name = self.current_task_name or "idle"
+        worker_state = "alive" if self.worker_thread is not None and self.worker_thread.is_alive() else "idle"
+        stop_state = "set" if self.stop_requested.is_set() else "clear"
+        request_state = "in-flight" if self.remote_request_in_flight else "idle"
+        backend_state = "busy" if self.remote_backend_busy else "idle"
+        connection_state = "connected" if self.remote_connected else "disconnected"
+        calibration_state = "ready" if self._channel_setup_completed_this_session else "pending"
+        workspace_name = "--"
+        if self.workspace_notebook is not None:
+            with contextlib.suppress(Exception):
+                selected_tab = self.workspace_notebook.select()
+                workspace_name = str(self.workspace_notebook.tab(selected_tab, "text") or "--")
+
+        self.debug_task_var.set(
+            f"task={task_name} cancellable={self.current_task_cancellable} calibration={calibration_state}"
+        )
+        self.debug_worker_var.set(
+            f"worker={worker_state} stop={stop_state} startup_preview={self._startup_preview_requested}/{self._startup_preview_completed}"
+        )
+        self.debug_remote_var.set(
+            f"mode={'remote' if self.is_remote_mode() else 'local'} connection={connection_state} request={request_state} backend={backend_state}"
+        )
+        self.debug_detection_state_var.set(
+            f"awaiting={self._awaiting_current_detection} baseline={self._current_detection_baseline_mtime} last_result={self.last_result_mtime} used={self.last_used_detection_mtime}"
+        )
+        self.debug_preview_state_var.set(
+            f"preview_fetch={self._remote_preview_fetch_in_flight} last_preview={self.last_preview_mtime} remote_preview={self._last_remote_preview_source_mtime}"
+        )
+        self.debug_workspace_var.set(f"workspace={workspace_name} output={self.output_dir_var.get()}")
+
     def clear_log(self):
         self.log_text.delete("1.0", tk.END)
+        if self.debug_trace_text is not None:
+            self.debug_trace_text.delete("1.0", tk.END)
         self.log_message("Log cleared.")
+        self._trace_runtime("log", "Cleared activity and debug output.", echo_to_log=False)
 
     def update_actuator_state(self, actuator: str, enabled: bool):
         if actuator == "vacuum":
@@ -3901,6 +4046,7 @@ class DrosophilaGUI:
         self.set_controls_busy(True, cancellable=cancellable)
         self.set_status(state, message)
         self.log_message(f"Starting {name}.")
+        self._trace_runtime("task-start", f"{name} | {message}", echo_to_log=False)
 
         self.worker_thread = threading.Thread(
             target=self._task_runner,
@@ -3923,6 +4069,7 @@ class DrosophilaGUI:
             self.set_status(state, message)
 
         self.log_message(message)
+        self._trace_runtime("task-finished", f"{name} ok={ok} message={message}", echo_to_log=False)
 
     def _task_runner(self, name: str, target):
         writer = QueueWriter(self.ui_queue)
@@ -4025,6 +4172,11 @@ class DrosophilaGUI:
         self._startup_preview_requested = False
         self._startup_preview_completed = True
         self._show_workspace_tab("channel")
+        self._trace_runtime(
+            "channel-detect-local",
+            f"count={count} remaining={remaining} annotated={annotated_path.name}",
+            echo_to_log=False,
+        )
 
         if annotated_path.exists():
             self.load_channel_preview(annotated_path)
@@ -4070,6 +4222,7 @@ class DrosophilaGUI:
         if self.is_remote_mode():
             self._last_remote_preview_source_mtime = None
         self.set_preview_placeholder(placeholder)
+        self._trace_runtime("channel-session", placeholder, echo_to_log=False)
 
     def _clear_channel_preview_state(self, *, clear_artifacts: bool, placeholder: str) -> None:
         self.preview_image = None
@@ -4180,6 +4333,14 @@ class DrosophilaGUI:
             count = int(tube_info.get("count", 0) or 0)
             capacity = int(tube_info.get("capacity", 10) or 10)
             var.set(f"{count} / {capacity}")
+
+        if stage != self._last_debug_snapshot_stage:
+            self._last_debug_snapshot_stage = stage
+            self._trace_runtime(
+                "automation-stage",
+                f"stage={stage} cycle={cycle_index} destination={destination_label or '--'}",
+                echo_to_log=False,
+            )
 
     def update_channel_preview(self):
         if self.is_remote_mode():
@@ -4607,11 +4768,13 @@ class DrosophilaGUI:
 
     def _run_channel_detection_worker(self):
         self.worker_status("detecting", "Capturing channel image with fin6 settings.")
+        self._trace_runtime("channel-detect-worker", "starting local channel detection", echo_to_log=False)
         capture = self._run_local_channel_detection_capture()
         result = capture.get("result") or {}
         count = int(result.get("count", 0))
         remaining = bool(result.get("fly_remaining", False))
         self.worker_log(f"Channel detection complete. remaining={remaining} count={count}")
+        self._trace_runtime("channel-detect-worker", f"complete remaining={remaining} count={count}", echo_to_log=False)
 
     def _classify_worker(self):
         runtime = self._load_local_runtime()
@@ -4638,6 +4801,7 @@ class DrosophilaGUI:
 
     def _run_automated_worker(self):
         final_operation = importlib.import_module("pi_app.legacy_pi.FinalOperation")
+        self._trace_runtime("automation", "entered FinalOperation.run_operation", echo_to_log=False)
         home_callable = None
         move_callable = None
         vacuum_callable = None
