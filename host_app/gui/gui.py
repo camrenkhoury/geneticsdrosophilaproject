@@ -773,6 +773,14 @@ class DrosophilaGUI:
             "Open Assay Setup now?"
         )
 
+    def _automated_start_motion_message(self) -> str:
+        return (
+            "Automated Run is ready to start.\n\n"
+            "The machine will home first, then begin the automated motion sequence and move "
+            "through the imaging/classification positions.\n\n"
+            "Is it okay to start that motion now?"
+        )
+
     def _refresh_workspace_copy(self) -> None:
         location = "the Pi" if self.is_remote_mode() else "this machine"
         self.channel_workspace_summary_var.set(
@@ -4310,6 +4318,13 @@ class DrosophilaGUI:
             if runtime is None:
                 return
         if not self._ensure_channel_setup_ready_or_begin_setup("Automated Run", self.run_automated):
+            return
+        should_start_motion = messagebox.askyesno(
+            "Start Automated Run?",
+            self._automated_start_motion_message(),
+        )
+        if not should_start_motion:
+            self.set_status("idle", "Automated Run cancelled before homing.")
             return
         self._begin_new_detection_session(placeholder="Waiting for current channel detection image...")
         self._reset_sorting_status_display()

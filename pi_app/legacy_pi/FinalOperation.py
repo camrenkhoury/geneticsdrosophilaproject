@@ -250,7 +250,7 @@ def run_operation(
     def clamp_operational(position_mm: float) -> float:
         return max(0.0, min(float(position_mm), float(get_operational_max_mm_callable())))
 
-    camera_photo_position = clamp_operational(config.CHANNEL_LOCATION_END + 43.0)
+    camera_photo_position = clamp_operational(config.CHAMBER_CENTER + 23.0)
     _publish_snapshot(tube_states, snapshot_callback=snapshot_callback, stage="idle")
 
     try:

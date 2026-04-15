@@ -79,6 +79,7 @@ class ChannelSetupPanel:
         self._closed = False
         self._needs_preview_refresh = True
         self._startup_load_in_flight = False
+        self._workflow_phase = "check_camera"
 
         self._build_ui()
         self._focus_window()
@@ -121,7 +122,8 @@ class ChannelSetupPanel:
         self._photo = None
         self._display_box = None
         self._needs_preview_refresh = True
-        self.selection_var.set("Pick the left channel end, then the right channel end.")
+        self._workflow_phase = "check_camera"
+        self.selection_var.set("Check the camera view, then click Next to capture the background automatically.")
 
     def _build_ui(self) -> None:
         self.window.columnconfigure(0, weight=1)
@@ -200,7 +202,7 @@ class ChannelSetupPanel:
             row=4, column=0, sticky="ew", pady=(6, 10)
         )
 
-        self.capture_button = ttk.Button(controls, text="Capture Background", command=self._capture_background)
+        self.capture_button = ttk.Button(controls, text="Next: Capture Background", command=self._confirm_camera_and_capture_background)
         self.capture_button.grid(row=5, column=0, sticky="ew")
         self.preview_button = ttk.Button(controls, text="Refresh Photo", command=self._capture_preview)
         self.preview_button.grid(row=6, column=0, sticky="ew", pady=(8, 0))
@@ -268,11 +270,6 @@ class ChannelSetupPanel:
     def _update_control_states(self) -> None:
         state = tk.DISABLED if self._action_busy else tk.NORMAL
         entry_state = "disabled" if self._action_busy else "normal"
-        for widget in (self.capture_button, self.preview_button, self.reset_points_button, self.save_button):
-            try:
-                widget.config(state=state)
-            except tk.TclError:
-                pass
         try:
             self.cancel_button.config(state=tk.NORMAL)
         except tk.TclError:
@@ -285,16 +282,29 @@ class ChannelSetupPanel:
             self.camera_combo.config(state="disabled" if self._action_busy else "readonly")
         except tk.TclError:
             pass
-        if not self._selected_points:
-            try:
-                self.save_button.config(state=tk.DISABLED)
-            except tk.TclError:
-                pass
-        elif len(self._selected_points) < 2 or self._action_busy:
-            try:
-                self.save_button.config(state=tk.DISABLED)
-            except tk.TclError:
-                pass
+        preview_ready = self._pil_image is not None
+        is_check_camera = self._workflow_phase == "check_camera"
+        is_select_points = self._workflow_phase == "select_points"
+
+        try:
+            self.preview_button.config(state=tk.DISABLED if self._action_busy else tk.NORMAL)
+        except tk.TclError:
+            pass
+        try:
+            next_state = tk.NORMAL if (not self._action_busy and preview_ready and is_check_camera) else tk.DISABLED
+            self.capture_button.config(state=next_state)
+        except tk.TclError:
+            pass
+        try:
+            reset_state = tk.NORMAL if (not self._action_busy and is_select_points) else tk.DISABLED
+            self.reset_points_button.config(state=reset_state)
+        except tk.TclError:
+            pass
+        try:
+            save_state = tk.NORMAL if (not self._action_busy and is_select_points and len(self._selected_points) == 2) else tk.DISABLED
+            self.save_button.config(state=save_state)
+        except tk.TclError:
+            pass
 
     def _run_worker(
         self,
@@ -375,10 +385,10 @@ class ChannelSetupPanel:
             camera_description = str(getattr(status.channel, "camera_description", "") or "").strip()
             self.camera_status_var.set(camera_description or "Camera will be auto-detected.")
         self._apply_camera_options(cameras)
-        if getattr(status, "channel_background_ready", False):
-            self.status_var.set("Background ready. Capture again if you need a new clean reference.")
+        if getattr(status, "channel_background_ready", False) and getattr(status, "channel_calibration_ready", False):
+            self.status_var.set("Saved setup exists. Refresh the photo and click Next if you want to recalibrate.")
         else:
-            self.status_var.set("Capture a clean channel background to begin setup.")
+            self.status_var.set("Check the camera view. If it looks correct, click Next to capture the background.")
         if self._pil_image is None:
             self._pil_image = None
             self._photo = None
@@ -435,10 +445,29 @@ class ChannelSetupPanel:
             self._handle_capture_complete,
         )
 
+    def _confirm_camera_and_capture_background(self) -> None:
+        if self._pil_image is None:
+            messagebox.showwarning(
+                "Channel Detection Setup",
+                "Refresh the photo and confirm the camera view before continuing.",
+                parent=self.window,
+            )
+            return
+        should_continue = messagebox.askyesno(
+            "Use This Camera View?",
+            "If the camera view looks correct, click Yes to capture the clean channel background automatically.\n\n"
+            "Make sure the channel is empty and the nozzle is out of view before continuing.",
+            parent=self.window,
+        )
+        if not should_continue:
+            return
+        self._capture_background()
+
     def _handle_capture_complete(self, payload: dict[str, Any]) -> None:
         if self._closed:
             return
         self._selected_points.clear()
+        self._workflow_phase = "select_points"
         self.selection_var.set("Background saved. Click the left channel end, then the right channel end.")
         camera_description = str(payload.get("camera_description", "")).strip()
         message = "Background captured."
@@ -462,7 +491,10 @@ class ChannelSetupPanel:
     def _handle_preview_complete(self, payload: dict[str, Any]) -> None:
         if self._closed:
             return
-        self.status_var.set("Setup photo updated.")
+        if self._workflow_phase == "check_camera":
+            self.status_var.set("Check the camera view, then click Next to capture the background.")
+        else:
+            self.status_var.set("Setup photo updated.")
         camera_description = str(payload.get("camera_description", "")).strip()
         if camera_description:
             self.camera_status_var.set(f"Setup photo updated from {camera_description}.")
@@ -488,7 +520,9 @@ class ChannelSetupPanel:
     def _handle_camera_selection_complete(self, payload: dict[str, Any]) -> None:
         if self._closed:
             return
-        self.status_var.set("Channel camera selection saved.")
+        self._workflow_phase = "check_camera"
+        self._selected_points.clear()
+        self.status_var.set("Channel camera selection saved. Refresh the photo and confirm the camera view.")
         message = str(payload.get("message", "Channel camera selection saved."))
         self.camera_status_var.set(message)
         if callable(self.log_callback):
@@ -603,7 +637,7 @@ class ChannelSetupPanel:
                 self.canvas.create_line(left[0], left[1], right[0], right[1], fill="#00E676", width=2)
 
     def _handle_canvas_click(self, event) -> None:
-        if self._busy or self._pil_image is None:
+        if self._busy or self._pil_image is None or self._workflow_phase != "select_points":
             return
         image_point = self._canvas_to_image((event.x, event.y))
         if image_point is None:
@@ -618,11 +652,15 @@ class ChannelSetupPanel:
 
     def _reset_points(self) -> None:
         self._selected_points.clear()
+        self._workflow_phase = "select_points"
         self._update_selection_label()
         self._render_preview()
         self._update_control_states()
 
     def _update_selection_label(self) -> None:
+        if self._workflow_phase == "check_camera":
+            self.selection_var.set("Check the camera view, then click Next to capture the background automatically.")
+            return
         if len(self._selected_points) == 0:
             self.selection_var.set("Pick the left channel end, then the right channel end.")
         elif len(self._selected_points) == 1:
