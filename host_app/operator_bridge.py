@@ -733,7 +733,6 @@ def save_channel_calibration_from_points(
     channel_mm: float | None = None,
 ) -> dict[str, Any]:
     import cv2
-    import shutil
 
     from vision.fin6.fly_x_detector import estimate_channel_crop_from_background, save_calibration
 
@@ -749,9 +748,6 @@ def save_channel_calibration_from_points(
     background_gray = cv2.imread(str(background_source_path), cv2.IMREAD_GRAYSCALE)
     if background_gray is None:
         raise FileNotFoundError(f"Could not read channel setup photo: {background_source_path}")
-
-    if background_source_path.resolve() != channel.background_path.resolve():
-        shutil.copyfile(background_source_path, channel.background_path)
 
     left_pt = (int(left_point_px[0]), int(left_point_px[1]))
     right_pt = (int(right_point_px[0]), int(right_point_px[1]))
@@ -770,6 +766,7 @@ def save_channel_calibration_from_points(
         crop_above_px=crop_above_px,
         crop_below_px=crop_below_px,
     )
+    capture_channel_background_from_saved_settings(frame_count=15)
     return {
         "background_path": str(Path(channel.background_path).resolve()),
         "calibration_path": str(Path(channel.calibration_path).resolve()),
