@@ -17,6 +17,8 @@ import config
 SETTINGS_PATH = FIN6_DIR / ".fly_tracking_gui_settings.json"
 CHANNEL_ARTIFACT_TRACE_PATH = FIN6_DIR / ".channel_artifact_trace.log"
 CHANNEL_SETUP_SOURCE_PATH = FIN6_DIR / "backgrounds" / "channel_setup_source.png"
+CHANNEL_PHOTO_POSITION_MM = 191.0
+CHANNEL_PHOTO_POSITION_TOL_MM = 1.0
 
 _DEFAULT_PROJECT_PATHS: dict[str, Path] = {
     "channel_background_var": FIN6_DIR / "backgrounds" / "channel_bg.png",
@@ -65,6 +67,52 @@ def _append_channel_artifact_trace(event: str, **fields: Any) -> None:
             handle.write(json.dumps(payload, sort_keys=True) + "\n")
     except OSError:
         pass
+
+
+def _ensure_channel_photo_position(*, reason: str) -> dict[str, Any]:
+    try:
+        import motion
+    except Exception as exc:
+        raise RuntimeError(f"Channel photo position guard could not import motion module: {exc}") from exc
+
+    target_mm = float(CHANNEL_PHOTO_POSITION_MM)
+    tolerance_mm = float(CHANNEL_PHOTO_POSITION_TOL_MM)
+    requested_move = False
+    before_position = float(motion.get_current_position())
+
+    if abs(before_position - target_mm) > tolerance_mm:
+        requested_move = True
+        motion.move_to_absolute(target_mm)
+        after_first_move = float(motion.get_current_position())
+        if abs(after_first_move - target_mm) > tolerance_mm:
+            motion.move_to_absolute(target_mm)
+        final_position = float(motion.get_current_position())
+    else:
+        final_position = before_position
+
+    _append_channel_artifact_trace(
+        "ensure_channel_photo_position",
+        reason=reason,
+        target_mm=target_mm,
+        tolerance_mm=tolerance_mm,
+        before_position_mm=before_position,
+        requested_move=requested_move,
+        final_position_mm=final_position,
+    )
+
+    if abs(final_position - target_mm) > tolerance_mm:
+        raise RuntimeError(
+            f"Channel photo position guard failed for {reason}: expected {target_mm:.2f} mm, "
+            f"but gantry position is {final_position:.2f} mm."
+        )
+
+    return {
+        "target_mm": target_mm,
+        "tolerance_mm": tolerance_mm,
+        "before_position_mm": before_position,
+        "requested_move": requested_move,
+        "final_position_mm": final_position,
+    }
 
 
 @dataclass(frozen=True)
@@ -673,6 +721,7 @@ def capture_channel_background_from_saved_settings(*, frame_count: int = 15) -> 
     status = get_setup_status()
     channel = status.channel
     channel.background_path.parent.mkdir(parents=True, exist_ok=True)
+    position_guard = _ensure_channel_photo_position(reason="capture_channel_background")
 
     saved_path = capture_brio_background(
         output_path=channel.background_path,
@@ -684,6 +733,7 @@ def capture_channel_background_from_saved_settings(*, frame_count: int = 15) -> 
     )
     return {
         "background_path": str(Path(saved_path).resolve()),
+        "position_guard": position_guard,
         "camera_description": _camera_description(
             channel.device,
             role="channel",
@@ -702,6 +752,7 @@ def capture_channel_preview_from_saved_settings() -> dict[str, Any]:
     preview_path = FIN6_DIR / "backgrounds" / "channel_setup_preview.jpg"
     source_path = CHANNEL_SETUP_SOURCE_PATH
     preview_path.parent.mkdir(parents=True, exist_ok=True)
+    position_guard = _ensure_channel_photo_position(reason="capture_channel_preview")
 
     with BrioCamera(
         BrioConfig(
@@ -751,6 +802,7 @@ def capture_channel_preview_from_saved_settings() -> dict[str, Any]:
         preview_shape=list(preview_bgr.shape),
         saved_background_path=channel.background_path,
         saved_background_touched=False,
+        position_guard=position_guard,
     )
 
     return {
@@ -760,6 +812,7 @@ def capture_channel_preview_from_saved_settings() -> dict[str, Any]:
         "preview_size": [int(preview_bgr.shape[1]), int(preview_bgr.shape[0])],
         "background_path": str(channel.background_path.resolve()),
         "preview_jpeg_base64": preview_b64,
+        "position_guard": position_guard,
         "camera_description": _camera_description(
             channel.device,
             role="channel",
@@ -841,6 +894,7 @@ def detect_channel_once_from_saved_settings() -> dict[str, Any]:
 
     channel = status.channel
     channel.output_dir.mkdir(parents=True, exist_ok=True)
+    position_guard = _ensure_channel_photo_position(reason="detect_channel_runtime_capture")
 
     background_bgr = cv2.imread(str(channel.background_path), cv2.IMREAD_COLOR)
     if background_bgr is None:
@@ -871,6 +925,7 @@ def detect_channel_once_from_saved_settings() -> dict[str, Any]:
         calibration_path=channel.calibration_path,
         runtime_frame_source="camera.read",
         runtime_frame_shape=list(frame_bgr.shape),
+        position_guard=position_guard,
         raw_output_path=channel.output_dir / "last_channel_raw.jpg",
         annotated_output_path=channel.output_dir / "last_channel_annotated.png",
         mask_output_path=channel.output_dir / "last_channel_mask.png",
@@ -940,6 +995,7 @@ def detect_channel_once_from_saved_settings() -> dict[str, Any]:
         "annotated_path": annotated_path,
         "mask_path": mask_path,
         "result_path": result_path,
+        "position_guard": position_guard,
         "camera_description": _camera_description(
             channel.device,
             role="channel",

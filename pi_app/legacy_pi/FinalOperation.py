@@ -70,6 +70,8 @@ def _publish_snapshot(
     destination_label: str | None = None,
     stage: str | None = None,
     lost_count: int = 0,
+    retry_count: int = 0,
+    discard_count: int = 0,
 ) -> None:
     if snapshot_callback is None:
         return
@@ -98,6 +100,8 @@ def _publish_snapshot(
             "destination_key": destination_key,
             "destination_label": destination_label,
             "lost_count": int(lost_count),
+            "retry_count": int(retry_count),
+            "discard_count": int(discard_count),
             "tube_counts": {
                 key: {
                     "label": tube.label,
@@ -202,7 +206,7 @@ def _resolve_destination(
     confidence = float(classification_result.get("confidence", 0.0) or 0.0)
     chamber_count = int(classification_result.get("count", 0) or 0)
 
-    if chamber_count == 2:
+    if chamber_count >= 2:
         reject_tube = tube_states["T1"]
         if reject_tube.count < reject_tube.capacity:
             return reject_tube, "multiple flies in chamber"
@@ -344,6 +348,18 @@ def run_operation(
     repeated_count_signature: tuple[int, int, int] | None = None
     repeated_count_streak = 0
     lost_fly_count = 0
+    retry_pickup_count = 0
+    discarded_overflow_count = 0
+
+    def publish_snapshot(**kwargs: Any) -> None:
+        _publish_snapshot(
+            tube_states,
+            snapshot_callback=snapshot_callback,
+            lost_count=lost_fly_count,
+            retry_count=retry_pickup_count,
+            discard_count=discarded_overflow_count,
+            **kwargs,
+        )
 
     def check_stop() -> None:
         if stop_requested is not None and stop_requested():
@@ -359,7 +375,7 @@ def run_operation(
     chamber_observe_position_mm = 191.0
     camera_photo_position = clamp_operational(channel_photo_position_mm)
     chamber_observe_position = clamp_operational(chamber_observe_position_mm)
-    _publish_snapshot(tube_states, snapshot_callback=snapshot_callback, stage="idle")
+    publish_snapshot(stage="idle")
 
     try:
         while True:
@@ -435,16 +451,13 @@ def run_operation(
                                     f"Marked {missed_pickups} fly/flies as lost and reverted the recent tube count(s): "
                                     f"{', '.join(reconciled_keys)}. Lost total={lost_fly_count}."
                                 )
-                                _publish_snapshot(
-                                    tube_states,
-                                    snapshot_callback=snapshot_callback,
+                                publish_snapshot(
                                     cycle_index=cycle_index,
                                     detection_count=current_detection_count,
                                     classification_result=last_classification,
                                     destination_key=None if last_destination is None else last_destination.key,
                                     destination_label=None if last_destination is None else last_destination.label,
                                     stage="lost",
-                                    lost_count=lost_fly_count,
                                 )
                             repeated_count_signature = None
                             repeated_count_streak = 0
@@ -453,12 +466,9 @@ def run_operation(
                         repeated_count_streak = 0
 
                 last_detection_count = current_detection_count
-                _publish_snapshot(
-                    tube_states,
-                    snapshot_callback=snapshot_callback,
+                publish_snapshot(
                     cycle_index=cycle_index,
                     detection_count=last_detection_count,
-                    lost_count=lost_fly_count,
                     stage="detecting",
                 )
 
@@ -517,16 +527,13 @@ def run_operation(
             status("running", f"Cycle {cycle_index}: waiting for chamber classification window.")
             _sleep_with_stop(chamber_settle_s, stop_requested)
 
-            _publish_snapshot(
-                tube_states,
-                snapshot_callback=snapshot_callback,
+            publish_snapshot(
                 cycle_index=cycle_index,
                 detection_count=last_detection_count,
                 pickup_position_mm=pickup_position,
                 classification_result=last_classification,
                 destination_key=None if last_destination is None else last_destination.key,
                 destination_label=None if last_destination is None else last_destination.label,
-                lost_count=lost_fly_count,
                 stage="classifying",
             )
             status("running", f"Cycle {cycle_index}: classifying fly.")
@@ -535,68 +542,59 @@ def run_operation(
             chamber_count = int(last_classification.get("count", 0) or 0)
             class_name = str(last_classification.get("class", "UNCERTAIN") or "UNCERTAIN").strip().lower()
             classification_errors = list(last_classification.get("errors", []) or [])
+            count_detail = str(last_classification.get("count_detail", "") or "").strip()
             log(
                 f"Cycle {cycle_index}: classification={last_classification.get('class', 'UNCERTAIN')} "
-                f"confidence={confidence:.4f} count={chamber_count} errors={last_classification.get('errors', [])}"
+                f"confidence={confidence:.4f} count={chamber_count} errors={last_classification.get('errors', [])} "
+                f"count_detail={count_detail}"
             )
 
-            if chamber_count >= 3:
-                _publish_snapshot(
-                    tube_states,
-                    snapshot_callback=snapshot_callback,
+            if chamber_count <= 0:
+                retry_pickup_count += 1
+                publish_snapshot(
                     cycle_index=cycle_index,
                     detection_count=last_detection_count,
                     pickup_position_mm=pickup_position,
                     classification_result=last_classification,
                     destination_key=None,
-                    destination_label="Channel Recovery",
-                    lost_count=lost_fly_count,
-                    stage="recovering",
+                    destination_label="Channel Recheck",
+                    stage="redetecting",
                 )
-                _return_grouped_flies_to_channel(
-                    cycle_index=cycle_index,
-                    move_absolute=move_absolute_callable,
-                    set_vacuum=set_vacuum_callable,
-                    clamp_operational=clamp_operational,
-                    status=status,
-                    log=log,
-                    stop_requested=stop_requested,
-                    chamber_release_settle_s=chamber_release_settle_s,
-                    chamber_pickup_s=chamber_pickup_s,
+                log(
+                    f"Cycle {cycle_index}: chamber classification detected 0 flies. "
+                    "Skipping chamber pickup/routing and forcing a fresh channel detection pass."
                 )
+                status("moving", f"Cycle {cycle_index}: chamber appears empty. Resetting to channel re-detect position.")
+                set_vacuum_callable(False)
+                move_absolute_callable(chamber_observe_position)
                 pending_pickup_positions = []
                 flies_taken_from_current_detection = max_flies_per_detection
                 first_pickup_after_detection = False
                 last_destination = None
-                _publish_snapshot(
-                    tube_states,
-                    snapshot_callback=snapshot_callback,
+                publish_snapshot(
                     cycle_index=cycle_index,
                     detection_count=last_detection_count,
                     pickup_position_mm=None,
                     classification_result=last_classification,
                     destination_key=None,
-                    destination_label="Channel Recovery",
-                    lost_count=lost_fly_count,
-                    stage="recovered",
+                    destination_label="Channel Recheck",
+                    stage="rechecking",
                 )
-                log(f"Cycle {cycle_index}: grouped-fly recovery complete. Triggering a fresh channel detection.")
                 continue
 
             # Tube routing is determined strictly from the classification result
             # plus current tube capacities.
             destination_tube, destination_reason = _resolve_destination(last_classification, tube_states)
+            if chamber_count >= 2:
+                discarded_overflow_count += 1
             last_destination = destination_tube
-            _publish_snapshot(
-                tube_states,
-                snapshot_callback=snapshot_callback,
+            publish_snapshot(
                 cycle_index=cycle_index,
                 detection_count=last_detection_count,
                 pickup_position_mm=pickup_position,
                 classification_result=last_classification,
                 destination_key=destination_tube.key,
                 destination_label=destination_tube.label,
-                lost_count=lost_fly_count,
                 stage="classified",
             )
 
@@ -638,16 +636,13 @@ def run_operation(
                 f"Cycle {cycle_index}: routed to {destination_tube.label} "
                 f"({destination_reason}). Count now {destination_tube.count}/{destination_tube.capacity}."
             )
-            _publish_snapshot(
-                tube_states,
-                snapshot_callback=snapshot_callback,
+            publish_snapshot(
                 cycle_index=cycle_index,
                 detection_count=last_detection_count,
                 pickup_position_mm=pickup_position,
                 classification_result=last_classification,
                 destination_key=destination_tube.key,
                 destination_label=destination_tube.label,
-                lost_count=lost_fly_count,
                 stage="routed",
             )
 
@@ -672,15 +667,12 @@ def run_operation(
         except Exception:
             pass
 
-    _publish_snapshot(
-        tube_states,
-        snapshot_callback=snapshot_callback,
+    publish_snapshot(
         cycle_index=cycle_index,
         detection_count=last_detection_count,
         classification_result=last_classification,
         destination_key=None if last_destination is None else last_destination.key,
         destination_label=None if last_destination is None else last_destination.label,
-        lost_count=lost_fly_count,
         stage="complete",
     )
     status("idle", "Automated run complete.")
@@ -690,6 +682,8 @@ def run_operation(
             for key, tube in tube_states.items()
         },
         "lost_count": int(lost_fly_count),
+        "retry_count": int(retry_pickup_count),
+        "discard_count": int(discarded_overflow_count),
         "last_classification": last_classification,
         "last_destination": None if last_destination is None else last_destination.key,
     }

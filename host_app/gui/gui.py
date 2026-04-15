@@ -672,6 +672,8 @@ class DrosophilaGUI:
         self.sort_last_sex_var = tk.StringVar(value="--")
         self.sort_confidence_var = tk.StringVar(value="--")
         self.sort_destination_var = tk.StringVar(value="--")
+        self.sort_retry_var = tk.StringVar(value="0")
+        self.sort_discard_var = tk.StringVar(value="0")
         self.sort_notes_var = tk.StringVar(value="Tube counts and classifier output will appear here during automated loading.")
         self.channel_workspace_summary_var = tk.StringVar(value="")
         self.sexing_workspace_summary_var = tk.StringVar(value="")
@@ -2553,7 +2555,12 @@ class DrosophilaGUI:
                 response = controller.stop()
                 message = str(response.get("message", "Emergency stop request sent to Pi backend."))
                 self.ui_queue.put(("log", f"Remote stop: {message}"))
+                self.ui_queue.put(("actuator", "vacuum", False))
+                self.ui_queue.put(("actuator", "vibration", False))
                 self.ui_queue.put(("status", "stopped", "Emergency stop sent to Pi backend."))
+                with contextlib.suppress(Exception):
+                    status = controller.get_status_fresh()
+                    self.ui_queue.put(("remote_status", status))
             except Exception as exc:
                 self.ui_queue.put(("log", f"Remote stop failed: {exc}"))
                 self.ui_queue.put(("status", "error", f"Emergency stop request failed: {exc}"))
@@ -2760,11 +2767,9 @@ class DrosophilaGUI:
 
         stop_enabled = False
         if self.is_remote_mode():
-            stop_enabled = self.remote_connected and (
-                self.remote_stop_allowed or (self.local_task_busy and self.local_task_cancellable)
-            )
+            stop_enabled = True
         else:
-            stop_enabled = self.local_task_busy and self.local_task_cancellable
+            stop_enabled = True
 
         self.stop_button.config(state=tk.NORMAL if stop_enabled else tk.DISABLED)
         self.reset_button.config(state=tk.DISABLED if busy or (self.is_remote_mode() and not self.remote_connected) else tk.NORMAL)
@@ -3453,11 +3458,13 @@ class DrosophilaGUI:
             ("Cycle", self.sort_cycle_var),
             ("In Chamber", self.sort_detected_var),
             ("Pickup X", self.sort_pickup_var),
+            ("Retries", self.sort_retry_var),
         ]
         right_rows = [
             ("Last Sex", self.sort_last_sex_var),
             ("Confidence", self.sort_confidence_var),
             ("Destination", self.sort_destination_var),
+            ("Discards", self.sort_discard_var),
         ]
 
         for row_index, (label_text, value_var) in enumerate(left_rows, start=1):
@@ -4247,10 +4254,14 @@ class DrosophilaGUI:
             }
             try:
                 if self.is_remote_mode() and self.remote_connected and self.remote_controller is not None:
-                    with contextlib.suppress(Exception):
-                        self.remote_controller.set_vacuum(False)
-                    with contextlib.suppress(Exception):
-                        self.remote_controller.set_vibration(False)
+                    stop_response = self.remote_controller.stop()
+                    payload["remote_stop_message"] = str(
+                        stop_response.get("message", "Emergency stop acknowledged during failure recovery.")
+                    )
+                    self.ui_queue.put(("log", f"Failure recovery remote stop: {payload['remote_stop_message']}"))
+                    self.ui_queue.put(("actuator", "vacuum", False))
+                    self.ui_queue.put(("actuator", "vibration", False))
+                    time.sleep(0.2)
                     with contextlib.suppress(Exception):
                         status = self.remote_controller.get_status_fresh()
                         self.ui_queue.put(("remote_status", status))
@@ -4564,6 +4575,8 @@ class DrosophilaGUI:
         self.sort_last_sex_var.set("--")
         self.sort_confidence_var.set("--")
         self.sort_destination_var.set("--")
+        self.sort_retry_var.set("0")
+        self.sort_discard_var.set("0")
         self.sort_notes_var.set("Tube counts and classifier output will appear here during automated loading.")
         self._last_sexing_preview_key = None
         self.set_sexing_preview_placeholder("Waiting for classification image...")
@@ -4677,12 +4690,16 @@ class DrosophilaGUI:
         destination_label = snapshot.get("destination_label")
         classification = snapshot.get("classification") or {}
         classification_count = classification.get("count")
+        retry_count = int(snapshot.get("retry_count") or 0)
+        discard_count = int(snapshot.get("discard_count") or 0)
 
         self.sort_stage_var.set(stage.replace("_", " ").title())
         self.sort_cycle_var.set(str(cycle_index))
         self.sort_detected_var.set("--" if classification_count is None else str(int(classification_count)))
         self.sort_pickup_var.set("--" if pickup_position is None else f"{float(pickup_position):.2f} mm")
         self.sort_destination_var.set(str(destination_label or "--"))
+        self.sort_retry_var.set(str(retry_count))
+        self.sort_discard_var.set(str(discard_count))
 
         class_name = str(classification.get("class") or "--")
         self.sort_last_sex_var.set(class_name.title() if class_name.lower() in {"male", "female"} else class_name)
