@@ -2598,7 +2598,13 @@ class DrosophilaGUI:
         )
         if not self._backend_busy_from_status(status) and state_changed:
             if self._remote_status_has_terminal_error(status):
-                raise RuntimeError(str(status.get("latest_message", f"Remote {label} failed.")))
+                raise RuntimeError(
+                    f"Remote {label} failed: "
+                    f"task_state={status.get('task_state')} "
+                    f"orchestrator_state={status.get('orchestrator_state')} "
+                    f"current_task={status.get('current_task')} "
+                    f"message={status.get('latest_message', f'Remote {label} failed.')}"
+                )
             self._trace_runtime(
                 "remote-command-wait-immediate",
                 (

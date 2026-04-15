@@ -154,6 +154,7 @@ class BackendApiContext:
                     )
 
             self.runtime_state.set_stop_requested(False)
+            self.runtime_state.clear_task_tracking(f"Accepted {command} request.")
             self.runtime_state.set_orchestrator_state(
                 OrchestratorState.TASK_VALIDATING,
                 f"Accepted {command} request.",

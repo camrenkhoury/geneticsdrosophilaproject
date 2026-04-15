@@ -25,11 +25,13 @@ def require_api_key(
             detail="Invalid or missing API key.",
         )
 
+    snapshot = context.runtime_state.snapshot()
+    controller_message = "Remote client connected." if snapshot.controller_state != ClientControllerState.CLIENT_CONNECTED else None
     context.runtime_state.set_controller_state(
         ClientControllerState.CLIENT_CONNECTED,
-        "Remote client connected.",
+        controller_message,
     )
-    if context.runtime_state.snapshot().backend_lifecycle_state == BackendLifecycleState.WAITING_FOR_CLIENT:
+    if snapshot.backend_lifecycle_state == BackendLifecycleState.WAITING_FOR_CLIENT:
         context.runtime_state.set_backend_lifecycle_state(
             BackendLifecycleState.BACKEND_READY,
             "Backend ready for remote control.",

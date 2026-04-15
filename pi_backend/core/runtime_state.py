@@ -190,6 +190,22 @@ class RuntimeStateStore:
                 self._bump_status_revision_locked()
                 self._trace_locked("begin_task", task_name=task_name, task_state=str(task_state), message=message)
 
+    def clear_task_tracking(self, message: str | None = None) -> None:
+        with self._lock:
+            changed = False
+            if self._snapshot.current_task is not None:
+                self._snapshot.current_task = None
+                changed = True
+            if self._snapshot.task_state is not None:
+                self._snapshot.task_state = None
+                changed = True
+            if message is not None and self._snapshot.latest_message != message:
+                self._snapshot.latest_message = message
+                changed = True
+            if changed:
+                self._bump_status_revision_locked()
+                self._trace_locked("clear_task_tracking", message=message)
+
     def complete_task(self, task_state: TaskState, message: str) -> None:
         with self._lock:
             changed = (
