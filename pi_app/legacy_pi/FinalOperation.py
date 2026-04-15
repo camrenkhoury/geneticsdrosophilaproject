@@ -387,6 +387,8 @@ def run_operation(
             "last_destination": None if last_destination is None else last_destination.key,
             "last_classification_class": None if last_classification is None else last_classification.get("class"),
             "last_classification_count": None if last_classification is None else last_classification.get("count"),
+            "next_detection_cycle_kind": next_detection_cycle_kind,
+            "position_reference_state": position_reference_state,
         }
         trace_fields.update(fields)
         append_operation_trace(
@@ -421,7 +423,15 @@ def run_operation(
     lost_fly_count = 0
     retry_pickup_count = 0
     discarded_overflow_count = 0
-    skip_home_for_detection_cycle = False
+    DETECTION_CYCLE_STARTUP = "startup"
+    DETECTION_CYCLE_AFTER_ROUTE_HOME = "normal_after_route_home"
+    DETECTION_CYCLE_RETRY_EMPTY = "retry_from_chamber_empty"
+    DETECTION_CYCLE_RETRY_GROUPED = "retry_from_grouped_return"
+    POSITION_REFERENCE_UNKNOWN = "unknown"
+    POSITION_REFERENCE_HOME = "home"
+    POSITION_REFERENCE_PHOTO = "photo_position"
+    next_detection_cycle_kind = DETECTION_CYCLE_STARTUP
+    position_reference_state = POSITION_REFERENCE_UNKNOWN
 
     def publish_snapshot(**kwargs: Any) -> None:
         _publish_snapshot(
@@ -439,6 +449,48 @@ def run_operation(
 
     def clamp_operational(position_mm: float) -> float:
         return max(0.0, min(float(position_mm), float(get_operational_max_mm_callable())))
+
+    def set_position_reference(state: str) -> None:
+        nonlocal position_reference_state
+        position_reference_state = str(state)
+
+    def prepare_for_detection_cycle() -> None:
+        nonlocal next_detection_cycle_kind
+        set_vacuum_callable(False)
+        if position_reference_state == POSITION_REFERENCE_PHOTO:
+            status("running", f"Cycle {cycle_index}: retrying channel detection from photo position.")
+            log(
+                f"Cycle {cycle_index}: detection cycle '{next_detection_cycle_kind}' already has the nozzle at the "
+                "channel photo position. Skipping redundant home."
+            )
+            op_trace("detect_cycle_skip_home", reason="photo_position_ready")
+        elif position_reference_state == POSITION_REFERENCE_HOME:
+            status("running", f"Cycle {cycle_index}: reusing existing home reference for channel detection.")
+            log(
+                f"Cycle {cycle_index}: detection cycle '{next_detection_cycle_kind}' already has a fresh home "
+                "reference. Skipping redundant home."
+            )
+            op_trace("detect_cycle_skip_home", reason="home_reference_ready")
+        else:
+            op_trace("detect_cycle_home", reason="position_unknown")
+            ensure_home_reference(
+                "detect_cycle_position_unknown",
+                f"Cycle {cycle_index}: homing gantry.",
+                f"Cycle {cycle_index}: homing gantry.",
+            )
+        next_detection_cycle_kind = DETECTION_CYCLE_AFTER_ROUTE_HOME
+
+    def ensure_home_reference(reason: str, status_message: str, log_message: str) -> None:
+        if position_reference_state == POSITION_REFERENCE_HOME:
+            log(f"Cycle {cycle_index}: skipping redundant home ({reason}); already at home reference.")
+            op_trace("home_skip", reason=reason)
+            return
+        status("running", status_message)
+        log(log_message)
+        op_trace("home_enter", reason=reason)
+        home_callable()
+        set_position_reference(POSITION_REFERENCE_HOME)
+        op_trace("home_complete", reason=reason)
 
     def move_absolute_with_profile(position_mm: float, move_time: float | None = None) -> Any:
         if move_time is None:
@@ -493,26 +545,15 @@ def run_operation(
                     attempted_from_previous_detection=attempted_from_previous_detection,
                 )
 
-                # Each detection cycle starts from a known reference:
-                # vacuum off, home, move to the fixed channel photo position,
-                # then trigger the Pi-side channel detection pipeline.
-                set_vacuum_callable(False)
-                if skip_home_for_detection_cycle:
-                    status("running", f"Cycle {cycle_index}: retrying channel detection from photo position.")
-                    log(
-                        f"Cycle {cycle_index}: chamber-empty retry already returned to the channel photo position. "
-                        "Skipping redundant home before the retry detection."
-                    )
-                    op_trace("channel_retry_skip_home", camera_photo_position=camera_photo_position)
-                    skip_home_for_detection_cycle = False
-                else:
-                    status("running", f"Cycle {cycle_index}: homing gantry.")
-                    log(f"Cycle {cycle_index}: homing gantry.")
-                    home_callable()
+                # Each detection cycle starts from a known-safe reference state:
+                # either a true startup home, an existing home reference, or the
+                # already-confirmed channel photo position from a retry path.
+                prepare_for_detection_cycle()
 
                 status("moving", f"Cycle {cycle_index}: moving to channel photo position.")
                 log(f"Cycle {cycle_index}: channel photo target {camera_photo_position:.2f} mm.")
                 move_absolute_with_profile(camera_photo_position, move_time=channel_photo_move_time)
+                set_position_reference(POSITION_REFERENCE_PHOTO)
 
                 status("detecting", f"Cycle {cycle_index}: capturing channel detection image.")
                 log(f"Cycle {cycle_index}: running channel detection.")
@@ -632,12 +673,16 @@ def run_operation(
                 log(f"Cycle {cycle_index}: skipping redundant home before first pickup after detection.")
                 first_pickup_after_detection = False
             else:
-                status("running", f"Cycle {cycle_index}: reset home before pickup.")
                 set_vacuum_callable(False)
-                home_callable()
+                ensure_home_reference(
+                    "pickup_accuracy_reset",
+                    f"Cycle {cycle_index}: reset home before pickup.",
+                    f"Cycle {cycle_index}: reset home before pickup.",
+                )
 
             status("moving", f"Cycle {cycle_index}: moving to pickup position.")
             move_absolute_callable(pickup_position)
+            set_position_reference(POSITION_REFERENCE_UNKNOWN)
 
             status("picking", f"Cycle {cycle_index}: picking fly.")
             set_vacuum_callable(True)
@@ -647,6 +692,7 @@ def run_operation(
             # for observation, not for the actual release or pickup position.
             status("moving", f"Cycle {cycle_index}: moving to chamber.")
             move_absolute_callable(config.CHAMBER_CENTER)
+            set_position_reference(POSITION_REFERENCE_UNKNOWN)
 
             status("running", f"Cycle {cycle_index}: dropping in chamber.")
             _sleep_with_stop(chamber_drop_arrival_settle_s, stop_requested)
@@ -657,6 +703,7 @@ def run_operation(
             # specimen without the nozzle/cover blocking the view.
             status("moving", f"Cycle {cycle_index}: moving nozzle out of chamber view.")
             move_absolute_callable(chamber_observe_position)
+            set_position_reference(POSITION_REFERENCE_PHOTO)
 
             status("running", f"Cycle {cycle_index}: waiting for chamber classification window.")
             _sleep_with_stop(chamber_settle_s, stop_requested)
@@ -701,10 +748,11 @@ def run_operation(
                 status("moving", f"Cycle {cycle_index}: chamber appears empty. Returning to channel photo position.")
                 set_vacuum_callable(False)
                 move_absolute_callable(chamber_observe_position)
+                set_position_reference(POSITION_REFERENCE_PHOTO)
                 pending_pickup_positions = []
                 flies_taken_from_current_detection = max_flies_per_detection
                 first_pickup_after_detection = False
-                skip_home_for_detection_cycle = True
+                next_detection_cycle_kind = DETECTION_CYCLE_RETRY_EMPTY
                 last_destination = None
                 publish_snapshot(
                     cycle_index=cycle_index,
@@ -755,6 +803,7 @@ def run_operation(
             if stop_requested is not None and stop_requested():
                 raise OperationCancelled
             move_absolute_callable(config.CHAMBER_CENTER)
+            set_position_reference(POSITION_REFERENCE_UNKNOWN)
             _sleep_with_stop(chamber_release_settle_s, stop_requested)
 
             status("picking", f"Cycle {cycle_index}: picking fly from chamber.")
@@ -772,6 +821,7 @@ def run_operation(
             if stop_requested is not None and stop_requested():
                 raise OperationCancelled
             move_absolute_callable(destination_tube.position_mm)
+            set_position_reference(POSITION_REFERENCE_UNKNOWN)
             log(
                 f"Cycle {cycle_index}: arrived for drop at {destination_tube.label} target "
                 f"{destination_tube.position_mm:.2f} mm."
@@ -808,7 +858,12 @@ def run_operation(
             )
 
             status("running", f"Cycle {cycle_index}: returning home.")
-            home_callable()
+            ensure_home_reference(
+                "post_route_return_home",
+                f"Cycle {cycle_index}: returning home.",
+                f"Cycle {cycle_index}: returning home.",
+            )
+            next_detection_cycle_kind = DETECTION_CYCLE_AFTER_ROUTE_HOME
 
         # Assay handoff occurs once, after the sorting loop genuinely ends.
         status("running", "No more flies detected. Awaiting assay confirmation.")
