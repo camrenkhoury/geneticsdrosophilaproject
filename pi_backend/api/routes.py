@@ -75,6 +75,15 @@ def get_channel_setup_preview(request: Request) -> FileResponse:
     return FileResponse(preview_path, media_type="image/jpeg", filename=preview_path.name)
 
 
+@router.get("/artifacts/classification/latest", dependencies=[Depends(require_api_key)])
+def get_classification_preview(request: Request) -> FileResponse:
+    context = request.app.state.backend_context
+    preview_path = context.machine_service.get_latest_classification_preview_path()
+    if preview_path is None or not preview_path.exists():
+        raise HTTPException(status_code=404, detail="Classification preview is not available yet.")
+    return FileResponse(preview_path, media_type="image/jpeg", filename=preview_path.name)
+
+
 @router.get("/fin6/setup_status", dependencies=[Depends(require_api_key)])
 def get_fin6_setup_status(request: Request) -> dict:
     context = request.app.state.backend_context

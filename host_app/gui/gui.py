@@ -551,6 +551,13 @@ class DrosophilaGUI:
         self.connection_state = ConnectionState.LOCAL
         self.preview_image = None
         self.preview_source_image = None
+        self.sexing_preview_image = None
+        self.sexing_preview_source_image = None
+        self._last_sexing_preview_key: str | None = None
+        self.workspace_notebook = None
+        self.workspace_channel_tab = None
+        self.workspace_sexing_tab = None
+        self.workspace_assay_tab = None
         self.operations_logo_image = None
         self.footer_banner_images = []
         self.window_icon_images = []
@@ -862,9 +869,6 @@ class DrosophilaGUI:
 
     def open_fin6_setup(self):
         if not self._ensure_remote_connection_for_action("Open Assay Setup"):
-            return
-        if self.is_remote_mode():
-            self._open_remote_fin6_setup()
             return
         fin6_bridge = self._ensure_fin6_bridge_or_warn("Open fin6 Setup")
         if fin6_bridge is None:
@@ -1221,7 +1225,7 @@ class DrosophilaGUI:
         )
 
     def _run_channel_setup_prep_worker(self) -> None:
-        target_position = float(config.CHAMBER_CENTER + 23.0)
+        target_position = float(config.CHAMBER_CENTER + 25.0)
         if self.is_remote_mode():
             self.worker_status("moving", "Homing before Channel Detection Setup.")
             self._run_remote_home_for_automation()
@@ -1284,12 +1288,9 @@ class DrosophilaGUI:
             self.set_status("idle", f"{action_label} cancelled. Assay Setup is still required.")
             return False
 
-        if self.is_remote_mode():
-            self._open_remote_fin6_setup()
-        else:
-            fin6_bridge = self._ensure_fin6_bridge_or_warn("Open Assay Setup")
-            if fin6_bridge is not None:
-                self._open_fin6_setup_with_bridge(fin6_bridge)
+        fin6_bridge = self._ensure_fin6_bridge_or_warn("Open Assay Setup")
+        if fin6_bridge is not None:
+            self._open_fin6_setup_with_bridge(fin6_bridge)
         return False
 
     def _ask_user_yes_no_from_worker(self, title: str, message: str) -> bool:
@@ -2071,12 +2072,23 @@ class DrosophilaGUI:
             return
 
         self._last_remote_classification_signature = signature
+        raw_result = result.get("raw") if isinstance(result.get("raw"), dict) else {}
+        chamber_count = result.get("count")
+        if chamber_count is None:
+            chamber_count = raw_result.get("count")
         normalized_result = {
             "class": result.get("result_class", "UNCERTAIN"),
             "confidence": float(result.get("confidence", 0.0)),
             "errors": list(result.get("errors", [])),
+            "count": None if chamber_count is None else int(chamber_count),
+            "image_path": raw_result.get("image_path"),
         }
         if self.current_task_name == "automated run":
+            self.sort_detected_var.set(
+                "--" if normalized_result["count"] is None else str(int(normalized_result["count"]))
+            )
+            self._show_workspace_tab("sexing")
+            self._update_sexing_preview_from_result(normalized_result)
             self.sort_last_sex_var.set(
                 str(normalized_result["class"]).title()
                 if str(normalized_result["class"]).lower() in {"male", "female"}
@@ -2284,11 +2296,14 @@ class DrosophilaGUI:
         result = status.get("classification_result") or {}
         if not result:
             raise RuntimeError("Remote classification completed without returning a classification result.")
+        raw = dict(result.get("raw", {}) or {})
         normalized = {
             "class": str(result.get("result_class", "UNCERTAIN")),
             "confidence": float(result.get("confidence", 0.0)),
             "errors": list(result.get("errors", []) or []),
-            "raw": dict(result.get("raw", {}) or {}),
+            "count": int(raw.get("count", 0) or 0),
+            "image_path": raw.get("image_path"),
+            "raw": raw,
         }
         return normalized
 
@@ -2873,16 +2888,36 @@ class DrosophilaGUI:
         channel_tab.rowconfigure(2, weight=1)
         notebook.add(channel_tab, text="Channel")
         self.create_channel_tab(channel_tab)
+        self.workspace_channel_tab = channel_tab
 
         sexing_tab = ttk.Frame(notebook, padding="10")
         sexing_tab.columnconfigure(0, weight=1)
+        sexing_tab.rowconfigure(0, weight=1)
         notebook.add(sexing_tab, text="Sexing")
         self.create_sexing_tab(sexing_tab)
+        self.workspace_sexing_tab = sexing_tab
 
         assay_tab = ttk.Frame(notebook, padding="10")
         assay_tab.columnconfigure(0, weight=1)
         notebook.add(assay_tab, text="Assay")
         self.create_assay_tab(assay_tab)
+        self.workspace_assay_tab = assay_tab
+
+    def _show_workspace_tab(self, name: str) -> None:
+        if self.workspace_notebook is None:
+            return
+        lookup = {
+            "channel": self.workspace_channel_tab,
+            "sexing": self.workspace_sexing_tab,
+            "assay": self.workspace_assay_tab,
+        }
+        target = lookup.get(str(name).strip().lower())
+        if target is None:
+            return
+        try:
+            self.workspace_notebook.select(target)
+        except Exception:
+            pass
 
     def create_channel_tab(self, parent):
         summary_card = ttk.LabelFrame(parent, text="Channel Detection", padding="10")
@@ -2961,8 +2996,23 @@ class DrosophilaGUI:
         self.preview_label.bind("<Configure>", self._refresh_preview_image)
 
     def create_sexing_tab(self, parent):
+        preview_card = ttk.LabelFrame(parent, text="Classification Preview", padding="10")
+        preview_card.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        preview_card.columnconfigure(0, weight=1)
+        preview_card.rowconfigure(0, weight=1)
+        self.sexing_preview_label = tk.Label(
+            preview_card,
+            bg="black",
+            fg="white",
+            text="Waiting for classification image...",
+            anchor="center",
+            justify="center",
+        )
+        self.sexing_preview_label.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        self.sexing_preview_label.bind("<Configure>", self._refresh_sexing_preview_image)
+
         summary_card = ttk.LabelFrame(parent, text="Sexing / Routing", padding="10")
-        summary_card.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        summary_card.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
         summary_card.columnconfigure(1, weight=1)
 
         tk.Label(
@@ -2981,7 +3031,7 @@ class DrosophilaGUI:
         sexing_rows = [
             ("Stage", self.sort_stage_var),
             ("Cycle", self.sort_cycle_var),
-            ("Detected", self.sort_detected_var),
+            ("In Chamber", self.sort_detected_var),
             ("Pickup X", self.sort_pickup_var),
             ("Last Sex", self.sort_last_sex_var),
             ("Confidence", self.sort_confidence_var),
@@ -3002,7 +3052,7 @@ class DrosophilaGUI:
             ).grid(row=row_index, column=1, sticky=(tk.W, tk.E), pady=2)
 
         tube_frame = ttk.LabelFrame(parent, text="Tube Counts", padding="10")
-        tube_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
+        tube_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
         tube_frame.columnconfigure(1, weight=1)
         tube_roles = {
             "T1": "Damaged / Rejected",
@@ -3645,10 +3695,16 @@ class DrosophilaGUI:
         class_name = result.get("class", "UNCERTAIN")
         confidence = result.get("confidence", 0.0)
         errors = result.get("errors", [])
+        chamber_count = result.get("count")
+        self._show_workspace_tab("sexing")
+        self._update_sexing_preview_from_result(result)
+        self.sort_detected_var.set("--" if chamber_count is None else str(int(chamber_count)))
         self.sort_last_sex_var.set(str(class_name).title() if str(class_name).lower() in {"male", "female"} else str(class_name))
         self.sort_confidence_var.set(f"{float(confidence):.4f}")
         self.sort_notes_var.set(", ".join(str(error) for error in errors) if errors else "Manual classification complete.")
         message = f"Class: {class_name}\nConfidence: {confidence:.4f}"
+        if chamber_count is not None:
+            message += f"\nFlies in chamber: {int(chamber_count)}"
         if errors:
             message += f"\nErrors: {', '.join(errors)}"
         self.log_message(f"Classification result: {result}")
@@ -3787,13 +3843,13 @@ class DrosophilaGUI:
         remaining = bool(result.get("fly_remaining", False))
         modified = time.strftime("%H:%M:%S", time.localtime(result_path.stat().st_mtime))
         self.detection_var.set(f"remaining={remaining} count={count} last_update={modified}")
-        self.sort_detected_var.set(str(count))
         self.last_result_mtime = result_path.stat().st_mtime
         self.last_used_detection_mtime = self.last_result_mtime
         self._awaiting_current_detection = False
         self._current_detection_baseline_mtime = self.last_result_mtime
         self._startup_preview_requested = False
         self._startup_preview_completed = True
+        self._show_workspace_tab("channel")
 
         if annotated_path.exists():
             self.load_channel_preview(annotated_path)
@@ -3810,6 +3866,8 @@ class DrosophilaGUI:
         self.sort_confidence_var.set("--")
         self.sort_destination_var.set("--")
         self.sort_notes_var.set("Tube counts and classifier output will appear here during automated loading.")
+        self._last_sexing_preview_key = None
+        self.set_sexing_preview_placeholder("Waiting for classification image...")
         for var in self.sort_tube_count_vars.values():
             var.set("0 / 10")
 
@@ -3912,14 +3970,14 @@ class DrosophilaGUI:
     def _apply_automation_snapshot(self, snapshot: dict[str, Any]) -> None:
         stage = str(snapshot.get("stage") or "running").strip() or "running"
         cycle_index = int(snapshot.get("cycle_index") or 0)
-        detection_count = snapshot.get("detection_count")
         pickup_position = snapshot.get("pickup_position_mm")
         destination_label = snapshot.get("destination_label")
         classification = snapshot.get("classification") or {}
+        classification_count = classification.get("count")
 
         self.sort_stage_var.set(stage.replace("_", " ").title())
         self.sort_cycle_var.set(str(cycle_index))
-        self.sort_detected_var.set("--" if detection_count is None else str(int(detection_count)))
+        self.sort_detected_var.set("--" if classification_count is None else str(int(classification_count)))
         self.sort_pickup_var.set("--" if pickup_position is None else f"{float(pickup_position):.2f} mm")
         self.sort_destination_var.set(str(destination_label or "--"))
 
@@ -3929,6 +3987,12 @@ class DrosophilaGUI:
             self.sort_confidence_var.set(f"{float(classification.get('confidence', 0.0)):.4f}")
         else:
             self.sort_confidence_var.set("--")
+
+        if stage.lower() in {"detecting", "idle", "complete"}:
+            self._show_workspace_tab("channel")
+        elif stage.lower() in {"classifying", "classified", "routed"}:
+            self._show_workspace_tab("sexing")
+            self._update_sexing_preview_from_result(classification)
 
         errors = classification.get("errors") or []
         if errors:
@@ -4038,13 +4102,48 @@ class DrosophilaGUI:
             self.preview_source_image = None
             self.set_preview_placeholder(f"Remote preview unavailable:\n{exc}")
 
+    def load_sexing_preview(self, path: Path):
+        try:
+            from PIL import Image
+
+            image = Image.open(path)
+            image = image.convert("RGB")
+            self.sexing_preview_source_image = image
+            self._render_sexing_preview_image()
+        except Exception:
+            self.sexing_preview_image = None
+            self.sexing_preview_source_image = None
+            self.set_sexing_preview_placeholder("Classification preview unavailable.")
+
+    def load_sexing_preview_bytes(self, image_bytes: bytes):
+        try:
+            from PIL import Image
+
+            image = Image.open(io.BytesIO(image_bytes))
+            image = image.convert("RGB")
+            self.sexing_preview_source_image = image
+            self._render_sexing_preview_image()
+        except Exception as exc:
+            self.sexing_preview_image = None
+            self.sexing_preview_source_image = None
+            self.set_sexing_preview_placeholder(f"Classification preview unavailable:\n{exc}")
+
     def set_preview_placeholder(self, message: str):
         self.preview_source_image = None
         self.preview_label.config(image="", text=message, bg="black", fg="white")
 
+    def set_sexing_preview_placeholder(self, message: str):
+        self.sexing_preview_source_image = None
+        if hasattr(self, "sexing_preview_label"):
+            self.sexing_preview_label.config(image="", text=message, bg="black", fg="white")
+
     def _refresh_preview_image(self, _event=None):
         if self.preview_source_image is not None:
             self._render_preview_image()
+
+    def _refresh_sexing_preview_image(self, _event=None):
+        if self.sexing_preview_source_image is not None:
+            self._render_sexing_preview_image()
 
     def _render_preview_image(self):
         if self.preview_source_image is None:
@@ -4065,6 +4164,61 @@ class DrosophilaGUI:
             self.preview_label.config(image=self.preview_image, text="")
         except Exception:
             self.preview_image = None
+
+    def _render_sexing_preview_image(self):
+        if self.sexing_preview_source_image is None or not hasattr(self, "sexing_preview_label"):
+            return
+
+        try:
+            from PIL import Image, ImageTk
+
+            target_width = max(self.sexing_preview_label.winfo_width(), 420)
+            target_height = max(self.sexing_preview_label.winfo_height(), 280)
+            if target_width <= 1 or target_height <= 1:
+                return
+
+            image = self.sexing_preview_source_image.copy()
+            resample = getattr(Image, "Resampling", Image)
+            image.thumbnail((target_width, target_height), resample.LANCZOS)
+            self.sexing_preview_image = ImageTk.PhotoImage(image)
+            self.sexing_preview_label.config(image=self.sexing_preview_image, text="")
+        except Exception:
+            self.sexing_preview_image = None
+
+    def _update_sexing_preview_from_result(self, result: dict[str, Any]) -> None:
+        image_path = str(result.get("image_path") or "")
+        raw = result.get("raw")
+        if not image_path and isinstance(raw, dict):
+            image_path = str(raw.get("image_path") or "")
+        if not image_path:
+            self._last_sexing_preview_key = None
+            self.set_sexing_preview_placeholder("Waiting for classification image...")
+            return
+
+        if image_path == self._last_sexing_preview_key:
+            return
+        self._last_sexing_preview_key = image_path
+
+        if self.is_remote_mode():
+            if not self.remote_connected or self.remote_controller is None:
+                self.set_sexing_preview_placeholder("Remote classification preview unavailable while disconnected.")
+                return
+            try:
+                image_bytes = self.remote_controller.get_classification_preview_image()
+            except (ControllerConnectionError, ControllerError) as exc:
+                self.set_sexing_preview_placeholder(f"Remote classification preview unavailable:\n{exc}")
+                return
+            if image_bytes:
+                self.load_sexing_preview_bytes(image_bytes)
+            else:
+                self.set_sexing_preview_placeholder("Waiting for classification image...")
+            return
+
+        preview_path = Path(image_path)
+        if preview_path.exists():
+            self.load_sexing_preview(preview_path)
+        else:
+            self.set_sexing_preview_placeholder("Waiting for classification image...")
 
     def worker_log(self, message: str):
         self.ui_queue.put(("log", message))
@@ -4282,12 +4436,6 @@ class DrosophilaGUI:
         self.ui_queue.put(("clear_stop",))
 
     def _launch_assay_gui_from_worker(self):
-        if self.is_remote_mode():
-            controller = self._get_remote_controller_for_automation()
-            response = controller.launch_fin6_setup()
-            message = str(response.get("message", "Opened the current fin6 assay GUI on the Pi."))
-            self.worker_log(message)
-            return response
         fin6_bridge = self._load_fin6_bridge()
         process = fin6_bridge.launch_fin6_gui()
         pid_text = getattr(process, "pid", None)

@@ -18,6 +18,7 @@ import os
 import sys
 import subprocess
 import json
+import shutil
 from pathlib import Path
 import numpy as np
 import cv2
@@ -47,6 +48,7 @@ except ImportError:
 CLASSIFIER_MODEL_PATH = str(MODEL_PATH)
 TEMP_IMAGE_DIR        = str(TEMP_CLASS_IMAGE_DIR)
 TEMP_IMAGE_PATH       = os.path.join(TEMP_IMAGE_DIR, 'temp.jpg')
+LATEST_IMAGE_PATH     = os.path.join(TEMP_IMAGE_DIR, 'latest_classification.jpg')
 
 UNCERTAIN_THRESHOLD   = 0.70   # classifier confidence below this → UNCERTAIN
 
@@ -55,6 +57,14 @@ HARD_ERROR_FLAGS = {
     'LOAD_FAILED',
     'CLASSIFIER_FAILED',
 }
+
+BG_TOLERANCE = 65
+OPEN_KERNEL_SIZE = 3
+CLOSE_KERNEL_SIZE = 11
+ERODE_KERNEL_SIZE = 11
+ERODE_ITERATIONS = 9
+SINGLE_FLY_MIN_FRAC = 0.001
+SINGLE_FLY_MAX_AREA_PX = 40000
 
 SETTINGS_PATH = REPO_ROOT / "vision" / "fin6" / ".fly_tracking_gui_settings.json"
 # ─────────────────────────────────────────────────────────────────────────────
@@ -95,6 +105,45 @@ def _capture_image() -> bool:
     return result.returncode == 0
 
 
+def _subtract_background(bgr_img: np.ndarray) -> np.ndarray:
+    sample_size = 20
+    corner_patch = bgr_img[:sample_size, :sample_size]
+    bg_color = np.median(corner_patch.reshape(-1, 3), axis=0)
+    diff = np.abs(bgr_img.astype(np.int32) - bg_color.astype(np.int32))
+    dist = np.max(diff, axis=2)
+    return np.where(dist > BG_TOLERANCE, 255, 0).astype(np.uint8)
+
+
+def _clean_mask(mask: np.ndarray) -> np.ndarray:
+    open_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (OPEN_KERNEL_SIZE, OPEN_KERNEL_SIZE))
+    close_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (CLOSE_KERNEL_SIZE, CLOSE_KERNEL_SIZE))
+    erode_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ERODE_KERNEL_SIZE, ERODE_KERNEL_SIZE))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, open_k, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_k, iterations=2)
+    mask = cv2.erode(mask, erode_k, iterations=ERODE_ITERATIONS)
+    return mask
+
+
+def _count_flies(bgr_img: np.ndarray) -> int:
+    h, w = bgr_img.shape[:2]
+    img_area = max(1, h * w)
+    min_area = SINGLE_FLY_MIN_FRAC * img_area
+    mask = _subtract_background(bgr_img)
+    mask = _clean_mask(mask)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    fly_count = 0
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area < min_area:
+            continue
+        if area <= SINGLE_FLY_MAX_AREA_PX:
+            fly_count += 1
+        else:
+            fly_count += 2
+    return int(fly_count)
+
+
 def classify_fly() -> dict:
     """
     Capture an image, classify the fly, delete the image, return result dict.
@@ -103,17 +152,20 @@ def classify_fly() -> dict:
     -------
     dict with keys:
         'class'      : 'male' | 'female' | 'UNCERTAIN'
+        'count'      : int
         'confidence' : float (0.0 if no valid classification)
         'errors'     : list of error strings (empty if all went well)
     """
     errors     = []
     cls_out    = 'UNCERTAIN'
     confidence = 0.0
+    fly_count  = 0
+    latest_image_path = None
 
     # ── Capture ───────────────────────────────────────────────────────────────
     if not _capture_image():
         errors.append('CAPTURE_FAILED')
-        return {'class': 'UNCERTAIN', 'confidence': 0.0, 'errors': errors}
+        return {'count': 0, 'class': 'UNCERTAIN', 'confidence': 0.0, 'errors': errors}
 
     # ── Load image ────────────────────────────────────────────────────────────
     if not ULTRALYTICS_AVAILABLE:
@@ -125,10 +177,21 @@ def classify_fly() -> dict:
             image = cv2.imdecode(data, cv2.IMREAD_COLOR)
             if image is None:
                 raise ValueError('imdecode returned None')
+            try:
+                shutil.copyfile(TEMP_IMAGE_PATH, LATEST_IMAGE_PATH)
+                latest_image_path = LATEST_IMAGE_PATH
+            except Exception:
+                latest_image_path = None
         except Exception:
             errors.append('LOAD_FAILED')
             _cleanup()
-            return {'class': 'UNCERTAIN', 'confidence': 0.0, 'errors': errors}
+            return {'count': 0, 'class': 'UNCERTAIN', 'confidence': 0.0, 'errors': errors}
+
+    if ULTRALYTICS_AVAILABLE and image is not None:
+        try:
+            fly_count = _count_flies(image)
+        except Exception:
+            fly_count = 0
 
     # ── Classification ────────────────────────────────────────────────────────
     if not ULTRALYTICS_AVAILABLE:
@@ -176,9 +239,11 @@ def classify_fly() -> dict:
     _cleanup()
 
     return {
+        'count':      int(fly_count),
         'class':      cls_out,
         'confidence': round(confidence, 4),
         'errors':     errors,
+        'image_path': latest_image_path,
     }
 
 

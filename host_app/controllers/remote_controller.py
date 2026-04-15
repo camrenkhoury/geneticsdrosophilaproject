@@ -24,6 +24,7 @@ class RemoteController(BaseController):
         "/channel_setup/capture_preview": "Pi-side channel setup preview capture",
         "/channel_setup/save_calibration": "Pi-side channel setup calibration save",
         "/camera_roles": "Pi-side camera role assignments",
+        "/artifacts/classification/latest": "Pi-side classification preview image",
     }
 
     def __init__(
@@ -172,6 +173,9 @@ class RemoteController(BaseController):
 
     def get_channel_setup_preview_image(self) -> bytes | None:
         return self._request_bytes("GET", "/artifacts/channel/setup_preview", timeout_s=15.0)
+
+    def get_classification_preview_image(self) -> bytes | None:
+        return self._request_bytes("GET", "/artifacts/classification/latest", timeout_s=15.0)
 
     def _command_request(
         self,

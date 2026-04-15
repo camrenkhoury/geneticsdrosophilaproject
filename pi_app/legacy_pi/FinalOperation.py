@@ -81,6 +81,7 @@ def _publish_snapshot(
             if classification_result is None
             else {
                 "class": str(classification_result.get("class", "UNCERTAIN")),
+                "count": int(classification_result.get("count", 0) or 0),
                 "confidence": float(classification_result.get("confidence", 0.0)),
                 "errors": list(classification_result.get("errors", []) or []),
             },
@@ -246,6 +247,9 @@ def run_operation(
     pending_pickup_positions: list[float] = []
     flies_taken_from_current_detection = 0
     first_pickup_after_detection = False
+    recent_route_history: list[str] = []
+    repeated_count_signature: tuple[int, int, int] | None = None
+    repeated_count_streak = 0
 
     def check_stop() -> None:
         if stop_requested is not None and stop_requested():
@@ -254,7 +258,8 @@ def run_operation(
     def clamp_operational(position_mm: float) -> float:
         return max(0.0, min(float(position_mm), float(get_operational_max_mm_callable())))
 
-    camera_photo_position = clamp_operational(config.CHAMBER_CENTER + 23.0)
+    camera_photo_position = clamp_operational(config.CHAMBER_CENTER + 25.0)
+    chamber_observe_position = clamp_operational(config.CHAMBER_CENTER + 30.0)
     _publish_snapshot(tube_states, snapshot_callback=snapshot_callback, stage="idle")
 
     try:
@@ -263,6 +268,9 @@ def run_operation(
             cycle_index += 1
 
             if not pending_pickup_positions or flies_taken_from_current_detection >= max_flies_per_detection:
+                previous_detection_count = last_detection_count
+                attempted_from_previous_detection = flies_taken_from_current_detection
+
                 status("running", f"Cycle {cycle_index}: homing gantry.")
                 log(f"Cycle {cycle_index}: homing gantry.")
                 set_vacuum_callable(False)
@@ -276,7 +284,62 @@ def run_operation(
                 detection_payload = detect_callable()
                 detection_result = dict(detection_payload.get("result") or {})
                 pickup_positions = _sorted_pickup_positions(detection_result, clamp_operational)
-                last_detection_count = int(detection_result.get("count", 0) or 0)
+                current_detection_count = int(detection_result.get("count", 0) or 0)
+
+                if previous_detection_count > 0 and attempted_from_previous_detection > 0:
+                    expected_remaining = max(previous_detection_count - attempted_from_previous_detection, 0)
+                    if current_detection_count > expected_remaining:
+                        mismatch_signature = (
+                            int(previous_detection_count),
+                            int(expected_remaining),
+                            int(current_detection_count),
+                        )
+                        if mismatch_signature == repeated_count_signature:
+                            repeated_count_streak += 1
+                        else:
+                            repeated_count_signature = mismatch_signature
+                            repeated_count_streak = 1
+
+                        log(
+                            f"Cycle {cycle_index}: detection count mismatch. Expected about "
+                            f"{expected_remaining} remaining after sorting {attempted_from_previous_detection} "
+                            f"from a batch of {previous_detection_count}, but detected {current_detection_count}."
+                        )
+
+                        if repeated_count_streak >= 2:
+                            missed_pickups = min(
+                                max(current_detection_count - expected_remaining, 0),
+                                len(recent_route_history),
+                            )
+                            if missed_pickups > 0:
+                                reconciled_keys: list[str] = []
+                                for _ in range(missed_pickups):
+                                    routed_key = recent_route_history.pop()
+                                    routed_tube = tube_states[routed_key]
+                                    if routed_tube.count > 0:
+                                        routed_tube.count -= 1
+                                    reconciled_keys.append(routed_key)
+                                log(
+                                    f"Cycle {cycle_index}: repeated unchanged channel count detected twice. "
+                                    f"Reverted {missed_pickups} recent tube count(s): {', '.join(reconciled_keys)}."
+                                )
+                                _publish_snapshot(
+                                    tube_states,
+                                    snapshot_callback=snapshot_callback,
+                                    cycle_index=cycle_index,
+                                    detection_count=current_detection_count,
+                                    classification_result=last_classification,
+                                    destination_key=None if last_destination is None else last_destination.key,
+                                    destination_label=None if last_destination is None else last_destination.label,
+                                    stage="reconciled",
+                                )
+                            repeated_count_signature = None
+                            repeated_count_streak = 0
+                    else:
+                        repeated_count_signature = None
+                        repeated_count_streak = 0
+
+                last_detection_count = current_detection_count
                 _publish_snapshot(
                     tube_states,
                     snapshot_callback=snapshot_callback,
@@ -325,9 +388,23 @@ def run_operation(
             set_vacuum_callable(False)
             _sleep_with_stop(chamber_drop_s, stop_requested)
 
+            status("moving", f"Cycle {cycle_index}: moving nozzle out of chamber view.")
+            move_absolute_callable(chamber_observe_position)
+
             status("running", f"Cycle {cycle_index}: waiting for chamber classification window.")
             _sleep_with_stop(chamber_settle_s, stop_requested)
 
+            _publish_snapshot(
+                tube_states,
+                snapshot_callback=snapshot_callback,
+                cycle_index=cycle_index,
+                detection_count=last_detection_count,
+                pickup_position_mm=pickup_position,
+                classification_result=last_classification,
+                destination_key=None if last_destination is None else last_destination.key,
+                destination_label=None if last_destination is None else last_destination.label,
+                stage="classifying",
+            )
             status("running", f"Cycle {cycle_index}: classifying fly.")
             last_classification = dict(classify_callable() or {})
             confidence = float(last_classification.get("confidence", 0.0) or 0.0)
@@ -350,6 +427,9 @@ def run_operation(
                 stage="classified",
             )
 
+            status("moving", f"Cycle {cycle_index}: returning to chamber for pickup.")
+            move_absolute_callable(config.CHAMBER_CENTER)
+
             status("picking", f"Cycle {cycle_index}: picking fly from chamber.")
             set_vacuum_callable(True)
             _sleep_with_stop(chamber_pickup_s, stop_requested)
@@ -361,6 +441,7 @@ def run_operation(
             set_vacuum_callable(False)
             _sleep_with_stop(tube_drop_s, stop_requested)
             destination_tube.count += 1
+            recent_route_history.append(destination_tube.key)
 
             log(
                 f"Cycle {cycle_index}: routed to {destination_tube.label} "

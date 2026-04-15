@@ -233,8 +233,8 @@ class MachineService:
         if status.assay_ready:
             return None
         return (
-            "Assay Setup is missing on the Pi.\n"
-            "Open Assay Setup on the Pi, capture the saved assay background, run assay calibration, and save the setup before running the assay."
+            "Assay Setup is missing.\n"
+            "Open Assay Setup from the control panel, capture the saved assay background, run assay calibration, and save the setup before running the assay."
         )
 
     def _load_fin6_bridge(self):
@@ -264,6 +264,17 @@ class MachineService:
 
     def get_channel_setup_preview_path(self) -> Path:
         return Path(self.runtime_config.repo_root) / "vision" / "fin6" / "backgrounds" / "channel_setup_preview.jpg"
+
+    def get_latest_classification_preview_path(self) -> Path | None:
+        snapshot = self.runtime_state.snapshot()
+        classifier_result = snapshot.classifier_result
+        if classifier_result is None:
+            return None
+        raw = dict(classifier_result.raw or {})
+        image_path = raw.get("image_path")
+        if not image_path:
+            return None
+        return Path(str(image_path))
 
     def get_fin6_setup_status(self) -> dict[str, Any]:
         fin6_bridge = self._load_fin6_bridge()
