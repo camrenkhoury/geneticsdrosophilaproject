@@ -614,6 +614,12 @@ class DrosophilaGUI:
         self.workspace_channel_tab = None
         self.workspace_sexing_tab = None
         self.workspace_assay_tab = None
+        self.assay_workspace_notebook = None
+        self.assay_workspace_main_tab = None
+        self.assay_workspace_results_tab = None
+        self._embedded_assay_controller = None
+        self._embedded_assay_ui = None
+        self._embedded_assay_attached = False
         self.operations_logo_image = None
         self.footer_banner_images = []
         self.window_icon_images = []
@@ -882,9 +888,9 @@ class DrosophilaGUI:
             "This tab shows the latest classification, confidence, routing destination, and live tube counts."
         )
         self.assay_workspace_summary_var.set(
-            f"The real assay workspace is the fin6 assay GUI on {location}. "
+            f"The real assay workspace is embedded in this Assay tab on {location}. "
             "Use Start Assay here, or use the Start Assay prompt after automated sorting finishes. "
-            "If assay setup is not saved yet, the assay GUI will open on its assay workbench so you can configure it first."
+            "The embedded assay workspace includes configuration, calibration, recording, processing, Box upload, and results."
         )
 
     def _ensure_remote_connection_for_action(self, action_label: str) -> bool:
@@ -955,31 +961,7 @@ class DrosophilaGUI:
         self._open_fin6_setup_with_bridge(fin6_bridge)
 
     def open_assay_setup(self):
-        if not self._ensure_remote_connection_for_action("Start Assay"):
-            return
-        fin6_bridge = self._ensure_fin6_bridge_or_warn("Start Assay")
-        if fin6_bridge is None:
-            return
-        fin6_status = self._get_fin6_setup_status("Start Assay", show_errors=False)
-        setup_ready = bool(fin6_status is not None and self._assay_setup_ready(fin6_status))
-        try:
-            process = fin6_bridge.launch_fin6_gui(start_tab="assay")
-        except Exception as exc:
-            self.set_status("error", f"Could not open Start Assay: {exc}")
-            self.log_message(f"Could not open Start Assay: {exc}")
-            messagebox.showerror("Start Assay Error", str(exc))
-            return
-
-        pid_text = getattr(process, "pid", None)
-        if not setup_ready:
-            base_message = "Assay Setup is not saved yet. Opened the fin6 assay GUI on the assay tab for configuration."
-        else:
-            base_message = "Opened the fin6 assay GUI on the assay tab."
-        if pid_text is None:
-            self.log_message(base_message)
-        else:
-            self.log_message(f"{base_message} (pid {pid_text}).")
-        self.set_status("running", base_message)
+        self._open_embedded_assay_workspace(action_label="Start Assay", show_error_dialog=True)
 
     def open_channel_setup(self):
         if not self._ensure_remote_connection_for_action("Open Channel Detection Setup"):
@@ -3799,9 +3781,11 @@ class DrosophilaGUI:
             ).grid(row=row_index, column=2, sticky=tk.E, padx=(8, 0), pady=3)
 
     def create_assay_tab(self, parent):
+        parent.rowconfigure(0, weight=1)
         assay_card = ttk.LabelFrame(parent, text="Assay", padding="10")
-        assay_card.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        assay_card.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
         assay_card.columnconfigure(0, weight=1)
+        assay_card.rowconfigure(2, weight=1)
 
         tk.Label(
             assay_card,
@@ -3822,6 +3806,27 @@ class DrosophilaGUI:
         self.assay_button = self.make_button(button_row, "Start Assay", "#9C27B0", self.run_assay)
         self.assay_button.grid(row=0, column=0, sticky=tk.W)
         self.local_vision_widgets.append(self.assay_button)
+
+        workspace_shell = ttk.Frame(assay_card)
+        workspace_shell.grid(row=2, column=0, sticky=(tk.N, tk.S, tk.W, tk.E), pady=(12, 0))
+        workspace_shell.columnconfigure(0, weight=1)
+        workspace_shell.rowconfigure(0, weight=1)
+
+        inner_notebook = ttk.Notebook(workspace_shell)
+        inner_notebook.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        self.assay_workspace_notebook = inner_notebook
+
+        main_tab = ttk.Frame(inner_notebook, padding="4")
+        main_tab.columnconfigure(0, weight=1)
+        main_tab.rowconfigure(0, weight=1)
+        inner_notebook.add(main_tab, text="Setup + Run")
+        self.assay_workspace_main_tab = main_tab
+
+        results_tab = ttk.Frame(inner_notebook, padding="4")
+        results_tab.columnconfigure(0, weight=1)
+        results_tab.rowconfigure(0, weight=1)
+        inner_notebook.add(results_tab, text="Results")
+        self.assay_workspace_results_tab = results_tab
 
     def create_device_operations(self, parent):
         controls_frame = ttk.Frame(parent)
@@ -4373,6 +4378,13 @@ class DrosophilaGUI:
                         parent=self.root,
                     )
                     prompt_state["event"].set()
+                elif kind == "open_assay_workspace":
+                    self._trace_runtime("queue", "open_assay_workspace", echo_to_log=False)
+                    payload = item[1] if len(item) > 1 else {}
+                    self._open_embedded_assay_workspace(
+                        action_label=str(payload.get("action_label", "Start Assay")),
+                        show_error_dialog=True,
+                    )
                 elif kind == "remote_connection":
                     self._trace_runtime("queue", f"remote_connection state={item[1]}", echo_to_log=False)
                     connection_state = ConnectionState(item[1])
@@ -5530,22 +5542,9 @@ class DrosophilaGUI:
         self.ui_queue.put(("clear_stop",))
 
     def _launch_assay_gui_from_worker(self):
-        fin6_bridge = self._load_fin6_bridge()
-        fin6_status = self._get_fin6_setup_status("Start Assay", show_errors=False)
-        setup_ready = bool(fin6_status is not None and self._assay_setup_ready(fin6_status))
-        if not setup_ready:
-            self.worker_log(
-                "Assay Setup is not saved yet. Opening the fin6 assay GUI on the assay tab for configuration."
-            )
-        else:
-            self.worker_log("Opening the fin6 assay GUI on the assay tab.")
-        process = fin6_bridge.launch_fin6_gui(start_tab="assay")
-        pid_text = getattr(process, "pid", None)
-        if pid_text is None:
-            self.worker_log("Opened the current fin6 assay GUI on the assay tab.")
-        else:
-            self.worker_log(f"Opened the current fin6 assay GUI on the assay tab (pid {pid_text}).")
-        return process
+        self.worker_log("Opening embedded assay workspace.")
+        self.ui_queue.put(("open_assay_workspace", {"action_label": "Start Assay"}))
+        return None
 
     def _run_automated_worker(self):
         final_operation = importlib.import_module("pi_app.legacy_pi.FinalOperation")
@@ -5766,6 +5765,79 @@ class DrosophilaGUI:
     def run_assay(self):
         self.open_assay_setup()
 
+    def _embedded_assay_setup_ready(self) -> bool:
+        if self._embedded_assay_controller is None:
+            return False
+        try:
+            snapshot = self._embedded_assay_controller.snapshot()
+        except Exception:
+            return False
+        readiness = getattr(snapshot, "readiness", None)
+        return bool(
+            readiness is not None
+            and getattr(readiness, "assay_background_ready", False)
+            and getattr(readiness, "assay_calibration_ready", False)
+        )
+
+    def _ensure_embedded_assay_workspace(self):
+        if self._embedded_assay_attached and self._embedded_assay_ui is not None:
+            return self._embedded_assay_ui
+
+        if self.assay_workspace_main_tab is None or self.assay_workspace_results_tab is None:
+            raise RuntimeError("The Assay workspace tabs are not initialized.")
+
+        fin6_bridge = self._ensure_fin6_bridge_or_warn("Start Assay")
+        if fin6_bridge is None:
+            return None
+
+        try:
+            if self._embedded_assay_controller is None:
+                self._embedded_assay_controller = fin6_bridge.create_embedded_assay_controller()
+            if self._embedded_assay_ui is None:
+                embedded_ui_class = fin6_bridge.get_embedded_assay_ui_class()
+                self._embedded_assay_ui = embedded_ui_class(self.root, controller=self._embedded_assay_controller)
+            if not self._embedded_assay_attached:
+                self._embedded_assay_ui.attach_pages(
+                    self.assay_workspace_main_tab,
+                    self.assay_workspace_results_tab,
+                )
+                self._embedded_assay_attached = True
+            try:
+                self._embedded_assay_ui.sync_from_controller_active_profile(force=False)
+            except Exception:
+                pass
+            return self._embedded_assay_ui
+        except Exception as exc:
+            self._embedded_assay_attached = False
+            raise RuntimeError(f"Could not load the embedded assay workspace: {exc}") from exc
+
+    def _open_embedded_assay_workspace(self, *, action_label: str, show_error_dialog: bool) -> bool:
+        try:
+            ui = self._ensure_embedded_assay_workspace()
+        except Exception as exc:
+            self.set_status("error", str(exc))
+            self.log_message(f"{action_label} unavailable: {exc}")
+            if show_error_dialog:
+                messagebox.showerror("Assay Workspace Error", str(exc))
+            return False
+
+        if ui is None:
+            return False
+
+        self._show_workspace_tab("assay")
+        if self.assay_workspace_notebook is not None and self.assay_workspace_main_tab is not None:
+            with contextlib.suppress(Exception):
+                self.assay_workspace_notebook.select(self.assay_workspace_main_tab)
+
+        setup_ready = self._embedded_assay_setup_ready()
+        if not setup_ready:
+            message = "Assay Setup is not saved yet. Opened the embedded assay workspace for configuration."
+        else:
+            message = "Opened the embedded assay workspace."
+        self.log_message(message)
+        self.set_status("running", message)
+        return True
+
     def classify_fly_gui(self):
         if self.is_remote_mode():
             self._start_remote_command(
@@ -5844,6 +5916,9 @@ class DrosophilaGUI:
         self._cancel_pending_channel_setup_resume()
         self.stop_entry_animation()
         self._stop_remote_sync()
+        if self._embedded_assay_ui is not None:
+            with contextlib.suppress(Exception):
+                self._embedded_assay_ui.shutdown()
         self.root.destroy()
 
 

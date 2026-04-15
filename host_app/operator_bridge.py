@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import base64
+import importlib
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+import types
+from copy import deepcopy
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
-from shared.config.project_paths import ASSAY_OUTPUT_DIR, CHANNEL_OUTPUT_DIR, FIN6_DIR
+from shared.config.project_paths import ASSAY_OUTPUT_DIR, CHANNEL_OUTPUT_DIR, FIN6_DIR, REPO_ROOT
 import config
 
 
@@ -47,6 +51,198 @@ _LEGACY_DEVICE_DEFAULTS: dict[str, set[str]] = {
     "channel_device_var": {"/dev/video8"},
     "assay_camera_device_var": {"/dev/video10"},
 }
+
+_STITCH_OPERATOR_ASSAY_COMPONENTS: dict[str, Any] | None = None
+
+
+def _ensure_stitch_operator_import_paths() -> Path:
+    implementation_root = (REPO_ROOT / "Avi Detection GUI code" / "Integrated1").resolve()
+    if not implementation_root.exists():
+        raise RuntimeError(f"Implementation 1 directory is missing: {implementation_root}")
+    for path in (implementation_root, implementation_root / "fin6"):
+        text = str(path)
+        if text not in sys.path:
+            sys.path.insert(0, text)
+    return implementation_root
+
+
+def _merge_stitch_operator_config_defaults(implementation_root: Path) -> None:
+    config_path = implementation_root / "CodeDirectory" / "config.py"
+    if not config_path.exists():
+        return
+    module_name = "_avi_impl1_config_defaults"
+    module = sys.modules.get(module_name)
+    if module is None:
+        spec = importlib.util.spec_from_file_location(module_name, config_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Could not load Implementation 1 config defaults from {config_path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+    for name in dir(module):
+        if name.startswith("__"):
+            continue
+        if hasattr(config, name):
+            continue
+        setattr(config, name, getattr(module, name))
+
+
+def _ensure_dynamic_package(package_name: str, package_dir: Path) -> None:
+    if package_name in sys.modules:
+        return
+    module = types.ModuleType(package_name)
+    module.__path__ = [str(package_dir)]  # type: ignore[attr-defined]
+    module.__package__ = package_name
+    sys.modules[package_name] = module
+
+
+def _load_module_from_file(module_name: str, file_path: Path):
+    existing = sys.modules.get(module_name)
+    if existing is not None:
+        return existing
+    spec = importlib.util.spec_from_file_location(module_name, file_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load module {module_name} from {file_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_stitch_operator_assay_components() -> dict[str, Any]:
+    global _STITCH_OPERATOR_ASSAY_COMPONENTS
+    if _STITCH_OPERATOR_ASSAY_COMPONENTS is not None:
+        return _STITCH_OPERATOR_ASSAY_COMPONENTS
+
+    implementation_root = _ensure_stitch_operator_import_paths()
+    _merge_stitch_operator_config_defaults(implementation_root)
+    package_root = implementation_root / "stitch_operator"
+    package_name = "_avi_impl1_stitch_operator"
+    _ensure_dynamic_package(package_name, package_root)
+    _ensure_dynamic_package(f"{package_name}.services", package_root / "services")
+    try:
+        _load_module_from_file(f"{package_name}.bootstrap", package_root / "bootstrap.py")
+        settings_mod = _load_module_from_file(f"{package_name}.settings", package_root / "settings.py")
+        state_mod = _load_module_from_file(f"{package_name}.state", package_root / "state.py")
+        assay_service_mod = _load_module_from_file(
+            f"{package_name}.services.assay",
+            package_root / "services" / "assay.py",
+        )
+        assay_embed_mod = _load_module_from_file(f"{package_name}.assay_embed", package_root / "assay_embed.py")
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not import Implementation 1 assay modules from {implementation_root}: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    _STITCH_OPERATOR_ASSAY_COMPONENTS = {
+        "settings": settings_mod,
+        "state": state_mod,
+        "assay_service": assay_service_mod,
+        "assay_embed": assay_embed_mod,
+    }
+    return _STITCH_OPERATOR_ASSAY_COMPONENTS
+
+
+class EmbeddedAssayWorkspaceController:
+    """Minimal controller surface required by EmbeddedAssayUI."""
+
+    def __init__(self) -> None:
+        components = _load_stitch_operator_assay_components()
+        settings_mod = components["settings"]
+        state_mod = components["state"]
+        assay_service_mod = components["assay_service"]
+
+        self._state_mod = state_mod
+        self.settings_store = settings_mod.OperatorSettingsStore()
+        self.settings = self.settings_store.load()
+        self.assay = assay_service_mod.AssayService(self.settings)
+        self.state = state_mod.OperatorState()
+        self._update(status_message="Assay workspace ready.")
+        self.refresh_readiness()
+        if getattr(self.assay.profile, "last_run_dir", ""):
+            self._set_assay_state({"run_dir": self.assay.profile.last_run_dir})
+
+    def snapshot(self):
+        return deepcopy(self.state)
+
+    def _update(self, **kwargs) -> None:
+        for key, value in kwargs.items():
+            setattr(self.state, key, value)
+        self.state.updated_at = time.time()
+
+    def _set_assay_state(self, payload: dict[str, Any]) -> None:
+        assay_state = replace(
+            self.state.assay,
+            run_dir=str(payload.get("run_dir", self.state.assay.run_dir) or self.state.assay.run_dir),
+            preview_image_path=str(
+                payload.get("preview_path", payload.get("preview_image_path", self.state.assay.preview_image_path))
+                or self.state.assay.preview_image_path
+            ),
+            processed_dir=str(payload.get("processing_dir", self.state.assay.processed_dir) or self.state.assay.processed_dir),
+            processed_at=str(payload.get("processed_at", self.state.assay.processed_at) or self.state.assay.processed_at),
+            pdf_path=str(
+                payload.get("pdf_path", payload.get("summary_pdf", payload.get("report_pdf", self.state.assay.pdf_path)))
+                or self.state.assay.pdf_path
+            ),
+            processing_json=str(payload.get("processing_json", self.state.assay.processing_json) or self.state.assay.processing_json),
+            summary_csv_path=str(
+                payload.get("per_vial_summary_csv", self.state.assay.summary_csv_path) or self.state.assay.summary_csv_path
+            ),
+            upload_status=str(payload.get("upload_status", self.state.assay.upload_status) or self.state.assay.upload_status),
+            unique_crossings_total=int(
+                payload.get("unique_threshold_crossings_total", self.state.assay.unique_crossings_total)
+                or self.state.assay.unique_crossings_total
+            ),
+            duration_s=float(
+                payload.get("duration_s", payload.get("assay_duration_s", self.state.assay.duration_s))
+                or self.state.assay.duration_s
+            ),
+            per_vial_summary=list(payload.get("per_vial_summary_rows", self.state.assay.per_vial_summary) or self.state.assay.per_vial_summary),
+        )
+        self.state.assay = assay_state
+        self.state.updated_at = time.time()
+
+    def refresh_readiness(self) -> None:
+        assay_status = self.assay.status()
+        readiness = self._state_mod.ReadinessState(
+            homed=False,
+            model_ready=False,
+            channel_background_ready=False,
+            channel_calibration_ready=False,
+            assay_background_ready=bool(assay_status.get("background_ready", False)),
+            assay_calibration_ready=bool(assay_status.get("calibration_ready", False)),
+            active_profile=str(assay_status.get("profile", "") or ""),
+            channel_camera="unused",
+            assay_camera=str(assay_status.get("camera", "unknown") or "unknown"),
+        )
+        self.state.readiness = readiness
+        self.state.updated_at = time.time()
+        if self.assay.profile.last_run_dir and not self.state.assay.run_dir:
+            self._set_assay_state({"run_dir": self.assay.profile.last_run_dir})
+
+    def assay_profile_summary(self) -> dict[str, Any]:
+        return dict(self.assay.profile_summary())
+
+    def patch_assay_profile_fields(self, **fields: Any) -> None:
+        self.assay.patch_profile_fields(**fields)
+        self.refresh_readiness()
+
+    def set_active_profile(self, profile_name: str) -> None:
+        name = str(profile_name or "").strip()
+        if not name:
+            raise RuntimeError("Active assay profile name cannot be empty.")
+        self.settings.active_assay_profile = name
+        self.settings_store.save(self.settings)
+        self.assay.load_profile(name)
+        self.refresh_readiness()
+
+
+def get_embedded_assay_ui_class():
+    return _load_stitch_operator_assay_components()["assay_embed"].EmbeddedAssayUI
+
+
+def create_embedded_assay_controller() -> EmbeddedAssayWorkspaceController:
+    return EmbeddedAssayWorkspaceController()
 
 
 def _append_channel_artifact_trace(event: str, **fields: Any) -> None:
