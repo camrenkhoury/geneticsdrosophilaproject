@@ -493,6 +493,16 @@ def run_operation(
             log(f"Cycle {cycle_index}: skipping redundant home ({reason}); already at home reference.")
             op_trace("home_skip", reason=reason)
             return
+        if (
+            reason == "pickup_accuracy_reset"
+            and position_reference_state == POSITION_REFERENCE_KNOWN_ABSOLUTE
+        ):
+            log(
+                f"Cycle {cycle_index}: skipping redundant home ({reason}); current absolute position is known "
+                "and the next pickup can be reached directly."
+            )
+            op_trace("home_skip", reason=reason, reference_state=position_reference_state)
+            return
         status("running", status_message)
         log(log_message)
         op_trace("home_enter", reason=reason)
