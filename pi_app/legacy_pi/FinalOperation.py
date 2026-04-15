@@ -182,6 +182,13 @@ def _resolve_destination(
 ) -> tuple[TubeState, str]:
     class_name = str(classification_result.get("class") or "UNCERTAIN").strip().lower()
     errors = list(classification_result.get("errors", []) or [])
+    confidence = float(classification_result.get("confidence", 0.0) or 0.0)
+
+    if class_name not in {"male", "female"} or errors or confidence <= 0.0:
+        reject_tube = tube_states["T1"]
+        if reject_tube.count < reject_tube.capacity:
+            return reject_tube, "damaged/rejected"
+        raise RuntimeError("No destination tube with remaining capacity is available.")
 
     if class_name == "male":
         candidates = ["T2", "T4"]
@@ -489,17 +496,30 @@ def run_operation(
             )
 
             status("moving", f"Cycle {cycle_index}: returning to chamber for pickup.")
+            if stop_requested is not None and stop_requested():
+                raise OperationCancelled
             move_absolute_callable(config.CHAMBER_CENTER)
             _sleep_with_stop(chamber_release_settle_s, stop_requested)
 
             status("picking", f"Cycle {cycle_index}: picking fly from chamber.")
+            if stop_requested is not None and stop_requested():
+                raise OperationCancelled
             set_vacuum_callable(True)
             _sleep_with_stop(chamber_pickup_s, stop_requested)
 
+            log(
+                f"Cycle {cycle_index}: routing classification "
+                f"{last_classification.get('class', 'UNCERTAIN')} to {destination_tube.label} "
+                f"at {destination_tube.position_mm:.2f} mm."
+            )
             status("moving", f"Cycle {cycle_index}: moving to {destination_tube.label}.")
+            if stop_requested is not None and stop_requested():
+                raise OperationCancelled
             move_absolute_callable(destination_tube.position_mm)
 
             status("running", f"Cycle {cycle_index}: dropping into {destination_tube.label}.")
+            if stop_requested is not None and stop_requested():
+                raise OperationCancelled
             set_vacuum_callable(False)
             _sleep_with_stop(tube_drop_s, stop_requested)
             destination_tube.count += 1

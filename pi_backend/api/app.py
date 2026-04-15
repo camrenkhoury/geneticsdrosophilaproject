@@ -175,6 +175,7 @@ class BackendApiContext:
     def request_stop(self) -> CommandResponse:
         busy = self.is_busy()
         self.runtime_state.set_stop_requested(True)
+        self.machine_service.emergency_stop()
 
         if busy:
             self.runtime_state.set_orchestrator_state(
@@ -186,12 +187,12 @@ class BackendApiContext:
                 f"Stop requested while {self._active_command} is active.",
             )
             message = (
-                f"Stop requested for {self._active_command}. "
-                "Phase 2 stop is cooperative and will be fully enforced once task orchestration is added."
+                f"Emergency stop requested for {self._active_command}. "
+                "Motion drive and outputs were cut immediately and the active task is being cancelled."
             )
         else:
             self.runtime_state.append_log("INFO", "Stop requested while machine is idle.")
-            message = "Stop acknowledged. Machine is already idle."
+            message = "Emergency stop acknowledged. Motion drive and outputs were forced to a safe state."
 
         return CommandResponse.from_snapshot(
             self.runtime_state.snapshot(),

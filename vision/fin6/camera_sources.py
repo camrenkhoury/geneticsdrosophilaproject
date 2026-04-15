@@ -30,6 +30,11 @@ ASSAY_CAMERA_MATCH_PATTERNS = (
     "usb-xhci-hcd.1-2",
 )
 
+CHANNEL_CAMERA_HARD_PREFER_TOKENS = (
+    "brio_101",
+    "2440ap7k0zx8",
+)
+
 SETTINGS_PATH = FIN6_DIR / ".fly_tracking_gui_settings.json"
 
 
@@ -156,7 +161,14 @@ def list_video_devices(prefer_index_zero: bool = True) -> list[CameraDescriptor]
                 by_path_path=by_path_path,
             )
         )
-    out.sort(key=lambda item: (0 if item.is_brio else 1, item.card_name.lower(), item.device_path))
+    out.sort(
+        key=lambda item: (
+            0 if _matches_hard_preferred_channel_camera(item) else 1,
+            0 if item.is_brio else 1,
+            item.card_name.lower(),
+            item.device_path,
+        )
+    )
     return out
 
 
@@ -178,6 +190,11 @@ def _device_haystack(device: CameraDescriptor) -> str:
 def _matches_assay_camera(device: CameraDescriptor) -> bool:
     haystack = _device_haystack(device)
     return any(pattern in haystack for pattern in ASSAY_CAMERA_MATCH_PATTERNS)
+
+
+def _matches_hard_preferred_channel_camera(device: CameraDescriptor) -> bool:
+    haystack = _device_haystack(device)
+    return any(token in haystack for token in CHANNEL_CAMERA_HARD_PREFER_TOKENS)
 
 
 def _load_saved_camera_settings() -> dict[str, Any]:
@@ -221,6 +238,13 @@ def _descriptor_from_saved_selection(
             preferred_hint=assay_hint,
             role="assay",
         )
+        for device in devices:
+            if (
+                device.is_brio
+                and _matches_hard_preferred_channel_camera(device)
+                and (assay_descriptor is None or device.stable_path != assay_descriptor.stable_path)
+            ):
+                return device
         for device in devices:
             if device.is_brio and (assay_descriptor is None or device.stable_path != assay_descriptor.stable_path):
                 return device
@@ -378,6 +402,9 @@ def resolve_camera_device(
         )
         if preferred_channel is not None:
             return preferred_channel.stable_path
+        for device in devices:
+            if device.is_brio and _matches_hard_preferred_channel_camera(device):
+                return device.stable_path
         for device in devices:
             if device.is_brio:
                 return device.stable_path

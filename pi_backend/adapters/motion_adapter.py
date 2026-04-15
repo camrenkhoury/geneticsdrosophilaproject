@@ -89,3 +89,11 @@ class MotionAdapter:
 
     def get_operational_max_mm(self) -> float:
         return float(self._require_module().get_operational_max_mm())
+
+    def emergency_stop(self) -> None:
+        module = self._require_module()
+        if hasattr(module, "disable_motor"):
+            module.disable_motor()
+            return
+        if hasattr(module, "stop"):
+            module.stop()

@@ -427,6 +427,7 @@ def list_available_cameras() -> dict[str, Any]:
                 "device_path": device.device_path,
                 "stable_path": device.stable_path,
                 "card_name": device.card_name,
+                "preferred_hint": str(device.by_id_path or device.by_path_path or device.stable_path or device.device_path),
                 "symlink_name": device.symlink_name,
                 "by_id_path": device.by_id_path,
                 "by_path_path": device.by_path_path,
@@ -542,6 +543,7 @@ def list_camera_role_assignments() -> dict[str, Any]:
                     "label": " | ".join(label_parts),
                     "stable_path": device.stable_path,
                     "card_name": device.card_name,
+                    "preferred_hint": str(device.by_id_path or device.by_path_path or device.stable_path or device.device_path),
                     "selected": bool(selected is not None and stable == selected.stable_path),
                 }
             )

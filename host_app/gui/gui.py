@@ -2324,6 +2324,55 @@ class DrosophilaGUI:
             return status
         return self._wait_for_remote_backend_idle(label, timeout_s=timeout_s)
 
+    def _request_remote_emergency_stop_now(self) -> None:
+        if not self.remote_connected or self.remote_controller is None:
+            return
+
+        controller = self.remote_controller
+
+        def worker() -> None:
+            try:
+                response = controller.stop()
+                message = str(response.get("message", "Emergency stop request sent to Pi backend."))
+                self.ui_queue.put(("log", f"Remote stop: {message}"))
+                self.ui_queue.put(("status", "stopped", "Emergency stop sent to Pi backend."))
+            except Exception as exc:
+                self.ui_queue.put(("log", f"Remote stop failed: {exc}"))
+                self.ui_queue.put(("status", "error", f"Emergency stop request failed: {exc}"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _trigger_local_emergency_stop_now(self) -> None:
+        def worker() -> None:
+            try:
+                runtime = self._load_local_runtime()
+            except Exception as exc:
+                self.ui_queue.put(("log", f"Local emergency stop runtime load failed: {exc}"))
+                return
+
+            try:
+                motion = runtime.get("motion")
+                if motion is not None and hasattr(motion, "disable_motor"):
+                    motion.disable_motor()
+            except Exception as exc:
+                self.ui_queue.put(("log", f"Local emergency stop motion disable failed: {exc}"))
+            try:
+                vacuum = runtime.get("vacuum")
+                if vacuum is not None:
+                    vacuum.vacuum_off()
+                    self.ui_queue.put(("actuator", "vacuum", False))
+            except Exception as exc:
+                self.ui_queue.put(("log", f"Local emergency stop vacuum disable failed: {exc}"))
+            try:
+                vibration = runtime.get("vibration")
+                if vibration is not None:
+                    vibration.vibration_off()
+                    self.ui_queue.put(("actuator", "vibration", False))
+            except Exception as exc:
+                self.ui_queue.put(("log", f"Local emergency stop vibration disable failed: {exc}"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _remote_operational_max_mm(self) -> float:
         return max(0.0, float(config.GANTRY_MAX_MM) - (2.0 * float(config.VACUUM_CENTER_OFFSET_MM)))
 
@@ -2333,10 +2382,32 @@ class DrosophilaGUI:
 
     def _run_remote_move_absolute_for_automation(self, target_mm: float) -> None:
         controller = self._get_remote_controller_for_automation()
-        self._run_remote_command_and_wait(
-            f"move to {target_mm:.2f} mm",
-            lambda: controller.move_absolute(float(target_mm)),
-        )
+        response = controller.move_absolute(float(target_mm))
+        message = str(response.get("message", f"Accepted remote move to {target_mm:.2f} mm."))
+        self.worker_log(f"Remote move: {message}")
+        deadline = time.monotonic() + 30.0
+        last_status: dict | None = None
+        saw_busy = False
+        while time.monotonic() < deadline:
+            self._check_stop()
+            status = self._poll_remote_status_fresh()
+            last_status = status
+            if self._remote_status_has_terminal_error(status):
+                raise RuntimeError(str(status.get("latest_message", f"Remote move to {target_mm:.2f} mm failed.")))
+            current_position = float(status.get("current_position_mm", 0.0) or 0.0)
+            busy = self._backend_busy_from_status(status)
+            if busy:
+                saw_busy = True
+            if abs(current_position - float(target_mm)) <= 1.0 and (not busy) and (saw_busy or status.get("current_task") is None):
+                return
+            time.sleep(0.1)
+        self._request_remote_emergency_stop_now()
+        if last_status is not None:
+            raise RuntimeError(
+                f"Timed out moving to {target_mm:.2f} mm. "
+                f"Last position={float(last_status.get('current_position_mm', 0.0) or 0.0):.2f} mm."
+            )
+        raise RuntimeError(f"Timed out moving to {target_mm:.2f} mm.")
 
     def _run_remote_set_vacuum_for_automation(self, enabled: bool) -> None:
         controller = self._get_remote_controller_for_automation()
@@ -4420,13 +4491,15 @@ class DrosophilaGUI:
 
     def _resolve_tube_for_classification(self, classification_result: dict) -> tuple[str, float]:
         class_name = str(classification_result.get("class") or "UNCERTAIN").strip().lower()
-        if class_name == "male":
+        confidence = float(classification_result.get("confidence", 0.0) or 0.0)
+        errors = list(classification_result.get("errors", []) or [])
+        if class_name not in {"male", "female"} or confidence <= 0.0 or errors:
             return "Tube 1", config.TUBE_1_CENTER
-        if class_name == "female":
+        if class_name == "male":
             return "Tube 2", config.TUBE_2_CENTER
-        raise RuntimeError(
-            "Classification remained uncertain. Automated run stopped with the fly left in the chamber for operator review."
-        )
+        if class_name == "female":
+            return "Tube 3", config.TUBE_3_CENTER
+        return "Tube 1", config.TUBE_1_CENTER
 
     def _classify_for_automated_routing(self, classify_callable, cycle_index: int) -> dict:
         max_attempts = 2
@@ -4746,28 +4819,16 @@ class DrosophilaGUI:
             if not self.remote_connected:
                 messagebox.showinfo("Stop", "Remote backend is not connected.")
                 return
-            local_automation_active = bool(self.worker_thread and self.worker_thread.is_alive() and self.current_task_cancellable)
-            if not self.remote_stop_allowed and not local_automation_active:
-                messagebox.showinfo("Stop", "Stop is only available while the remote backend is busy.")
-                return
-            if local_automation_active:
-                self.stop_requested.set()
-                self.set_status("stopped", "Stopping remote automated run at the next safe point.")
-                self.log_message("Stop requested for remote automated run.")
-            else:
-                self.set_status("stopped", "Sending remote stop request.")
-                self.log_message("Sending remote stop request.")
-            if self.remote_stop_allowed:
-                self._start_remote_command("stop", "stopped", "Sending remote stop request.", self.remote_controller.stop)
-            return
-
-        if not (self.worker_thread and self.worker_thread.is_alive() and self.current_task_cancellable):
-            messagebox.showinfo("Stop", "Stop is only available during an automated run.")
+            self.stop_requested.set()
+            self.set_status("stopped", "Emergency stop triggered. Sending immediate stop to Pi backend.")
+            self.log_message("Emergency stop triggered for remote operation.")
+            self._request_remote_emergency_stop_now()
             return
 
         self.stop_requested.set()
-        self.set_status("stopped", "Stopping automated run at the next safe point.")
-        self.log_message("Stop requested for automated run.")
+        self.set_status("stopped", "Emergency stop triggered. Forcing local outputs to a safe state.")
+        self.log_message("Emergency stop triggered for local operation.")
+        self._trigger_local_emergency_stop_now()
 
     def system_reset(self):
         if self.worker_thread and self.worker_thread.is_alive():

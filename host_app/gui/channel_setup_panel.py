@@ -78,6 +78,7 @@ class ChannelSetupPanel:
         self._status_load_busy = False
         self._closed = False
         self._needs_preview_refresh = True
+        self._initial_preview_started = False
         self._startup_load_in_flight = False
         self._workflow_phase = "capturing"
         self._status_request_id = 0
@@ -130,6 +131,7 @@ class ChannelSetupPanel:
         self._photo = None
         self._display_box = None
         self._needs_preview_refresh = True
+        self._initial_preview_started = False
         self._workflow_phase = "capturing"
         self.selection_var.set("Capturing the current photo for calibration...")
 
@@ -406,9 +408,7 @@ class ChannelSetupPanel:
             )
         self._render_preview()
         self._update_selection_label()
-        if self._needs_preview_refresh and not self._action_busy:
-            self._needs_preview_refresh = False
-            self._capture_preview()
+        self._schedule_initial_preview_capture()
 
     def _apply_camera_options(self, payload: dict[str, Any]) -> None:
         auto_label = str(payload.get("auto_label", "Auto-detect channel camera"))
@@ -424,7 +424,7 @@ class ChannelSetupPanel:
         for device in devices:
             label = str(device.get("label", "") or "").strip()
             stable_path = str(device.get("stable_path", "") or "").strip()
-            preferred_hint = str(device.get("card_name", "") or "").strip()
+            preferred_hint = str(device.get("preferred_hint", "") or device.get("stable_path", "") or "").strip()
             if not label or not stable_path:
                 continue
             choice_map[label] = (stable_path, preferred_hint)
@@ -457,6 +457,13 @@ class ChannelSetupPanel:
             self._handle_preview_complete(payload, request_id=request_id)
 
         self._run_worker("Capturing setup photo...", self._capture_preview_cycle, on_success, lock_controls=False)
+
+    def _schedule_initial_preview_capture(self) -> None:
+        if self._closed or self._initial_preview_started:
+            return
+        self._initial_preview_started = True
+        self._needs_preview_refresh = False
+        self.window.after(10, self._capture_preview)
 
     def _handle_preview_complete(self, payload: dict[str, Any], *, request_id: int | None = None) -> None:
         if self._closed:

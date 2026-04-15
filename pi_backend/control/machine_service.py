@@ -172,6 +172,30 @@ class MachineService:
         if error is not None:
             raise SubsystemUnavailableError("assay", self._unavailable_detail(error, "assay"))
 
+    def emergency_stop(self) -> None:
+        self.runtime_state.set_stop_requested(True)
+        self.runtime_state.set_orchestrator_state(
+            OrchestratorState.STOP_REQUESTED,
+            "Emergency stop requested.",
+        )
+        try:
+            self.motion.emergency_stop()
+            self.logger.warning("Emergency stop: motion drive disabled.")
+        except Exception as exc:
+            self.logger.warning("Emergency stop: failed to disable motion drive: %s", exc)
+        try:
+            if self._subsystem_status("vacuum") != "deferred":
+                self.vacuum.set_enabled(False)
+            self.logger.warning("Emergency stop: vacuum disabled.")
+        except Exception as exc:
+            self.logger.warning("Emergency stop: failed to disable vacuum: %s", exc)
+        try:
+            if self._subsystem_status("vibration") != "deferred":
+                self.vibration.set_enabled(False)
+            self.logger.warning("Emergency stop: vibration disabled.")
+        except Exception as exc:
+            self.logger.warning("Emergency stop: failed to disable vibration: %s", exc)
+
     def _skip_deferred_safe_off(self, subsystem: str, enabled: bool) -> bool:
         return not enabled and self._subsystem_status(subsystem) == "deferred"
 
