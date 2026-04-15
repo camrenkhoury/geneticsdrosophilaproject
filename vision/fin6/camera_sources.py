@@ -12,6 +12,7 @@ then falls back to `/dev/videoN`.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -20,12 +21,16 @@ from typing import Any, Optional, Sequence, Union
 import cv2
 import numpy as np
 
+from shared.config.project_paths import FIN6_DIR
+
 
 ASSAY_CAMERA_MATCH_PATTERNS = (
     "hd webcam emeet c960",
     "emeet c960",
     "usb-xhci-hcd.1-2",
 )
+
+SETTINGS_PATH = FIN6_DIR / ".fly_tracking_gui_settings.json"
 
 
 class CameraError(RuntimeError):
@@ -175,6 +180,61 @@ def _matches_assay_camera(device: CameraDescriptor) -> bool:
     return any(pattern in haystack for pattern in ASSAY_CAMERA_MATCH_PATTERNS)
 
 
+def _load_saved_camera_settings() -> dict[str, Any]:
+    if not SETTINGS_PATH.exists():
+        return {}
+    try:
+        return json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _descriptor_from_saved_selection(
+    devices: Sequence[CameraDescriptor],
+    *,
+    device_reference: str,
+    preferred_hint: str = "",
+    role: str = "",
+) -> Optional[CameraDescriptor]:
+    hint = str(preferred_hint or "").strip().lower()
+    if hint:
+        for device in devices:
+            if hint in _device_haystack(device):
+                return device
+
+    raw = str(device_reference or "").strip().lower()
+    if not raw:
+        return None
+
+    if role == "assay" and raw in {"auto", "auto:assay", "assay", "auto_assay"}:
+        for device in devices:
+            if _matches_assay_camera(device):
+                return device
+        return None
+
+    if role == "channel" and raw in {"auto", "auto:channel", "channel"}:
+        assay_device = str(_load_saved_camera_settings().get("assay_camera_device_var", "") or "").strip()
+        assay_hint = str(_load_saved_camera_settings().get("assay_camera_preferred_hint_var", "") or "").strip()
+        assay_descriptor = _descriptor_from_saved_selection(
+            devices,
+            device_reference=assay_device,
+            preferred_hint=assay_hint,
+            role="assay",
+        )
+        for device in devices:
+            if device.is_brio and (assay_descriptor is None or device.stable_path != assay_descriptor.stable_path):
+                return device
+        for device in devices:
+            if device.is_brio:
+                return device
+        return None
+
+    for device in devices:
+        if raw in _device_haystack(device):
+            return device
+    return None
+
+
 def _discovered_device_summary(devices: Sequence[CameraDescriptor]) -> str:
     if not devices:
         return "none"
@@ -286,12 +346,28 @@ def resolve_camera_device(
 
     raw_norm = raw.lower()
     if raw_norm in {"", "auto", "auto:channel", "channel"} or role == "channel":
+        preferred_channel = _descriptor_from_saved_selection(
+            devices,
+            device_reference=raw,
+            preferred_hint=preferred_hint,
+            role="channel",
+        )
+        if preferred_channel is not None:
+            return preferred_channel.stable_path
         for device in devices:
             if device.is_brio:
                 return device.stable_path
         return devices[0].stable_path
 
     if raw_norm in {"auto:assay", "assay", "auto_assay"} or role == "assay":
+        preferred_assay = _descriptor_from_saved_selection(
+            devices,
+            device_reference=raw,
+            preferred_hint=preferred_hint,
+            role="assay",
+        )
+        if preferred_assay is not None:
+            return preferred_assay.stable_path
         for device in devices:
             if _matches_assay_camera(device):
                 return device.stable_path

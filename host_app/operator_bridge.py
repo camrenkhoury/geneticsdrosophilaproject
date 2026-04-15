@@ -386,15 +386,41 @@ def list_available_cameras() -> dict[str, Any]:
         role="channel",
         preferred_hint=status.channel.preferred_hint,
     )
+    selected_stable = None if selected is None else selected.stable_path
+    assay_selected = describe_camera_selection(
+        status.assay.camera_device,
+        role="assay",
+        preferred_hint=status.assay.camera_preferred_hint,
+    )
+    assay_stable = None if assay_selected is None else assay_selected.stable_path
+
+    def _channel_rank(device) -> tuple[int, str, str]:
+        stable = device.stable_path or device.device_path
+        if selected_stable and stable == selected_stable:
+            return (0, device.card_name.lower(), stable)
+        if device.is_brio and assay_stable and stable == assay_stable:
+            return (2, device.card_name.lower(), stable)
+        if device.is_brio:
+            return (1, device.card_name.lower(), stable)
+        return (3, device.card_name.lower(), stable)
+
+    visible_devices = [
+        device for device in devices
+        if device.is_brio or (selected_stable and (device.stable_path or device.device_path) == selected_stable)
+    ]
+    visible_devices.sort(key=_channel_rank)
+
     items: list[dict[str, Any]] = []
-    for device in devices:
+    for device in visible_devices:
         label_parts = [device.card_name]
         if device.is_brio:
             label_parts.append("Brio")
         stable = device.stable_path or device.device_path
         if stable:
             label_parts.append(stable)
-        role_guess = "channel" if device.is_brio else "other"
+        role_guess = "channel"
+        if assay_stable and stable == assay_stable:
+            role_guess = "assay"
         items.append(
             {
                 "label": " | ".join(label_parts),
@@ -461,8 +487,50 @@ def list_camera_role_assignments() -> dict[str, Any]:
 
     def _role_devices(selected_device: str, selected_hint: str, *, role: str, auto_label: str) -> dict[str, Any]:
         selected = describe_camera_selection(selected_device, role=role, preferred_hint=selected_hint)
+        channel_selected = describe_camera_selection(
+            status.channel.device,
+            role="channel",
+            preferred_hint=status.channel.preferred_hint,
+        )
+        assay_selected = describe_camera_selection(
+            status.assay.camera_device,
+            role="assay",
+            preferred_hint=status.assay.camera_preferred_hint,
+        )
+        selected_stable = None if selected is None else selected.stable_path
+        channel_stable = None if channel_selected is None else channel_selected.stable_path
+        assay_stable = None if assay_selected is None else assay_selected.stable_path
+
+        def _role_rank(device) -> tuple[int, str, str]:
+            stable = device.stable_path or device.device_path
+            if selected_stable and stable == selected_stable:
+                return (0, device.card_name.lower(), stable)
+            if role == "channel":
+                if device.is_brio and assay_stable and stable == assay_stable:
+                    return (2, device.card_name.lower(), stable)
+                if device.is_brio:
+                    return (1, device.card_name.lower(), stable)
+                return (3, device.card_name.lower(), stable)
+            if role == "assay":
+                if assay_stable and stable == assay_stable:
+                    return (0, device.card_name.lower(), stable)
+                if channel_stable and stable == channel_stable:
+                    return (3, device.card_name.lower(), stable)
+                if not device.is_brio:
+                    return (1, device.card_name.lower(), stable)
+                return (2, device.card_name.lower(), stable)
+            return (1, device.card_name.lower(), stable)
+
+        role_devices = list(devices)
+        if role == "channel":
+            role_devices = [
+                device for device in devices
+                if device.is_brio or (selected_stable and (device.stable_path or device.device_path) == selected_stable)
+            ]
+        role_devices.sort(key=_role_rank)
+
         items: list[dict[str, Any]] = []
-        for device in devices:
+        for device in role_devices:
             label_parts = [device.card_name]
             if device.is_brio:
                 label_parts.append("Brio")
