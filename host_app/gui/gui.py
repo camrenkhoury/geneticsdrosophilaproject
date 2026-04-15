@@ -882,8 +882,9 @@ class DrosophilaGUI:
             "This tab shows the latest classification, confidence, routing destination, and live tube counts."
         )
         self.assay_workspace_summary_var.set(
-            f"Assay runs use the saved assay setup on {location}. "
-            "Use Run Assay here for a direct assay run, or START to run automation first and launch assay at the end."
+            f"The real assay workspace is the fin6 assay GUI on {location}. "
+            "Use Start Assay here, or use the Start Assay prompt after automated sorting finishes. "
+            "If assay setup is not saved yet, the assay GUI will open on its assay workbench so you can configure it first."
         )
 
     def _ensure_remote_connection_for_action(self, action_label: str) -> bool:
@@ -954,25 +955,31 @@ class DrosophilaGUI:
         self._open_fin6_setup_with_bridge(fin6_bridge)
 
     def open_assay_setup(self):
-        if not self._ensure_remote_connection_for_action("Open Assay Setup"):
+        if not self._ensure_remote_connection_for_action("Start Assay"):
             return
-        fin6_bridge = self._ensure_fin6_bridge_or_warn("Open Assay Setup")
+        fin6_bridge = self._ensure_fin6_bridge_or_warn("Start Assay")
         if fin6_bridge is None:
             return
+        fin6_status = self._get_fin6_setup_status("Start Assay", show_errors=False)
+        setup_ready = bool(fin6_status is not None and self._assay_setup_ready(fin6_status))
         try:
             process = fin6_bridge.launch_fin6_gui(start_tab="assay")
         except Exception as exc:
-            self.set_status("error", f"Could not open Assay Setup: {exc}")
-            self.log_message(f"Could not open Assay Setup: {exc}")
-            messagebox.showerror("Assay Setup Error", str(exc))
+            self.set_status("error", f"Could not open Start Assay: {exc}")
+            self.log_message(f"Could not open Start Assay: {exc}")
+            messagebox.showerror("Start Assay Error", str(exc))
             return
 
         pid_text = getattr(process, "pid", None)
-        if pid_text is None:
-            self.log_message("Opened Assay Setup.")
+        if not setup_ready:
+            base_message = "Assay Setup is not saved yet. Opened the fin6 assay GUI on the assay tab for configuration."
         else:
-            self.log_message(f"Opened Assay Setup (pid {pid_text}).")
-        self.set_status("running", "Opened Assay Setup.")
+            base_message = "Opened the fin6 assay GUI on the assay tab."
+        if pid_text is None:
+            self.log_message(base_message)
+        else:
+            self.log_message(f"{base_message} (pid {pid_text}).")
+        self.set_status("running", base_message)
 
     def open_channel_setup(self):
         if not self._ensure_remote_connection_for_action("Open Channel Detection Setup"):
@@ -2923,9 +2930,6 @@ class DrosophilaGUI:
             if self.is_remote_mode() and getattr(self, "classify_button", None) is widget and not self.remote_classifier_available:
                 target_state = tk.DISABLED
                 target_entry_state = "disabled"
-            if self.is_remote_mode() and getattr(self, "assay_button", None) is widget and not self.remote_assay_available:
-                target_state = tk.DISABLED
-                target_entry_state = "disabled"
 
             try:
                 if isinstance(widget, ttk.Entry):
@@ -3799,12 +3803,9 @@ class DrosophilaGUI:
         button_row = ttk.Frame(assay_card)
         button_row.grid(row=1, column=0, sticky=tk.W, pady=(10, 0))
 
-        self.assay_setup_button = self.make_button(button_row, "Open Assay Setup", "#607D8B", self.open_assay_setup)
-        self.assay_setup_button.grid(row=0, column=0, sticky=tk.W)
-        self.local_vision_widgets.append(self.assay_setup_button)
-
-        self.assay_button = self.make_button(button_row, "Run Assay", "#9C27B0", self.run_assay)
-        self.assay_button.grid(row=0, column=1, sticky=tk.W, padx=(8, 0))
+        self.assay_button = self.make_button(button_row, "Start Assay", "#9C27B0", self.run_assay)
+        self.assay_button.grid(row=0, column=0, sticky=tk.W)
+        self.local_vision_widgets.append(self.assay_button)
 
     def create_device_operations(self, parent):
         controls_frame = ttk.Frame(parent)
@@ -5514,12 +5515,20 @@ class DrosophilaGUI:
 
     def _launch_assay_gui_from_worker(self):
         fin6_bridge = self._load_fin6_bridge()
+        fin6_status = self._get_fin6_setup_status("Start Assay", show_errors=False)
+        setup_ready = bool(fin6_status is not None and self._assay_setup_ready(fin6_status))
+        if not setup_ready:
+            self.worker_log(
+                "Assay Setup is not saved yet. Opening the fin6 assay GUI on the assay tab for configuration."
+            )
+        else:
+            self.worker_log("Opening the fin6 assay GUI on the assay tab.")
         process = fin6_bridge.launch_fin6_gui(start_tab="assay")
         pid_text = getattr(process, "pid", None)
         if pid_text is None:
-            self.worker_log("Opened the current fin6 assay GUI.")
+            self.worker_log("Opened the current fin6 assay GUI on the assay tab.")
         else:
-            self.worker_log(f"Opened the current fin6 assay GUI (pid {pid_text}).")
+            self.worker_log(f"Opened the current fin6 assay GUI on the assay tab (pid {pid_text}).")
         return process
 
     def _run_automated_worker(self):
@@ -5739,17 +5748,7 @@ class DrosophilaGUI:
         )
 
     def run_assay(self):
-        if self.is_remote_mode():
-            self._start_remote_command(
-                "assay",
-                "assaying",
-                "Sending remote assay request.",
-                self.remote_controller.run_assay,
-            )
-            return
-        if not self._ensure_assay_setup_ready_or_prompt("Run Assay"):
-            return
-        self.start_task("assay", "assaying", "Running assay.", self._run_assay_worker)
+        self.open_assay_setup()
 
     def classify_fly_gui(self):
         if self.is_remote_mode():
