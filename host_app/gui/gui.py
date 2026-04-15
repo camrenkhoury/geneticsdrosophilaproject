@@ -1312,11 +1312,12 @@ class DrosophilaGUI:
         )
 
     def _run_channel_setup_prep_worker(self) -> None:
-        target_position = float(config.CHAMBER_CENTER + 26.0)
+        target_position = 191.0
         if self.is_remote_mode():
             self.worker_status("moving", "Homing before Channel Detection Setup.")
             self._run_remote_home_for_automation()
-            self.worker_status("moving", "Moving to the initial channel image position for calibration.")
+            self.worker_log(f"Channel setup prep target: {target_position:.2f} mm.")
+            self.worker_status("moving", "Moving to the initial 191.0 mm channel image position for calibration.")
             self._run_remote_move_absolute_for_automation(target_position)
             return
 
@@ -1324,7 +1325,8 @@ class DrosophilaGUI:
         motion = runtime["motion"]
         self.worker_status("moving", "Homing before Channel Detection Setup.")
         motion.home_to_zero()
-        self.worker_status("moving", "Moving to the initial channel image position for calibration.")
+        self.worker_log(f"Channel setup prep target: {target_position:.2f} mm.")
+        self.worker_status("moving", "Moving to the initial 191.0 mm channel image position for calibration.")
         motion.move_to_absolute(target_position)
 
     def _ensure_channel_setup_ready_or_begin_setup(self, action_label: str, resume_callable) -> bool:
@@ -2462,7 +2464,7 @@ class DrosophilaGUI:
         controller = self._get_remote_controller_for_automation()
         response = controller.move_absolute(float(target_mm))
         message = str(response.get("message", f"Accepted remote move to {target_mm:.2f} mm."))
-        self.worker_log(f"Remote move: {message}")
+        self.worker_log(f"Remote move target {target_mm:.2f} mm: {message}")
         deadline = time.monotonic() + 30.0
         last_status: dict | None = None
         saw_busy = False
