@@ -4406,6 +4406,9 @@ class DrosophilaGUI:
                 elif kind == "remote_command_error":
                     self._trace_runtime("queue", f"remote_command_error {item[1]}", echo_to_log=False)
                     self._fail_remote_command(item[1], item[2], item[3])
+                elif kind == "remote_status_error":
+                    self._trace_runtime("queue", "remote_status_error", echo_to_log=False)
+                    self.log_message(f"Remote status poll failed while backend remained reachable: {item[1]}")
         except queue.Empty:
             pass
 

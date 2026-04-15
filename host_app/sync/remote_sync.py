@@ -102,6 +102,17 @@ class RemoteSyncManager:
                     return
                 continue
             except ControllerError as exc:
+                backend_alive, health_message = self._confirm_backend_alive(exc)
+                if backend_alive:
+                    if self._reconnect_pending:
+                        self._emit_connection(ConnectionState.CLIENT_RECONNECTED, "Reconnected to Pi backend.")
+                        self._reconnect_pending = False
+                    self._has_connected_once = True
+                    self._emit_connection(ConnectionState.CLIENT_CONNECTED, health_message)
+                    self.ui_queue.put(("remote_status_error", str(exc)))
+                    if self._wait_for_next_poll(self.idle_poll_interval_s):
+                        return
+                    continue
                 append_operation_trace(
                     HOST_OPERATION_TRACE_FILENAME,
                     "remote_sync",
@@ -200,3 +211,29 @@ class RemoteSyncManager:
             message=message,
         )
         self.ui_queue.put(("remote_connection", state.value, message))
+
+    def _confirm_backend_alive(self, status_error: Exception) -> tuple[bool, str]:
+        try:
+            health_payload = self.controller.get_health()
+        except ControllerConnectionError:
+            return False, str(status_error)
+        except ControllerError as health_exc:
+            append_operation_trace(
+                HOST_OPERATION_TRACE_FILENAME,
+                "remote_sync",
+                "health-controller-error",
+                status_error=str(status_error),
+                health_error=str(health_exc),
+            )
+            return True, "Connected to Pi backend. Status polling returned an error."
+
+        append_operation_trace(
+            HOST_OPERATION_TRACE_FILENAME,
+            "remote_sync",
+            "health-ok-after-status-error",
+            status_error=str(status_error),
+            backend_lifecycle_state=health_payload.get("backend_lifecycle_state"),
+            orchestrator_state=health_payload.get("orchestrator_state"),
+            latest_message=health_payload.get("latest_message"),
+        )
+        return True, "Connected to Pi backend."
