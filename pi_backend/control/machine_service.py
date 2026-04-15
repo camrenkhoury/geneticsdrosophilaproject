@@ -273,6 +273,30 @@ class MachineService:
         fin6_bridge = self._load_fin6_bridge()
         return fin6_bridge.list_available_cameras()
 
+    def list_camera_roles(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        return fin6_bridge.list_camera_role_assignments()
+
+    def save_camera_roles(
+        self,
+        *,
+        channel_device: str,
+        channel_preferred_hint: str,
+        sexing_camera_index: int,
+        assay_device: str,
+        assay_preferred_hint: str,
+    ) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.save_camera_role_assignments(
+            channel_device=channel_device,
+            channel_preferred_hint=channel_preferred_hint,
+            sexing_camera_index=sexing_camera_index,
+            assay_device=assay_device,
+            assay_preferred_hint=assay_preferred_hint,
+        )
+        self.runtime_state.append_log("INFO", "Saved camera role assignments.")
+        return payload
+
     def update_channel_setup_camera(self, device_reference: str, preferred_hint: str = "") -> dict[str, Any]:
         fin6_bridge = self._load_fin6_bridge()
         payload = fin6_bridge.update_channel_camera_selection(device_reference, preferred_hint=preferred_hint)

@@ -17,6 +17,7 @@ Usage from another script:
 import os
 import sys
 import subprocess
+import json
 from pathlib import Path
 import numpy as np
 import cv2
@@ -54,6 +55,8 @@ HARD_ERROR_FLAGS = {
     'LOAD_FAILED',
     'CLASSIFIER_FAILED',
 }
+
+SETTINGS_PATH = REPO_ROOT / "vision" / "fin6" / ".fly_tracking_gui_settings.json"
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Load model once at import time
@@ -74,12 +77,19 @@ def _capture_image() -> bool:
         print("Simulated image capture.")
         return True
     os.makedirs(TEMP_IMAGE_DIR, exist_ok=True)
-    result = subprocess.run([
+    command = [
         '/usr/bin/rpicam-still',
         '--output', TEMP_IMAGE_PATH,
         '--nopreview',
         '-n',
-    ], capture_output=True, text=True)
+    ]
+    try:
+        saved = json.loads(SETTINGS_PATH.read_text(encoding='utf-8')) if SETTINGS_PATH.exists() else {}
+    except Exception:
+        saved = {}
+    camera_index = int(saved.get('sexing_camera_index_var', 0) or 0)
+    command.extend(['--camera', str(camera_index)])
+    result = subprocess.run(command, capture_output=True, text=True)
     print(f"returncode: {result.returncode}")
     print(f"stderr: {result.stderr}")
     return result.returncode == 0

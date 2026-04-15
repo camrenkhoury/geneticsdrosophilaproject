@@ -28,6 +28,7 @@ _DEFAULT_PROJECT_PATHS: dict[str, Path] = {
 _DEFAULT_STRING_SETTINGS: dict[str, str] = {
     "channel_device_var": "auto:channel",
     "channel_preferred_hint_var": "",
+    "sexing_camera_backend_var": "rpicam",
     "assay_camera_backend_var": "opencv",
     "assay_camera_device_var": "auto:assay",
     "assay_camera_preferred_hint_var": "",
@@ -35,6 +36,7 @@ _DEFAULT_STRING_SETTINGS: dict[str, str] = {
 
 _DEFAULT_NUMERIC_SETTINGS: dict[str, float] = {
     "channel_mm_var": float(getattr(config, "CHANNEL_LENGTH", 149.0)),
+    "sexing_camera_index_var": 0.0,
 }
 
 _LEGACY_DEVICE_DEFAULTS: dict[str, set[str]] = {
@@ -83,10 +85,17 @@ class Fin6AssaySettings:
 
 
 @dataclass(frozen=True)
+class SexingCameraSettings:
+    backend: str
+    camera_index: int
+
+
+@dataclass(frozen=True)
 class Fin6SetupStatus:
     settings_path: Path
     settings_file_exists: bool
     channel: Fin6ChannelSettings
+    sexing: SexingCameraSettings
     assay: Fin6AssaySettings
     channel_background_ready: bool
     channel_calibration_ready: bool
@@ -267,6 +276,10 @@ def get_setup_status() -> Fin6SetupStatus:
         band_half_width=_to_int(saved.get("channel_band_var"), 35),
         no_align=_to_bool(saved.get("channel_no_align_var"), False),
     )
+    sexing = SexingCameraSettings(
+        backend=str(saved.get("sexing_camera_backend_var") or "rpicam"),
+        camera_index=_to_int(saved.get("sexing_camera_index_var"), 0),
+    )
     assay = Fin6AssaySettings(
         background_path=_resolve_path(saved.get("assay_background_var"), FIN6_DIR / "backgrounds" / "assay_bg.png"),
         calibration_path=_resolve_path(saved.get("assay_calibration_var"), FIN6_DIR / "calibrations" / "assay_calibration.json"),
@@ -292,6 +305,7 @@ def get_setup_status() -> Fin6SetupStatus:
         settings_path=SETTINGS_PATH,
         settings_file_exists=SETTINGS_PATH.exists(),
         channel=channel,
+        sexing=sexing,
         assay=assay,
         channel_background_ready=channel.background_path.exists(),
         channel_calibration_ready=channel.calibration_path.exists(),
@@ -328,6 +342,10 @@ def setup_status_to_dict(status: Fin6SetupStatus) -> dict[str, Any]:
             "score_thresh": int(status.channel.score_thresh),
             "band_half_width": int(status.channel.band_half_width),
             "no_align": bool(status.channel.no_align),
+        },
+        "sexing": {
+            "camera_backend": status.sexing.backend,
+            "camera_index": int(status.sexing.camera_index),
         },
         "assay": {
             "background_path": str(status.assay.background_path),
@@ -396,6 +414,119 @@ def list_available_cameras() -> dict[str, Any]:
         "selected_device": str(status.channel.device),
         "selected_hint": str(status.channel.preferred_hint),
         "devices": items,
+    }
+
+
+def _list_pihq_cameras() -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    try:
+        from picamera2 import Picamera2  # type: ignore
+
+        info = Picamera2.global_camera_info() or []
+    except Exception:
+        info = []
+    for idx, info_item in enumerate(info):
+        model = str(info_item.get("Model", "") or info_item.get("model", "") or "Pi Camera").strip()
+        location = str(info_item.get("Location", "") or info_item.get("location", "") or "").strip()
+        label_parts = [f"Pi Camera {idx}"]
+        if model:
+            label_parts.append(model)
+        if location:
+            label_parts.append(location)
+        items.append(
+            {
+                "label": " | ".join(label_parts),
+                "camera_index": idx,
+                "model": model,
+                "location": location,
+            }
+        )
+    if not items:
+        items.append(
+            {
+                "label": "Pi Camera 0 | Default ribbon camera",
+                "camera_index": 0,
+                "model": "Default",
+                "location": "",
+            }
+        )
+    return items
+
+
+def list_camera_role_assignments() -> dict[str, Any]:
+    from vision.fin6.camera_sources import describe_camera_selection, list_video_devices
+
+    status = get_setup_status()
+    devices = list_video_devices(prefer_index_zero=True)
+
+    def _role_devices(selected_device: str, selected_hint: str, *, role: str, auto_label: str) -> dict[str, Any]:
+        selected = describe_camera_selection(selected_device, role=role, preferred_hint=selected_hint)
+        items: list[dict[str, Any]] = []
+        for device in devices:
+            label_parts = [device.card_name]
+            if device.is_brio:
+                label_parts.append("Brio")
+            stable = device.stable_path or device.device_path
+            if stable:
+                label_parts.append(stable)
+            items.append(
+                {
+                    "label": " | ".join(label_parts),
+                    "stable_path": device.stable_path,
+                    "card_name": device.card_name,
+                    "selected": bool(selected is not None and stable == selected.stable_path),
+                }
+            )
+        return {
+            "auto_label": auto_label,
+            "selected_device": str(selected_device),
+            "selected_hint": str(selected_hint),
+            "devices": items,
+        }
+
+    return {
+        "channel": _role_devices(
+            status.channel.device,
+            status.channel.preferred_hint,
+            role="channel",
+            auto_label="Auto-detect channel camera",
+        ),
+        "sexing": {
+            "backend": status.sexing.backend,
+            "selected_index": int(status.sexing.camera_index),
+            "devices": _list_pihq_cameras(),
+        },
+        "assay": _role_devices(
+            status.assay.camera_device,
+            status.assay.camera_preferred_hint,
+            role="assay",
+            auto_label="Auto-detect assay camera",
+        ),
+    }
+
+
+def save_camera_role_assignments(
+    *,
+    channel_device: str,
+    channel_preferred_hint: str,
+    sexing_camera_index: int,
+    assay_device: str,
+    assay_preferred_hint: str,
+) -> dict[str, Any]:
+    normalized = normalize_settings_file(persist=False)
+    channel_device_text = str(channel_device or "").strip()
+    assay_device_text = str(assay_device or "").strip()
+    normalized["channel_device_var"] = channel_device_text or "auto:channel"
+    normalized["channel_preferred_hint_var"] = str(channel_preferred_hint or "").strip()
+    normalized["sexing_camera_backend_var"] = "rpicam"
+    normalized["sexing_camera_index_var"] = int(sexing_camera_index)
+    normalized["assay_camera_device_var"] = assay_device_text or "auto:assay"
+    normalized["assay_camera_preferred_hint_var"] = str(assay_preferred_hint or "").strip()
+    _save_settings_file(normalized)
+    return {
+        "ok": True,
+        "message": "Camera role assignments saved.",
+        "roles": list_camera_role_assignments(),
     }
 
 
@@ -694,6 +825,7 @@ def launch_fin6_gui() -> subprocess.Popen:
 __all__ = [
     "Fin6AssaySettings",
     "Fin6ChannelSettings",
+    "SexingCameraSettings",
     "Fin6SetupStatus",
     "SETTINGS_PATH",
     "capture_channel_background_from_saved_settings",
@@ -701,9 +833,11 @@ __all__ = [
     "detect_channel_once_from_saved_settings",
     "get_setup_status",
     "launch_fin6_gui",
+    "list_camera_role_assignments",
     "list_available_cameras",
     "normalize_settings_file",
     "run_assay_from_saved_settings",
+    "save_camera_role_assignments",
     "save_channel_calibration_from_points",
     "setup_status_to_dict",
     "update_channel_camera_selection",

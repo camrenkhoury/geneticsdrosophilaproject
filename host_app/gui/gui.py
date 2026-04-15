@@ -42,6 +42,7 @@ from host_app.controllers.base_controller import (
     ControllerError,
 )
 from host_app.controllers.remote_controller import RemoteController
+from host_app.gui.camera_role_panel import CameraRoleActions, CameraRolePanel
 from host_app.gui.channel_setup_panel import ChannelSetupActions, ChannelSetupPanel
 from host_app.sync.connection_state import ConnectionState
 from host_app.sync.remote_sync import RemoteSyncManager
@@ -581,6 +582,7 @@ class DrosophilaGUI:
         self._pending_channel_setup_resume = None
         self._pending_channel_setup_action_label: str | None = None
         self._channel_setup_panel: ChannelSetupPanel | None = None
+        self._camera_role_panel: CameraRolePanel | None = None
         self.entry_page_scale = self.entry_profile["scale"]
 
         self.state_var = tk.StringVar(value="IDLE")
@@ -851,6 +853,11 @@ class DrosophilaGUI:
             return
         self._open_channel_setup_panel("Channel Detection Setup")
 
+    def open_camera_roles(self):
+        if not self._ensure_remote_connection_for_action("Open Camera Roles"):
+            return
+        self._open_camera_role_panel()
+
     def _get_fin6_setup_status(self, action_label: str, *, show_errors: bool):
         if self.is_remote_mode():
             if not self.remote_connected or self.remote_controller is None:
@@ -994,6 +1001,47 @@ class DrosophilaGUI:
             raise RuntimeError("Channel camera discovery is unavailable.") from exc
         return fin6_bridge.list_available_cameras()
 
+    def _get_camera_roles_for_panel(self) -> dict[str, Any]:
+        if self.is_remote_mode():
+            if not self.remote_connected or self.remote_controller is None:
+                raise RuntimeError("Connect to the Pi backend before loading camera roles.")
+            return self.remote_controller.get_camera_roles()
+        try:
+            fin6_bridge = self._load_fin6_bridge()
+        except RuntimeError as exc:
+            raise RuntimeError("Camera role discovery is unavailable.") from exc
+        return fin6_bridge.list_camera_role_assignments()
+
+    def _save_camera_roles_for_panel(
+        self,
+        channel_device: str,
+        channel_preferred_hint: str,
+        sexing_camera_index: int,
+        assay_device: str,
+        assay_preferred_hint: str,
+    ) -> dict[str, Any]:
+        if self.is_remote_mode():
+            if not self.remote_connected or self.remote_controller is None:
+                raise RuntimeError("Connect to the Pi backend before saving camera roles.")
+            return self.remote_controller.save_camera_roles(
+                channel_device=channel_device,
+                channel_preferred_hint=channel_preferred_hint,
+                sexing_camera_index=sexing_camera_index,
+                assay_device=assay_device,
+                assay_preferred_hint=assay_preferred_hint,
+            )
+        try:
+            fin6_bridge = self._load_fin6_bridge()
+        except RuntimeError as exc:
+            raise RuntimeError("Camera role save is unavailable.") from exc
+        return fin6_bridge.save_camera_role_assignments(
+            channel_device=channel_device,
+            channel_preferred_hint=channel_preferred_hint,
+            sexing_camera_index=sexing_camera_index,
+            assay_device=assay_device,
+            assay_preferred_hint=assay_preferred_hint,
+        )
+
     def _save_channel_setup_camera_selection(self, device_reference: str, preferred_hint: str) -> dict[str, Any]:
         if self.is_remote_mode():
             if not self.remote_connected or self.remote_controller is None:
@@ -1053,6 +1101,44 @@ class DrosophilaGUI:
         else:
             self.set_status("idle", "Channel Detection Setup closed.")
         self._update_control_interactivity()
+
+    def _handle_camera_roles_saved(self) -> None:
+        self._camera_role_panel = None
+        self.log_message("Camera roles saved.")
+        self.set_status("idle", "Camera roles saved.")
+        if self._channel_setup_panel is not None and self._channel_setup_panel.is_open():
+            try:
+                self._channel_setup_panel.refresh_status_and_preview()
+            except Exception:
+                pass
+        self._update_control_interactivity()
+
+    def _handle_camera_roles_cancelled(self) -> None:
+        self._camera_role_panel = None
+        self.set_status("idle", "Camera roles window closed.")
+        self._update_control_interactivity()
+
+    def _open_camera_role_panel(self) -> bool:
+        if self.worker_thread and self.worker_thread.is_alive():
+            messagebox.showwarning("Busy", "Wait for the current task to finish before opening Camera Roles.")
+            return False
+        if self._camera_role_panel is not None and self._camera_role_panel.is_open():
+            self._camera_role_panel.show()
+            return True
+        self._camera_role_panel = CameraRolePanel(
+            self.root,
+            actions=CameraRoleActions(
+                fetch_roles=self._get_camera_roles_for_panel,
+                save_roles=self._save_camera_roles_for_panel,
+            ),
+            on_saved=self._handle_camera_roles_saved,
+            on_cancel=self._handle_camera_roles_cancelled,
+            log_callback=self.log_message,
+        )
+        self.set_status("running", "Camera Roles is open.")
+        self.log_message("Opened Camera Roles.")
+        self._update_control_interactivity()
+        return True
 
     def _open_channel_setup_panel(self, action_label: str, resume_callable=None) -> bool:
         if self.worker_thread and self.worker_thread.is_alive():
@@ -2739,8 +2825,12 @@ class DrosophilaGUI:
         self.detect_channel_button.grid(row=0, column=0, sticky=tk.W)
         self.local_vision_widgets.append(self.detect_channel_button)
 
+        self.camera_roles_button = self.make_button(actions, "Camera Roles", "#455A64", self.open_camera_roles)
+        self.camera_roles_button.grid(row=0, column=1, sticky=tk.W, padx=(8, 0))
+        self.local_vision_widgets.append(self.camera_roles_button)
+
         self.channel_setup_button = self.make_button(actions, "Open Channel Setup", "#607D8B", self.open_channel_setup)
-        self.channel_setup_button.grid(row=0, column=1, sticky=tk.W, padx=(8, 0))
+        self.channel_setup_button.grid(row=0, column=2, sticky=tk.W, padx=(8, 0))
         self.local_vision_widgets.append(self.channel_setup_button)
 
         preview_frame = ttk.LabelFrame(parent, text="Annotated Preview", padding="10")

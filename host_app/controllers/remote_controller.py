@@ -23,6 +23,7 @@ class RemoteController(BaseController):
         "/channel_setup/capture_background": "Pi-side channel setup background capture",
         "/channel_setup/capture_preview": "Pi-side channel setup preview capture",
         "/channel_setup/save_calibration": "Pi-side channel setup calibration save",
+        "/camera_roles": "Pi-side camera role assignments",
     }
 
     def __init__(
@@ -74,6 +75,30 @@ class RemoteController(BaseController):
 
     def get_channel_setup_cameras(self) -> ControllerPayload:
         return self._request_json("GET", "/channel_setup/cameras")
+
+    def get_camera_roles(self) -> ControllerPayload:
+        return self._request_json("GET", "/camera_roles")
+
+    def save_camera_roles(
+        self,
+        *,
+        channel_device: str,
+        channel_preferred_hint: str,
+        sexing_camera_index: int,
+        assay_device: str,
+        assay_preferred_hint: str,
+    ) -> ControllerPayload:
+        return self._request_json(
+            "POST",
+            "/camera_roles",
+            json_payload={
+                "channel_device": str(channel_device or ""),
+                "channel_preferred_hint": str(channel_preferred_hint or ""),
+                "sexing_camera_index": int(sexing_camera_index),
+                "assay_device": str(assay_device or ""),
+                "assay_preferred_hint": str(assay_preferred_hint or ""),
+            },
+        )
 
     def select_channel_setup_camera(self, device_reference: str, *, preferred_hint: str = "") -> ControllerPayload:
         return self._request_json(

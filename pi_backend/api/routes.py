@@ -93,6 +93,27 @@ def get_channel_setup_cameras(request: Request) -> dict:
     return context.machine_service.list_channel_setup_cameras()
 
 
+@router.get("/camera_roles", dependencies=[Depends(require_api_key)])
+def get_camera_roles(request: Request) -> dict:
+    context = request.app.state.backend_context
+    return context.machine_service.list_camera_roles()
+
+
+@router.post("/camera_roles", dependencies=[Depends(require_api_key)])
+def post_camera_roles(request: Request, payload: dict[str, Any]) -> dict:
+    context = request.app.state.backend_context
+    try:
+        return context.machine_service.save_camera_roles(
+            channel_device=str(payload.get("channel_device", "") or ""),
+            channel_preferred_hint=str(payload.get("channel_preferred_hint", "") or ""),
+            sexing_camera_index=int(payload.get("sexing_camera_index", 0)),
+            assay_device=str(payload.get("assay_device", "") or ""),
+            assay_preferred_hint=str(payload.get("assay_preferred_hint", "") or ""),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.post("/channel_setup/select_camera", dependencies=[Depends(require_api_key)])
 def post_channel_setup_select_camera(request: Request, payload: dict[str, Any]) -> dict:
     context = request.app.state.backend_context
