@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import base64
 import threading
 import tkinter as tk
 from dataclasses import dataclass
@@ -198,9 +199,6 @@ class ChannelSetupPanel:
         self.reset_points_button.grid(row=7, column=0, sticky="ew", pady=(8, 0))
         self.save_button = ttk.Button(controls, text="Save Calibration", command=self._save_calibration)
         self.save_button.grid(row=8, column=0, sticky="ew", pady=(8, 0))
-        self.refresh_button = ttk.Button(controls, text="Refresh", command=self.refresh_status_and_preview)
-        self.refresh_button.grid(row=9, column=0, sticky="ew", pady=(8, 0))
-
         footer = ttk.Frame(right)
         footer.grid(row=2, column=0, sticky="sew", pady=(12, 0))
         footer.columnconfigure(0, weight=1)
@@ -261,7 +259,7 @@ class ChannelSetupPanel:
     def _update_control_states(self) -> None:
         state = tk.DISABLED if self._action_busy else tk.NORMAL
         entry_state = "disabled" if self._action_busy else "normal"
-        for widget in (self.capture_button, self.preview_button, self.reset_points_button, self.save_button, self.refresh_button):
+        for widget in (self.capture_button, self.preview_button, self.reset_points_button, self.save_button):
             try:
                 widget.config(state=state)
             except tk.TclError:
@@ -324,6 +322,19 @@ class ChannelSetupPanel:
             self.status_var.set("Channel Detection Setup needs attention.")
             self._update_control_states()
         self.detail_var.set(message)
+        lowered = message.lower()
+        if "read timed out" in lowered or "timed out" in lowered:
+            self._refresh_preview_bytes()
+            if self._pil_image is not None:
+                self.status_var.set("Setup photo updated after a slow camera response.")
+                self.detail_var.set(
+                    "The Pi camera response was slow, but a setup photo is now available. "
+                    "If the image is stale or blocked, use Refresh Photo again."
+                )
+                self._update_control_states()
+                if callable(self.log_callback):
+                    self.log_callback("Recovered setup photo after a slow Pi camera response.")
+                return
         if callable(self.status_callback):
             self.status_callback("error", message)
         if callable(self.log_callback):
@@ -446,7 +457,8 @@ class ChannelSetupPanel:
         camera_description = str(payload.get("camera_description", "")).strip()
         if camera_description:
             self.camera_status_var.set(f"Setup photo updated from {camera_description}.")
-        self._refresh_preview_bytes()
+        if not self._load_preview_from_payload(payload):
+            self._refresh_preview_bytes()
         self.refresh_status_and_preview()
 
     def _handle_camera_change(self, _event=None) -> None:
@@ -495,6 +507,18 @@ class ChannelSetupPanel:
             return
         self._load_preview_bytes(image_bytes)
         self._render_preview()
+
+    def _load_preview_from_payload(self, payload: dict[str, Any]) -> bool:
+        encoded = str(payload.get("preview_jpeg_base64", "") or "").strip()
+        if not encoded:
+            return False
+        try:
+            image_bytes = base64.b64decode(encoded)
+        except Exception:
+            return False
+        self._load_preview_bytes(image_bytes)
+        self._render_preview()
+        return True
 
     def _save_calibration(self) -> None:
         if len(self._selected_points) != 2:

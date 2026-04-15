@@ -64,7 +64,7 @@ class RemoteController(BaseController):
         return self._command_request("POST", "/run_assay")
 
     def detect_channel(self) -> ControllerPayload:
-        return self._command_request("POST", "/detect_channel")
+        return self._command_request("POST", "/detect_channel", timeout_s=20.0)
 
     def get_fin6_setup_status(self) -> ControllerPayload:
         return self._request_json("GET", "/fin6/setup_status")
@@ -86,10 +86,10 @@ class RemoteController(BaseController):
         )
 
     def capture_channel_setup_background(self) -> ControllerPayload:
-        return self._request_json("POST", "/channel_setup/capture_background")
+        return self._request_json("POST", "/channel_setup/capture_background", timeout_s=20.0)
 
     def capture_channel_setup_preview(self) -> ControllerPayload:
-        return self._request_json("POST", "/channel_setup/capture_preview")
+        return self._request_json("POST", "/channel_setup/capture_preview", timeout_s=20.0)
 
     def save_channel_setup_calibration(
         self,
@@ -143,10 +143,10 @@ class RemoteController(BaseController):
         return self._request_bytes("GET", "/artifacts/channel/annotated")
 
     def get_channel_background_image(self) -> bytes | None:
-        return self._request_bytes("GET", "/artifacts/channel/background")
+        return self._request_bytes("GET", "/artifacts/channel/background", timeout_s=15.0)
 
     def get_channel_setup_preview_image(self) -> bytes | None:
-        return self._request_bytes("GET", "/artifacts/channel/setup_preview")
+        return self._request_bytes("GET", "/artifacts/channel/setup_preview", timeout_s=15.0)
 
     def _command_request(
         self,
@@ -154,8 +154,9 @@ class RemoteController(BaseController):
         path: str,
         *,
         json_payload: dict[str, Any] | None = None,
+        timeout_s: float | None = None,
     ) -> ControllerPayload:
-        payload = self._request_json(method, path, json_payload=json_payload)
+        payload = self._request_json(method, path, json_payload=json_payload, timeout_s=timeout_s)
         if not payload.get("ok", False) or not payload.get("accepted", False):
             raise ControllerCommandRejected(str(payload.get("message", "Command rejected.")), payload)
         return payload
@@ -166,9 +167,11 @@ class RemoteController(BaseController):
         path: str,
         *,
         json_payload: dict[str, Any] | None = None,
+        timeout_s: float | None = None,
     ) -> ControllerPayload:
         url = f"{self.base_url}{path}"
         headers = {"X-API-Key": self.api_key}
+        request_timeout_s = float(timeout_s if timeout_s is not None else self.timeout_s)
 
         try:
             response = self.session.request(
@@ -176,7 +179,7 @@ class RemoteController(BaseController):
                 url=url,
                 headers=headers,
                 json=json_payload,
-                timeout=self.timeout_s,
+                timeout=request_timeout_s,
             )
         except requests.RequestException as exc:
             raise ControllerConnectionError(f"Failed to reach Pi backend at {self.base_url}: {exc}") from exc
@@ -187,16 +190,19 @@ class RemoteController(BaseController):
         self,
         method: str,
         path: str,
+        *,
+        timeout_s: float | None = None,
     ) -> bytes | None:
         url = f"{self.base_url}{path}"
         headers = {"X-API-Key": self.api_key}
+        request_timeout_s = float(timeout_s if timeout_s is not None else self.timeout_s)
 
         try:
             response = self.session.request(
                 method=method,
                 url=url,
                 headers=headers,
-                timeout=self.timeout_s,
+                timeout=request_timeout_s,
             )
         except requests.RequestException as exc:
             raise ControllerConnectionError(f"Failed to reach Pi backend at {self.base_url}: {exc}") from exc

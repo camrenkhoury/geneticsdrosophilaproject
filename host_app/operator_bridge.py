@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -497,9 +498,15 @@ def capture_channel_preview_from_saved_settings() -> dict[str, Any]:
 
     if not cv2.imwrite(str(preview_path), frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 90]):
         raise IOError(f"Could not save setup preview image to {preview_path}")
+    try:
+        preview_bytes = preview_path.read_bytes()
+        preview_b64 = base64.b64encode(preview_bytes).decode("ascii")
+    except OSError:
+        preview_b64 = ""
 
     return {
         "preview_path": str(preview_path.resolve()),
+        "preview_jpeg_base64": preview_b64,
         "camera_description": _camera_description(
             channel.device,
             role="channel",
