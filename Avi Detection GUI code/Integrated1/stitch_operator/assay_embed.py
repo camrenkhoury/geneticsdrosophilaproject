@@ -79,20 +79,15 @@ class EmbeddedAssayUI(tk.Frame):
     # ------------------------------------------------------------------
     def _configure_styles(self) -> None:
         style = ttk.Style(self)
-        try:
-            style.theme_use("clam")
-        except Exception:
-            pass
-        style.configure("TFrame", background=APP_BG)
+        # Do not switch the global ttk theme or override base widget classes
+        # inside the host shell. That restyles the surrounding Channel/Sexing
+        # tabs when the assay workspace is first opened.
         style.configure("Card.TFrame", background="#ffffff")
-        style.configure("TLabel", background="#ffffff", foreground="#1f2937")
         style.configure("Muted.TLabel", background="#ffffff", foreground="#5f6b7a")
         style.configure("Section.TLabel", background="#ffffff", foreground="#0f172a", font=("DejaVu Sans", 10, "bold"))
         style.configure("Title.TLabel", background="#ffffff", foreground="#0f172a", font=("DejaVu Sans", 12, "bold"))
         style.configure("Primary.TButton", padding=(10, 6))
         style.configure("Small.TButton", padding=(6, 3))
-        style.configure("TNotebook", background=APP_BG, borderwidth=0)
-        style.configure("TNotebook.Tab", padding=(18, 8), font=("DejaVu Sans", 10, "bold"))
         style.configure("Treeview", rowheight=26)
 
     def _load_settings(self) -> None:
