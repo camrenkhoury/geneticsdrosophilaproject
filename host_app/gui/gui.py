@@ -1567,7 +1567,7 @@ class DrosophilaGUI:
         self.main_frame.columnconfigure(1, weight=1)
         self.main_frame.columnconfigure(2, weight=0)
         self.main_frame.rowconfigure(1, weight=1)
-        self.main_frame.rowconfigure(3, weight=1)
+        self.main_frame.rowconfigure(3, weight=0)
 
         self.create_status_section(self.main_frame)
         self.create_main_content(self.main_frame)
@@ -3164,6 +3164,55 @@ class DrosophilaGUI:
         )
         self.motion_position_label.grid(row=13, column=0, sticky=(tk.W, tk.E))
 
+    def _create_vertical_scroll_container(self, parent: tk.Misc) -> ttk.Frame:
+        container = ttk.Frame(parent)
+        container.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(0, weight=1)
+
+        canvas = tk.Canvas(container, highlightthickness=0, bd=0, background="#F0F0F0")
+        canvas.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        inner = ttk.Frame(canvas)
+        window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def sync_scrollregion(_event=None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def sync_width(_event=None) -> None:
+            canvas.itemconfigure(window_id, width=canvas.winfo_width())
+
+        def on_mousewheel(event) -> str:
+            if getattr(event, "delta", 0):
+                canvas.yview_scroll(int(-event.delta / 120), "units")
+            elif getattr(event, "num", None) == 4:
+                canvas.yview_scroll(-1, "units")
+            elif getattr(event, "num", None) == 5:
+                canvas.yview_scroll(1, "units")
+            return "break"
+
+        def bind_mousewheel(_event=None) -> None:
+            canvas.bind_all("<MouseWheel>", on_mousewheel)
+            canvas.bind_all("<Button-4>", on_mousewheel)
+            canvas.bind_all("<Button-5>", on_mousewheel)
+
+        def unbind_mousewheel(_event=None) -> None:
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        inner.bind("<Configure>", sync_scrollregion)
+        canvas.bind("<Configure>", sync_width)
+        canvas.bind("<Enter>", bind_mousewheel)
+        canvas.bind("<Leave>", unbind_mousewheel)
+        inner.bind("<Enter>", bind_mousewheel)
+        inner.bind("<Leave>", unbind_mousewheel)
+        return inner
+
     def create_workspace_tabs(self, parent):
         workspace_frame = ttk.LabelFrame(parent, text="Vision Workspace", style="Log.TLabelframe", padding="10")
         workspace_frame.grid(row=0, column=1, sticky=(tk.N, tk.S, tk.W, tk.E), padx=8)
@@ -3183,7 +3232,7 @@ class DrosophilaGUI:
 
         sexing_tab = ttk.Frame(notebook, padding="10")
         sexing_tab.columnconfigure(0, weight=1)
-        sexing_tab.columnconfigure(1, weight=0)
+        sexing_tab.rowconfigure(0, weight=1)
         notebook.add(sexing_tab, text="Sexing")
         self.create_sexing_tab(sexing_tab)
         self.workspace_sexing_tab = sexing_tab
@@ -3261,11 +3310,19 @@ class DrosophilaGUI:
 
     def create_sexing_tab(self, parent):
         parent.columnconfigure(0, weight=1)
-        parent.columnconfigure(1, weight=0)
         parent.rowconfigure(0, weight=1)
 
-        preview_card = ttk.LabelFrame(parent, text="Classification Preview", padding="10")
-        preview_card.grid(row=0, column=0, columnspan=2, sticky=(tk.N, tk.S, tk.W, tk.E))
+        content = self._create_vertical_scroll_container(parent)
+        content.columnconfigure(0, weight=1)
+        content.columnconfigure(1, weight=0, minsize=280)
+        content.columnconfigure(2, weight=0, minsize=280)
+
+        summary_card = ttk.LabelFrame(content, text="Sexing / Routing", padding="10")
+        summary_card.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E), padx=(0, 10))
+        summary_card.columnconfigure(1, weight=0)
+
+        preview_card = ttk.LabelFrame(content, text="Classification Preview", padding="10")
+        preview_card.grid(row=0, column=1, sticky=(tk.N, tk.S, tk.W, tk.E), padx=(0, 10))
         preview_card.columnconfigure(0, weight=1)
         preview_card.rowconfigure(0, weight=1)
         self.sexing_preview_label = tk.Label(
@@ -3278,10 +3335,7 @@ class DrosophilaGUI:
         )
         self.sexing_preview_label.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
         self.sexing_preview_label.bind("<Configure>", self._refresh_sexing_preview_image)
-
-        summary_card = ttk.LabelFrame(parent, text="Sexing / Routing", padding="10")
-        summary_card.grid(row=1, column=0, sticky=(tk.N, tk.W, tk.E), pady=(10, 0), padx=(0, 10))
-        summary_card.columnconfigure(1, weight=0)
+        preview_card.configure(width=280)
 
         tk.Label(
             summary_card,
@@ -3320,8 +3374,8 @@ class DrosophilaGUI:
                 width=18,
             ).grid(row=row_index, column=1, sticky=tk.W, pady=2)
 
-        tube_frame = ttk.LabelFrame(parent, text="Tube Counts", padding="10")
-        tube_frame.grid(row=1, column=1, sticky=(tk.N, tk.E), pady=(10, 0))
+        tube_frame = ttk.LabelFrame(content, text="Tube Counts", padding="10")
+        tube_frame.grid(row=0, column=2, sticky=(tk.N, tk.E))
         tube_roles = {
             "T1": "Damaged / Rejected",
             "T2": "Male",
@@ -3472,9 +3526,8 @@ class DrosophilaGUI:
 
     def create_log_section(self, parent):
         log_frame = ttk.LabelFrame(parent, text="Activity Log", style="Log.TLabelframe", padding="8")
-        log_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.N, tk.S, tk.W, tk.E), pady=(8, 0))
+        log_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(8, 0))
         log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(2, weight=1)
 
         debug_frame = ttk.LabelFrame(log_frame, text="Runtime History", padding="8")
         debug_frame.grid(row=0, column=0, sticky=(tk.W, tk.E))
@@ -3499,7 +3552,7 @@ class DrosophilaGUI:
 
         self.debug_trace_text = scrolledtext.ScrolledText(
             log_frame,
-            height=8,
+            height=6,
             wrap=tk.WORD,
             font=("Consolas", 8),
             bg="#111827",
@@ -3513,14 +3566,14 @@ class DrosophilaGUI:
 
         self.log_text = scrolledtext.ScrolledText(
             log_frame,
-            height=5,
+            height=4,
             wrap=tk.WORD,
             font=("Consolas", 9),
             bg="#F8F8F8",
             relief="sunken",
             borderwidth=1,
         )
-        self.log_text.grid(row=2, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        self.log_text.grid(row=2, column=0, sticky=(tk.W, tk.E))
 
     def create_footer_banners(self, parent, row: int, column: int, background: str, pady=(12, 0)):
         footer_frame = tk.Frame(parent, bg=background)
@@ -3940,6 +3993,10 @@ class DrosophilaGUI:
                 elif kind == "prompt_yes_no":
                     self._trace_runtime("queue", f"prompt_yes_no title={item[1]['title']}", echo_to_log=False)
                     prompt_state = item[1]
+                    with contextlib.suppress(tk.TclError):
+                        self.root.deiconify()
+                        self.root.lift()
+                        self.root.focus_force()
                     prompt_state["response"] = messagebox.askyesno(
                         prompt_state["title"],
                         prompt_state["message"],
