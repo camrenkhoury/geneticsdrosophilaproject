@@ -114,7 +114,9 @@ def _sorted_pickup_positions(result: dict[str, Any], clamp_operational: Callable
     if not result.get("fly_remaining", False):
         return "done"
 
-    raw_positions = result.get("x_positions_mm")
+    raw_positions = result.get("corrected_positions_mm")
+    if raw_positions is None or not isinstance(raw_positions, list):
+        raw_positions = result.get("x_positions_mm")
     if raw_positions is None or not isinstance(raw_positions, list):
         return None
 
@@ -126,7 +128,9 @@ def _sorted_pickup_positions(result: dict[str, Any], clamp_operational: Callable
     if not numeric_positions:
         return "done"
 
-    adjusted = [clamp_operational(float(value) + config.PICKUP_POSITION_CORRECTION_MM) for value in numeric_positions]
+    # Detection should already report channel positions in gantry/nozzle space.
+    # Do not apply an extra pickup correction here or the gantry will undershoot.
+    adjusted = [clamp_operational(float(value)) for value in numeric_positions]
     return sorted(adjusted, reverse=True)
 
 
@@ -234,6 +238,7 @@ def run_operation(
     get_operational_max_mm_callable = get_operational_max_mm or motion.get_operational_max_mm
 
     chamber_drop_s = 2.0
+    chamber_release_settle_s = 0.25
     chamber_settle_s = 6.0
     chamber_pickup_s = 2.0
     tube_drop_s = 2.0
@@ -258,8 +263,10 @@ def run_operation(
     def clamp_operational(position_mm: float) -> float:
         return max(0.0, min(float(position_mm), float(get_operational_max_mm_callable())))
 
-    camera_photo_position = clamp_operational(config.CHAMBER_CENTER + 26.0)
-    chamber_observe_position = clamp_operational(config.CHAMBER_CENTER + 23.0)
+    channel_photo_offset_mm = 26.0
+    chamber_observe_offset_mm = 23.0
+    camera_photo_position = clamp_operational(config.CHAMBER_CENTER + channel_photo_offset_mm)
+    chamber_observe_position = clamp_operational(config.CHAMBER_CENTER + chamber_observe_offset_mm)
     _publish_snapshot(tube_states, snapshot_callback=snapshot_callback, stage="idle")
 
     try:
@@ -385,6 +392,7 @@ def run_operation(
             move_absolute_callable(config.CHAMBER_CENTER)
 
             status("running", f"Cycle {cycle_index}: dropping in chamber.")
+            _sleep_with_stop(chamber_release_settle_s, stop_requested)
             set_vacuum_callable(False)
             _sleep_with_stop(chamber_drop_s, stop_requested)
 
@@ -482,6 +490,7 @@ def run_operation(
 
             status("moving", f"Cycle {cycle_index}: returning to chamber for pickup.")
             move_absolute_callable(config.CHAMBER_CENTER)
+            _sleep_with_stop(chamber_release_settle_s, stop_requested)
 
             status("picking", f"Cycle {cycle_index}: picking fly from chamber.")
             set_vacuum_callable(True)

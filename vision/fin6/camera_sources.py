@@ -261,6 +261,19 @@ def _descriptor_by_reference(
     return None
 
 
+def _is_auto_role_reference(device_reference: Union[str, int, None], *, role: Optional[str]) -> bool:
+    if device_reference is None:
+        return True
+    if isinstance(device_reference, int):
+        return False
+    raw = str(device_reference or "").strip().lower()
+    if role == "assay":
+        return raw in {"", "auto", "auto:assay", "assay", "auto_assay"}
+    if role == "channel":
+        return raw in {"", "auto", "auto:channel", "channel"}
+    return raw in {"", "auto"}
+
+
 def capture_candidate_devices(
     device_reference: Union[str, int, None],
     *,
@@ -290,13 +303,24 @@ def capture_candidate_devices(
         seen.add(normalized)
         candidates.append(normalized)
 
-    # Prefer the live /dev/videoN node. Matching by-id/by-path is still used to
-    # find the correct physical camera, but some Pi/OpenCV stacks are less stable
-    # when the symlink path itself is passed into VideoCapture.
-    add(descriptor.device_path)
-    add(descriptor.stable_path)
+    explicit_selection = not _is_auto_role_reference(device_reference, role=role)
+
+    if explicit_selection:
+        # For an explicit operator-selected UVC camera, do not fan out across
+        # extra aliases that can land on the wrong stream. Keep the selection
+        # tightly bound to the chosen physical camera.
+        add(descriptor.by_id_path)
+        add(descriptor.by_path_path)
+        add(descriptor.stable_path)
+        add(descriptor.device_path)
+        return candidates or [_normalize_cv2_device(resolved)]
+
+    # For auto-detect, keep a few fallbacks but still prefer stable identity
+    # first so the Pi does not drift between equivalent-looking UVC nodes.
     add(descriptor.by_id_path)
     add(descriptor.by_path_path)
+    add(descriptor.stable_path)
+    add(descriptor.device_path)
     if int(descriptor.index) >= 0:
         add(int(descriptor.index))
     return candidates or [_normalize_cv2_device(resolved)]

@@ -1160,16 +1160,22 @@ class DrosophilaGUI:
             fetch_preview_bytes=self._get_channel_setup_preview_bytes,
         )
 
-    def _channel_setup_signature(self, fin6_status: dict[str, Any] | None) -> tuple[str, str] | None:
-        if not isinstance(fin6_status, dict):
-            return None
+    @staticmethod
+    def _status_get(obj: Any, key: str, default: Any = None) -> Any:
+        if obj is None:
+            return default
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    def _channel_setup_signature(self, fin6_status: Any) -> tuple[str, str] | None:
         if not self._channel_setup_ready(fin6_status):
             return None
-        channel = fin6_status.get("channel")
-        if not isinstance(channel, dict):
+        channel = self._status_get(fin6_status, "channel")
+        if channel is None:
             return None
-        background_path = str(channel.get("background_path") or "").strip()
-        calibration_path = str(channel.get("calibration_path") or "").strip()
+        background_path = str(self._status_get(channel, "background_path", "") or "").strip()
+        calibration_path = str(self._status_get(channel, "calibration_path", "") or "").strip()
         if not background_path or not calibration_path:
             return None
         return (background_path, calibration_path)
