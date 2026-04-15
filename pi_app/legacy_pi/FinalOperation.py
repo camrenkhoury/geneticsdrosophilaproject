@@ -245,6 +245,7 @@ def run_operation(
     last_destination: TubeState | None = None
     pending_pickup_positions: list[float] = []
     flies_taken_from_current_detection = 0
+    first_pickup_after_detection = False
 
     def check_stop() -> None:
         if stop_requested is not None and stop_requested():
@@ -292,6 +293,7 @@ def run_operation(
 
                 pending_pickup_positions = list(pickup_positions)
                 flies_taken_from_current_detection = 0
+                first_pickup_after_detection = True
 
             pickup_position = float(pending_pickup_positions.pop(0))
             flies_taken_from_current_detection += 1
@@ -300,9 +302,14 @@ def run_operation(
                 f"(detection batch {flies_taken_from_current_detection}/{max_flies_per_detection})."
             )
 
-            status("running", f"Cycle {cycle_index}: reset home before pickup.")
-            set_vacuum_callable(False)
-            home_callable()
+            if first_pickup_after_detection:
+                status("moving", f"Cycle {cycle_index}: moving directly from detection position to pickup.")
+                log(f"Cycle {cycle_index}: skipping redundant home before first pickup after detection.")
+                first_pickup_after_detection = False
+            else:
+                status("running", f"Cycle {cycle_index}: reset home before pickup.")
+                set_vacuum_callable(False)
+                home_callable()
 
             status("moving", f"Cycle {cycle_index}: moving to pickup position.")
             move_absolute_callable(pickup_position)
