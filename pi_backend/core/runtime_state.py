@@ -78,22 +78,25 @@ class RuntimeStateStore:
         self._snapshot = RuntimeStateSnapshot()
 
     def _trace_locked(self, event: str, **fields: Any) -> None:
+        trace_fields = {
+            "status_revision": self._snapshot.status_revision,
+            "backend_lifecycle_state": str(self._snapshot.backend_lifecycle_state),
+            "controller_state": str(self._snapshot.controller_state),
+            "orchestrator_state": str(self._snapshot.orchestrator_state),
+            "task_state": None if self._snapshot.task_state is None else str(self._snapshot.task_state),
+            "current_task": self._snapshot.current_task,
+            "current_position_mm": self._snapshot.current_position_mm,
+            "vacuum_on": self._snapshot.vacuum_on,
+            "vibration_on": self._snapshot.vibration_on,
+            "stop_requested": self._snapshot.stop_requested,
+            "latest_message": self._snapshot.latest_message,
+        }
+        trace_fields.update(fields)
         append_operation_trace(
             PI_OPERATION_TRACE_FILENAME,
             "runtime_state",
             event,
-            status_revision=self._snapshot.status_revision,
-            backend_lifecycle_state=str(self._snapshot.backend_lifecycle_state),
-            controller_state=str(self._snapshot.controller_state),
-            orchestrator_state=str(self._snapshot.orchestrator_state),
-            task_state=None if self._snapshot.task_state is None else str(self._snapshot.task_state),
-            current_task=self._snapshot.current_task,
-            current_position_mm=self._snapshot.current_position_mm,
-            vacuum_on=self._snapshot.vacuum_on,
-            vibration_on=self._snapshot.vibration_on,
-            stop_requested=self._snapshot.stop_requested,
-            latest_message=self._snapshot.latest_message,
-            **fields,
+            **trace_fields,
         )
 
     def snapshot(self) -> RuntimeStateSnapshot:
