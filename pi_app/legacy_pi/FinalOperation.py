@@ -438,58 +438,17 @@ def run_operation(
                 f"confidence={confidence:.4f} count={chamber_count} errors={last_classification.get('errors', [])}"
             )
 
-            if chamber_count <= 0:
+            chamber_count_error = chamber_count != 1
+            if chamber_count_error:
+                error_code = f"CHAMBER_COUNT_{chamber_count}"
+                existing_errors = list(last_classification.get("errors", []) or [])
+                if error_code not in existing_errors:
+                    existing_errors.append(error_code)
+                last_classification["errors"] = existing_errors
                 log(
-                    f"Cycle {cycle_index}: no fly detected in chamber after drop. "
-                    "Returning to channel for a fresh detection and retry."
+                    f"Cycle {cycle_index}: chamber count was {chamber_count}. "
+                    "Routing this specimen to Tube 1 as damaged/rejected instead of redistributing in the channel."
                 )
-                status("moving", f"Cycle {cycle_index}: returning to channel for retry.")
-                move_absolute_callable(camera_photo_position)
-                set_vacuum_callable(False)
-                pending_pickup_positions = []
-                flies_taken_from_current_detection = max_flies_per_detection
-                first_pickup_after_detection = False
-                _publish_snapshot(
-                    tube_states,
-                    snapshot_callback=snapshot_callback,
-                    cycle_index=cycle_index,
-                    detection_count=last_detection_count,
-                    pickup_position_mm=pickup_position,
-                    classification_result=last_classification,
-                    destination_key=None if last_destination is None else last_destination.key,
-                    destination_label=None if last_destination is None else last_destination.label,
-                    stage="redistributing",
-                )
-                continue
-
-            if chamber_count > 1:
-                log(
-                    f"Cycle {cycle_index}: multiple flies detected in chamber. "
-                    "Picking them up and returning them to the channel for redistribution."
-                )
-                status("moving", f"Cycle {cycle_index}: returning multiple flies to channel.")
-                move_absolute_callable(config.CHAMBER_CENTER)
-                set_vacuum_callable(True)
-                _sleep_with_stop(chamber_pickup_s, stop_requested)
-                move_absolute_callable(camera_photo_position)
-                set_vacuum_callable(False)
-                _sleep_with_stop(tube_drop_s, stop_requested)
-                pending_pickup_positions = []
-                flies_taken_from_current_detection = max_flies_per_detection
-                first_pickup_after_detection = False
-                _publish_snapshot(
-                    tube_states,
-                    snapshot_callback=snapshot_callback,
-                    cycle_index=cycle_index,
-                    detection_count=last_detection_count,
-                    pickup_position_mm=pickup_position,
-                    classification_result=last_classification,
-                    destination_key=None if last_destination is None else last_destination.key,
-                    destination_label=None if last_destination is None else last_destination.label,
-                    stage="redistributing",
-                )
-                continue
-
             destination_tube, destination_reason = _resolve_destination(last_classification, tube_states)
             last_destination = destination_tube
             _publish_snapshot(
