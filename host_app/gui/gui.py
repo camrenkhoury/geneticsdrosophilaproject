@@ -4388,6 +4388,9 @@ class DrosophilaGUI:
                 elif kind == "remote_connection":
                     self._trace_runtime("queue", f"remote_connection state={item[1]}", echo_to_log=False)
                     connection_state = ConnectionState(item[1])
+                    connection_message = str(item[2]) if len(item) > 2 else ""
+                    if connection_state == ConnectionState.CLIENT_DISCONNECTED and connection_message:
+                        self.log_message(f"Remote connection failed: {connection_message}")
                     self._apply_connection_state(connection_state, item[2])
                 elif kind == "remote_status":
                     self._apply_remote_status(item[1])
