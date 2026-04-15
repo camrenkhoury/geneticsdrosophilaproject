@@ -53,6 +53,8 @@ from shared.config.network_config import (
 )
 from shared.config.project_paths import CHANNEL_OUTPUT_DIR, FIN6_DIR
 
+GUI_CRASH_LOG_PATH = FIN6_DIR / ".host_gui_crash_trace.log"
+
 
 class TaskCancelled(Exception):
     """Raised when the operator stops an automated run."""
@@ -649,6 +651,8 @@ class DrosophilaGUI:
         self._last_debug_detail = "GUI created."
         self._last_debug_snapshot_stage: str | None = None
         self._last_status_trace_key: tuple[str, str] | None = None
+        self._last_remote_status_snapshot: dict[str, Any] | None = None
+        self._last_remote_command_summary = "--"
         self.entry_page_scale = self.entry_profile["scale"]
 
         self.state_var = tk.StringVar(value="IDLE")
@@ -2045,6 +2049,7 @@ class DrosophilaGUI:
         )
 
     def _apply_remote_status(self, status: dict) -> None:
+        self._last_remote_status_snapshot = dict(status)
         status_revision = status.get("status_revision")
         if status_revision is not None:
             normalized_revision = int(status_revision)
@@ -2475,16 +2480,33 @@ class DrosophilaGUI:
     def _wait_for_remote_backend_idle(self, label: str, timeout_s: float = 90.0) -> dict:
         deadline = time.monotonic() + timeout_s
         saw_busy = False
+        saw_state_change = False
         last_status: dict | None = None
+        initial_status = self._last_remote_status_snapshot or {}
+        initial_revision = initial_status.get("status_revision")
+        initial_task = initial_status.get("current_task")
+        initial_task_state = initial_status.get("task_state")
 
         while time.monotonic() < deadline:
             self._check_stop()
             status = self._poll_remote_status_fresh()
             last_status = status
             busy = self._backend_busy_from_status(status)
+            current_revision = status.get("status_revision")
+            current_task = status.get("current_task")
+            current_task_state = status.get("task_state")
             if busy:
                 saw_busy = True
-            elif saw_busy or status.get("current_task") is None:
+            if (
+                not saw_state_change
+                and (
+                    (initial_revision is not None and current_revision != initial_revision)
+                    or current_task != initial_task
+                    or current_task_state != initial_task_state
+                )
+            ):
+                saw_state_change = True
+            if (not busy) and (saw_busy or saw_state_change):
                 if self._remote_status_has_terminal_error(status):
                     raise RuntimeError(str(status.get("latest_message", f"Remote {label} failed.")))
                 return status
@@ -2496,13 +2518,25 @@ class DrosophilaGUI:
 
     def _run_remote_command_and_wait(self, label: str, command_callable, timeout_s: float = 90.0) -> dict:
         controller = self._get_remote_controller_for_automation()
+        initial_status: dict | None = None
+        with contextlib.suppress(Exception):
+            initial_status = controller.get_status_fresh()
         response = command_callable()
         message = str(response.get("message", f"Accepted remote {label} request."))
+        self._last_remote_command_summary = f"{label}: {message}"
         self.worker_log(f"Remote {label}: {message}")
 
         status = controller.get_status_fresh()
         self.ui_queue.put(("remote_status", status))
-        if not self._backend_busy_from_status(status):
+        initial_revision = initial_status.get("status_revision") if isinstance(initial_status, dict) else None
+        initial_task = initial_status.get("current_task") if isinstance(initial_status, dict) else None
+        initial_task_state = initial_status.get("task_state") if isinstance(initial_status, dict) else None
+        state_changed = (
+            (initial_revision is not None and status.get("status_revision") != initial_revision)
+            or status.get("current_task") != initial_task
+            or status.get("task_state") != initial_task_state
+        )
+        if not self._backend_busy_from_status(status) and state_changed:
             if self._remote_status_has_terminal_error(status):
                 raise RuntimeError(str(status.get("latest_message", f"Remote {label} failed.")))
             return status
@@ -2562,12 +2596,30 @@ class DrosophilaGUI:
 
     def _run_remote_home_for_automation(self) -> None:
         controller = self._get_remote_controller_for_automation()
-        self._run_remote_command_and_wait("home", controller.home)
+        try:
+            self._run_remote_command_and_wait("home", controller.home)
+        except Exception as exc:
+            self._append_crash_record(
+                "home_failure",
+                self._capture_failure_context(
+                    task_name=self.current_task_name or "home",
+                    exc=exc,
+                    traceback_text=traceback.format_exc().rstrip(),
+                ),
+            )
+            message = str(exc).lower()
+            transient_failure = any(token in message for token in ("timed out", "timeout", "connection", "disconnect"))
+            if not transient_failure:
+                raise
+            self.worker_log("Remote home failed transiently. Retrying once.")
+            time.sleep(0.5)
+            self._run_remote_command_and_wait("home retry", controller.home)
 
     def _run_remote_move_absolute_for_automation(self, target_mm: float) -> None:
         controller = self._get_remote_controller_for_automation()
         response = controller.move_absolute(float(target_mm))
         message = str(response.get("message", f"Accepted remote move to {target_mm:.2f} mm."))
+        self._last_remote_command_summary = f"move_absolute({target_mm:.2f}): {message}"
         self.worker_log(f"Remote move target {target_mm:.2f} mm: {message}")
         deadline = time.monotonic() + 30.0
         last_status: dict | None = None
@@ -2618,6 +2670,7 @@ class DrosophilaGUI:
 
     def _run_remote_classify_for_automation(self) -> dict[str, Any]:
         controller = self._get_remote_controller_for_automation()
+        self._last_remote_command_summary = "classification: requested"
         status = self._run_remote_command_and_wait("classification", controller.classify_fly, timeout_s=30.0)
         result = status.get("classification_result") or {}
         if not result:
@@ -4148,6 +4201,79 @@ class DrosophilaGUI:
         self.log_text.insert(tk.END, f"{timestamp} - {message}\n")
         self.log_text.see(tk.END)
 
+    def _append_crash_record(self, kind: str, payload: dict[str, Any]) -> None:
+        try:
+            GUI_CRASH_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            record = {
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "kind": kind,
+                **payload,
+            }
+            with GUI_CRASH_LOG_PATH.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, default=str))
+                handle.write("\n")
+        except Exception:
+            pass
+
+    def _capture_failure_context(
+        self,
+        *,
+        task_name: str,
+        exc: BaseException | None = None,
+        traceback_text: str = "",
+    ) -> dict[str, Any]:
+        return {
+            "mode": "remote" if self.is_remote_mode() else "simulation",
+            "task_name": task_name,
+            "current_task_name": self.current_task_name,
+            "automation_stage": self.sort_stage_var.get() if hasattr(self, "sort_stage_var") else "",
+            "automation_cycle": self.sort_cycle_var.get() if hasattr(self, "sort_cycle_var") else "",
+            "current_position_text": self.position_var.get() if hasattr(self, "position_var") else "",
+            "last_remote_command": self._last_remote_command_summary,
+            "last_remote_status": self._last_remote_status_snapshot,
+            "remote_connected": self.remote_connected,
+            "remote_backend_busy": self.remote_backend_busy,
+            "stop_requested": self.stop_requested.is_set(),
+            "exception_type": None if exc is None else type(exc).__name__,
+            "exception_message": None if exc is None else str(exc),
+            "traceback": traceback_text,
+        }
+
+    def _begin_safe_failure_recovery(self, failure_message: str) -> None:
+        def worker() -> None:
+            payload: dict[str, Any] = {
+                "failure_message": failure_message,
+                "mode": "remote" if self.is_remote_mode() else "simulation",
+            }
+            try:
+                if self.is_remote_mode() and self.remote_connected and self.remote_controller is not None:
+                    with contextlib.suppress(Exception):
+                        self.remote_controller.set_vacuum(False)
+                    with contextlib.suppress(Exception):
+                        self.remote_controller.set_vibration(False)
+                    with contextlib.suppress(Exception):
+                        status = self.remote_controller.get_status_fresh()
+                        self.ui_queue.put(("remote_status", status))
+                        payload["remote_status_refresh"] = "ok"
+                else:
+                    runtime = self._load_local_runtime()
+                    with contextlib.suppress(Exception):
+                        runtime["vacuum"].vacuum_off()
+                        self.ui_queue.put(("actuator", "vacuum", False))
+                    with contextlib.suppress(Exception):
+                        runtime["vibration"].vibration_off()
+                        self.ui_queue.put(("actuator", "vibration", False))
+                payload["recovery_succeeded"] = True
+                self.ui_queue.put(("log", "Failure recovery completed. System reset to safe idle state."))
+            except Exception as exc:
+                payload["recovery_succeeded"] = False
+                payload["recovery_error"] = str(exc)
+                self.ui_queue.put(("log", f"Failure recovery encountered an error: {exc}"))
+            finally:
+                self._append_crash_record("failure_recovery", payload)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _trace_runtime(self, event: str, detail: str = "", *, echo_to_log: bool = False) -> None:
         normalized_event = str(event).strip() or "event"
         normalized_detail = str(detail).strip()
@@ -4306,7 +4432,8 @@ class DrosophilaGUI:
             self.set_status("idle", message)
         else:
             state = "stopped" if "stopped" in message.lower() else "error"
-            self.set_status(state, message)
+            self.set_status(state, f"{message} System reset to safe idle state. Press START to try again.")
+            self._begin_safe_failure_recovery(message)
 
         self.log_message(message)
         self._trace_runtime("task-finished", f"{name} ok={ok} message={message}", echo_to_log=False)
@@ -4323,9 +4450,14 @@ class DrosophilaGUI:
             message = f"{name} complete."
         except TaskCancelled:
             message = f"{name} stopped."
-        except Exception:
-            for line in traceback.format_exc().rstrip().splitlines():
+        except Exception as exc:
+            tb_text = traceback.format_exc().rstrip()
+            for line in tb_text.splitlines():
                 self.ui_queue.put(("log", line))
+            self._append_crash_record(
+                "worker_exception",
+                self._capture_failure_context(task_name=name, exc=exc, traceback_text=tb_text),
+            )
             message = f"{name} failed."
         finally:
             writer.flush()
@@ -4929,6 +5061,7 @@ class DrosophilaGUI:
         baseline_mtime_raw = baseline_summary.get("source_mtime")
         baseline_mtime = float(baseline_mtime_raw) if baseline_mtime_raw is not None else self.last_used_detection_mtime
         response = controller.detect_channel()
+        self._last_remote_command_summary = f"detect_channel: {response.get('message', 'accepted')}"
         self.worker_log(f"Remote channel detection: {response.get('message', 'accepted')}")
         status = self._wait_for_remote_detection_result(baseline_mtime, timeout_s=60.0)
         detection_summary = status.get("detection_summary", {}) or {}
