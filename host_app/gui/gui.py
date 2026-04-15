@@ -3183,7 +3183,7 @@ class DrosophilaGUI:
 
         sexing_tab = ttk.Frame(notebook, padding="10")
         sexing_tab.columnconfigure(0, weight=1)
-        sexing_tab.rowconfigure(0, weight=1)
+        sexing_tab.columnconfigure(1, weight=0)
         notebook.add(sexing_tab, text="Sexing")
         self.create_sexing_tab(sexing_tab)
         self.workspace_sexing_tab = sexing_tab
@@ -3260,8 +3260,12 @@ class DrosophilaGUI:
         self.preview_label.bind("<Configure>", self._refresh_preview_image)
 
     def create_sexing_tab(self, parent):
+        parent.columnconfigure(0, weight=1)
+        parent.columnconfigure(1, weight=0)
+        parent.rowconfigure(0, weight=1)
+
         preview_card = ttk.LabelFrame(parent, text="Classification Preview", padding="10")
-        preview_card.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        preview_card.grid(row=0, column=0, columnspan=2, sticky=(tk.N, tk.S, tk.W, tk.E))
         preview_card.columnconfigure(0, weight=1)
         preview_card.rowconfigure(0, weight=1)
         self.sexing_preview_label = tk.Label(
@@ -3276,8 +3280,8 @@ class DrosophilaGUI:
         self.sexing_preview_label.bind("<Configure>", self._refresh_sexing_preview_image)
 
         summary_card = ttk.LabelFrame(parent, text="Sexing / Routing", padding="10")
-        summary_card.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
-        summary_card.columnconfigure(1, weight=1)
+        summary_card.grid(row=1, column=0, sticky=(tk.N, tk.W, tk.E), pady=(10, 0), padx=(0, 10))
+        summary_card.columnconfigure(1, weight=0)
 
         tk.Label(
             summary_card,
@@ -3289,7 +3293,7 @@ class DrosophilaGUI:
             pady=6,
             anchor="w",
             justify="left",
-            wraplength=560,
+            wraplength=360,
         ).grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 8))
 
         sexing_rows = [
@@ -3313,12 +3317,11 @@ class DrosophilaGUI:
                 pady=2,
                 anchor="w",
                 justify="left",
-            ).grid(row=row_index, column=1, sticky=(tk.W, tk.E), pady=2)
+                width=18,
+            ).grid(row=row_index, column=1, sticky=tk.W, pady=2)
 
         tube_frame = ttk.LabelFrame(parent, text="Tube Counts", padding="10")
-        tube_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
-        tube_frame.columnconfigure(1, weight=1)
-        tube_frame.columnconfigure(4, weight=1)
+        tube_frame.grid(row=1, column=1, sticky=(tk.N, tk.E), pady=(10, 0))
         tube_roles = {
             "T1": "Damaged / Rejected",
             "T2": "Male",
@@ -3327,17 +3330,17 @@ class DrosophilaGUI:
             "T5": "Female",
         }
         tube_layout = (
-            ("T1", 0, 0),
-            ("T2", 1, 0),
-            ("T3", 2, 0),
-            ("T4", 0, 3),
-            ("T5", 1, 3),
+            ("T1", 0),
+            ("T2", 1),
+            ("T3", 2),
+            ("T4", 3),
+            ("T5", 4),
         )
-        for tube_key, row_index, start_column in tube_layout:
-            ttk.Label(tube_frame, text=f"{tube_key}:", font=("Arial", 9, "bold")).grid(row=row_index, column=start_column, sticky=tk.W, pady=2)
+        for tube_key, row_index in tube_layout:
+            ttk.Label(tube_frame, text=f"{tube_key}:", font=("Arial", 9, "bold")).grid(row=row_index, column=0, sticky=tk.W, pady=2)
             ttk.Label(tube_frame, text=tube_roles[tube_key], font=("Arial", 8), foreground="#52606D").grid(
                 row=row_index,
-                column=start_column + 1,
+                column=1,
                 sticky=tk.W,
                 pady=2,
             )
@@ -3351,7 +3354,7 @@ class DrosophilaGUI:
                 pady=2,
                 width=8,
                 anchor="center",
-            ).grid(row=row_index, column=start_column + 2, sticky=tk.E, padx=(8, 12 if start_column == 0 else 0), pady=2)
+            ).grid(row=row_index, column=2, sticky=tk.E, padx=(8, 0), pady=2)
 
         ttk.Label(summary_card, text="Notes:", font=("Arial", 9, "bold")).grid(row=len(sexing_rows) + 1, column=0, sticky=tk.NW, pady=(8, 2))
         tk.Label(
@@ -3364,8 +3367,9 @@ class DrosophilaGUI:
             pady=4,
             anchor="w",
             justify="left",
-            wraplength=520,
-        ).grid(row=len(sexing_rows) + 1, column=1, sticky=(tk.W, tk.E), pady=(8, 2))
+            wraplength=320,
+            width=18,
+        ).grid(row=len(sexing_rows) + 1, column=1, sticky=tk.W, pady=(8, 2))
 
     def create_assay_tab(self, parent):
         assay_card = ttk.LabelFrame(parent, text="Assay", padding="10")
@@ -3936,7 +3940,11 @@ class DrosophilaGUI:
                 elif kind == "prompt_yes_no":
                     self._trace_runtime("queue", f"prompt_yes_no title={item[1]['title']}", echo_to_log=False)
                     prompt_state = item[1]
-                    prompt_state["response"] = messagebox.askyesno(prompt_state["title"], prompt_state["message"])
+                    prompt_state["response"] = messagebox.askyesno(
+                        prompt_state["title"],
+                        prompt_state["message"],
+                        parent=self.root,
+                    )
                     prompt_state["event"].set()
                 elif kind == "remote_connection":
                     self._trace_runtime("queue", f"remote_connection state={item[1]}", echo_to_log=False)
