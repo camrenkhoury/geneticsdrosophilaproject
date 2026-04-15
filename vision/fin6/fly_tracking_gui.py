@@ -26,6 +26,11 @@ from tkinter import filedialog, messagebox, ttk
 from PIL import Image, ImageTk  # type: ignore
 
 try:
+    import config as project_config
+except Exception:
+    project_config = None
+
+try:
     from .assay_tracking import (
         AssayCalibration,
         VialCalibration,
@@ -884,7 +889,8 @@ class App(tk.Tk):
         self.channel_width_var = tk.IntVar(value=1920)
         self.channel_height_var = tk.IntVar(value=1080)
         self.channel_fps_var = tk.IntVar(value=30)
-        self.channel_mm_var = tk.DoubleVar(value=111.0)
+        default_channel_mm = float(getattr(project_config, "CHANNEL_LENGTH", 149.0))
+        self.channel_mm_var = tk.DoubleVar(value=default_channel_mm)
         self.channel_score_var = tk.IntVar(value=20)
         self.channel_band_var = tk.IntVar(value=35)
 

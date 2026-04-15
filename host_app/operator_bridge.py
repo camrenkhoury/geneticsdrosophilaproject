@@ -32,6 +32,10 @@ _DEFAULT_STRING_SETTINGS: dict[str, str] = {
     "assay_camera_preferred_hint_var": "",
 }
 
+_DEFAULT_NUMERIC_SETTINGS: dict[str, float] = {
+    "channel_mm_var": float(getattr(config, "CHANNEL_LENGTH", 149.0)),
+}
+
 _LEGACY_DEVICE_DEFAULTS: dict[str, set[str]] = {
     "channel_device_var": {"/dev/video8"},
     "assay_camera_device_var": {"/dev/video10"},
@@ -186,6 +190,18 @@ def normalize_settings_file(*, persist: bool = True) -> dict[str, Any]:
         value = _normalize_string_setting(var_name, saved.get(var_name))
         if normalized.get(var_name) != value:
             normalized[var_name] = value
+            changed = True
+
+    for var_name, default_value in _DEFAULT_NUMERIC_SETTINGS.items():
+        raw_value = saved.get(var_name)
+        try:
+            numeric_value = float(raw_value)
+        except (TypeError, ValueError):
+            numeric_value = default_value
+        if var_name == "channel_mm_var" and abs(numeric_value - 111.0) < 1e-6 and abs(default_value - 111.0) > 1e-6:
+            numeric_value = default_value
+        if str(normalized.get(var_name)) != str(numeric_value):
+            normalized[var_name] = numeric_value
             changed = True
 
     if persist and (changed or not SETTINGS_PATH.exists()):

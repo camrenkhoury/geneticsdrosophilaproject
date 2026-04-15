@@ -8,6 +8,11 @@ from types import SimpleNamespace
 from typing import Any, Callable
 from tkinter import messagebox, ttk
 
+try:
+    import config as project_config
+except Exception:
+    project_config = None
+
 
 @dataclass
 class ChannelSetupActions:
@@ -55,7 +60,8 @@ class ChannelSetupPanel:
         self.background_state_var = tk.StringVar(value="Background: checking")
         self.calibration_state_var = tk.StringVar(value="Calibration: checking")
         self.selection_var = tk.StringVar(value="Pick the left channel end, then the right channel end.")
-        self.channel_mm_var = tk.StringVar(value="111.0")
+        default_channel_mm = float(getattr(project_config, "CHANNEL_LENGTH", 149.0))
+        self.channel_mm_var = tk.StringVar(value=f"{default_channel_mm:.1f}")
         self.camera_choice_var = tk.StringVar(value="Auto-detect channel camera")
         self.camera_status_var = tk.StringVar(value="Camera: detecting")
 
@@ -127,7 +133,7 @@ class ChannelSetupPanel:
         ttk.Label(status_frame, text="Calibration:").grid(row=2, column=0, sticky="w", pady=(8, 0))
         ttk.Label(status_frame, textvariable=self.calibration_state_var, wraplength=520, justify=tk.LEFT).grid(row=2, column=1, sticky="ew", pady=(8, 0))
 
-        preview_frame = ttk.LabelFrame(left, text="Background Preview", padding=10)
+        preview_frame = ttk.LabelFrame(left, text="Setup Photo", padding=10)
         preview_frame.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
         preview_frame.columnconfigure(0, weight=1)
         preview_frame.rowconfigure(0, weight=1)
@@ -240,11 +246,15 @@ class ChannelSetupPanel:
     def _update_control_states(self) -> None:
         state = tk.DISABLED if self._busy else tk.NORMAL
         entry_state = "disabled" if self._busy else "normal"
-        for widget in (self.capture_button, self.preview_button, self.reset_points_button, self.save_button, self.refresh_button, self.cancel_button):
+        for widget in (self.capture_button, self.preview_button, self.reset_points_button, self.save_button, self.refresh_button):
             try:
                 widget.config(state=state)
             except tk.TclError:
                 pass
+        try:
+            self.cancel_button.config(state=tk.NORMAL)
+        except tk.TclError:
+            pass
         try:
             self.channel_mm_entry.config(state=entry_state)
         except tk.TclError:
@@ -308,7 +318,8 @@ class ChannelSetupPanel:
         self.background_state_var.set("Saved" if getattr(status, "channel_background_ready", False) else "Missing")
         self.calibration_state_var.set("Saved" if getattr(status, "channel_calibration_ready", False) else "Missing")
         if getattr(status, "channel", None) is not None:
-            self.channel_mm_var.set(f"{float(getattr(status.channel, 'channel_mm', 111.0)):.1f}")
+            default_channel_mm = float(getattr(project_config, "CHANNEL_LENGTH", 149.0))
+            self.channel_mm_var.set(f"{float(getattr(status.channel, 'channel_mm', default_channel_mm)):.1f}")
             camera_description = str(getattr(status.channel, "camera_description", "") or "").strip()
             self.camera_status_var.set(camera_description or "Camera will be auto-detected.")
         self._apply_camera_options(cameras)
