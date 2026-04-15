@@ -2193,6 +2193,10 @@ class DrosophilaGUI:
 
     def _apply_remote_preview(self, image_bytes: bytes | None, source_mtime: float | None) -> None:
         self._remote_preview_fetch_in_flight = False
+        baseline = self._current_detection_baseline_mtime
+        if self._awaiting_current_detection:
+            if source_mtime is None or (baseline is not None and float(source_mtime) <= float(baseline)):
+                return
         if image_bytes is None:
             self.preview_image = None
             self._last_remote_preview_source_mtime = None
@@ -4410,8 +4414,7 @@ class DrosophilaGUI:
         return max(0.0, min(position_mm, motion.get_operational_max_mm()))
 
     def _apply_pickup_correction(self, position_mm: float) -> float:
-        corrected_position = position_mm + config.PICKUP_POSITION_CORRECTION_MM
-        return self._clamp_operational(corrected_position)
+        return self._clamp_operational(position_mm)
 
     def _load_positions_from_result(self, result: dict | None, source_label: str):
         if result is None:

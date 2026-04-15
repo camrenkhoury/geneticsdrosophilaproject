@@ -431,38 +431,6 @@ def run_operation(
                 f"confidence={confidence:.4f} count={chamber_count} errors={last_classification.get('errors', [])}"
             )
 
-            if chamber_count <= 0:
-                log(
-                    f"Cycle {cycle_index}: chamber classification reported no fly present. "
-                    "Treating this as a pickup/drop error and restarting from fresh channel detection."
-                )
-                pending_pickup_positions = []
-                flies_taken_from_current_detection = max_flies_per_detection
-                first_pickup_after_detection = False
-                _publish_snapshot(
-                    tube_states,
-                    snapshot_callback=snapshot_callback,
-                    cycle_index=cycle_index,
-                    detection_count=last_detection_count,
-                    pickup_position_mm=pickup_position,
-                    classification_result=last_classification,
-                    destination_key=None if last_destination is None else last_destination.key,
-                    destination_label=None if last_destination is None else last_destination.label,
-                    stage="retrying",
-                )
-                continue
-
-            chamber_count_error = chamber_count != 1
-            if chamber_count_error:
-                error_code = f"CHAMBER_COUNT_{chamber_count}"
-                existing_errors = list(last_classification.get("errors", []) or [])
-                if error_code not in existing_errors:
-                    existing_errors.append(error_code)
-                last_classification["errors"] = existing_errors
-                log(
-                    f"Cycle {cycle_index}: chamber count was {chamber_count}. "
-                    "Routing this specimen to Tube 1 as damaged/rejected instead of redistributing in the channel."
-                )
             destination_tube, destination_reason = _resolve_destination(last_classification, tube_states)
             last_destination = destination_tube
             _publish_snapshot(
