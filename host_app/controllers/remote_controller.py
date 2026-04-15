@@ -44,11 +44,17 @@ class RemoteController(BaseController):
     def home(self) -> ControllerPayload:
         return self._command_request("POST", "/home")
 
-    def move_absolute(self, mm: float) -> ControllerPayload:
-        return self._command_request("POST", "/move_absolute", json_payload={"target_mm": float(mm)})
+    def move_absolute(self, mm: float, move_time: float | None = None) -> ControllerPayload:
+        payload = {"target_mm": float(mm)}
+        if move_time is not None:
+            payload["move_time"] = float(move_time)
+        return self._command_request("POST", "/move_absolute", json_payload=payload)
 
-    def move_relative(self, mm: float) -> ControllerPayload:
-        return self._command_request("POST", "/move_relative", json_payload={"distance_mm": float(mm)})
+    def move_relative(self, mm: float, move_time: float | None = None) -> ControllerPayload:
+        payload = {"distance_mm": float(mm)}
+        if move_time is not None:
+            payload["move_time"] = float(move_time)
+        return self._command_request("POST", "/move_relative", json_payload=payload)
 
     def set_vacuum(self, enabled: bool) -> ControllerPayload:
         return self._command_request("POST", "/vacuum", json_payload={"enabled": bool(enabled)})

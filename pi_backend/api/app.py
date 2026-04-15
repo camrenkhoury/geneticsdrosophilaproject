@@ -192,6 +192,11 @@ class BackendApiContext:
             )
         else:
             self.runtime_state.append_log("INFO", "Stop requested while machine is idle.")
+            self.runtime_state.set_stop_requested(False)
+            self.runtime_state.set_orchestrator_state(
+                OrchestratorState.SYSTEM_IDLE,
+                "Machine idle.",
+            )
             message = "Emergency stop acknowledged. Motion drive and outputs were forced to a safe state."
 
         return CommandResponse.from_snapshot(

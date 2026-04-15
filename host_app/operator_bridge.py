@@ -69,6 +69,15 @@ def _append_channel_artifact_trace(event: str, **fields: Any) -> None:
         pass
 
 
+def _estimate_move_time_for_step_delay(distance_mm: float, step_delay: float) -> float | None:
+    distance = abs(float(distance_mm))
+    if distance <= 0.0:
+        return None
+    timing_factor = float(getattr(config, "TIMING_FACTOR", 1.0) or 1.0)
+    total_steps = max(1, int(round(distance / float(config.MM_PER_STEP))))
+    return (2.0 * total_steps * float(step_delay)) / timing_factor
+
+
 def _ensure_channel_photo_position(*, reason: str) -> dict[str, Any]:
     try:
         import motion
@@ -79,13 +88,22 @@ def _ensure_channel_photo_position(*, reason: str) -> dict[str, Any]:
     tolerance_mm = float(CHANNEL_PHOTO_POSITION_TOL_MM)
     requested_move = False
     before_position = float(motion.get_current_position())
+    fast_step_delay = float(
+        getattr(
+            config,
+            "CHANNEL_PHOTO_STEP_DELAY",
+            getattr(config, "HOME_STEP_DELAY", getattr(config, "DEFAULT_STEP_DELAY", 0.00010)),
+        )
+    )
+    planned_move_time = _estimate_move_time_for_step_delay(target_mm - before_position, fast_step_delay)
 
     if abs(before_position - target_mm) > tolerance_mm:
         requested_move = True
-        motion.move_to_absolute(target_mm)
+        motion.move_to_absolute(target_mm, planned_move_time)
         after_first_move = float(motion.get_current_position())
         if abs(after_first_move - target_mm) > tolerance_mm:
-            motion.move_to_absolute(target_mm)
+            retry_move_time = _estimate_move_time_for_step_delay(target_mm - after_first_move, fast_step_delay)
+            motion.move_to_absolute(target_mm, retry_move_time)
         final_position = float(motion.get_current_position())
     else:
         final_position = before_position
@@ -97,6 +115,7 @@ def _ensure_channel_photo_position(*, reason: str) -> dict[str, Any]:
         tolerance_mm=tolerance_mm,
         before_position_mm=before_position,
         requested_move=requested_move,
+        requested_move_time_s=planned_move_time,
         final_position_mm=final_position,
     )
 

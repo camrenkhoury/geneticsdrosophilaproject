@@ -1327,7 +1327,19 @@ class DrosophilaGUI:
             self._run_remote_home_for_automation()
             self.worker_log(f"Channel setup prep target: {target_position:.2f} mm.")
             self.worker_status("moving", "Moving to the initial 191.0 mm channel image position for calibration.")
-            self._run_remote_move_absolute_for_automation(target_position)
+            self._run_remote_move_absolute_for_automation(
+                target_position,
+                move_time=self._estimate_move_time_for_step_delay(
+                    target_position,
+                    float(
+                        getattr(
+                            config,
+                            "CHANNEL_PHOTO_STEP_DELAY",
+                            getattr(config, "HOME_STEP_DELAY", getattr(config, "DEFAULT_STEP_DELAY", 0.00010)),
+                        )
+                    ),
+                ),
+            )
             return
 
         runtime = self._load_local_runtime()
@@ -1336,7 +1348,19 @@ class DrosophilaGUI:
         motion.home_to_zero()
         self.worker_log(f"Channel setup prep target: {target_position:.2f} mm.")
         self.worker_status("moving", "Moving to the initial 191.0 mm channel image position for calibration.")
-        motion.move_to_absolute(target_position)
+        motion.move_to_absolute(
+            target_position,
+            self._estimate_move_time_for_step_delay(
+                target_position,
+                float(
+                    getattr(
+                        config,
+                        "CHANNEL_PHOTO_STEP_DELAY",
+                        getattr(config, "HOME_STEP_DELAY", getattr(config, "DEFAULT_STEP_DELAY", 0.00010)),
+                    )
+                ),
+            ),
+        )
 
     def _ensure_channel_setup_ready_or_begin_setup(self, action_label: str, resume_callable) -> bool:
         fin6_status = self._get_fin6_setup_status(action_label, show_errors=True)
@@ -2045,14 +2069,29 @@ class DrosophilaGUI:
         current_task = status.get("current_task")
         task_state = str(status.get("task_state") or "")
         orchestrator_state = str(status.get("orchestrator_state") or "")
-        if current_task:
-            return True
         task_state_upper = task_state.upper()
         orchestrator_state_upper = orchestrator_state.upper()
+        terminal_task_markers = ("_COMPLETE", "_ERROR", "_STOPPED", "LIMITED_OR_BLOCKED")
+        terminal_orchestrator_states = {
+            "SYSTEM_IDLE",
+            "TASK_COMPLETE",
+            "TASK_ERROR",
+            "STOP_REQUESTED",
+        }
+        if current_task and not (
+            any(marker in task_state_upper for marker in terminal_task_markers)
+            or orchestrator_state_upper in terminal_orchestrator_states
+        ):
+            return True
         if task_state_upper.endswith("_RUNNING"):
             return True
-        busy_orchestrator_tokens = ("_REQUESTED", "TASK_VALIDATING", "TASK_STARTING", "ACTUATOR_APPLYING", "TASK_STOPPING")
-        return any(token in orchestrator_state_upper for token in busy_orchestrator_tokens)
+        busy_orchestrator_states = {
+            "TASK_VALIDATING",
+            "TASK_STARTING",
+            "ACTUATOR_APPLYING",
+            "TASK_STOPPING",
+        }
+        return orchestrator_state_upper in busy_orchestrator_states
 
     def _apply_remote_status(self, status: dict) -> None:
         self._last_remote_status_snapshot = dict(status)
@@ -2605,6 +2644,15 @@ class DrosophilaGUI:
     def _remote_operational_max_mm(self) -> float:
         return max(0.0, float(config.GANTRY_MAX_MM) - (2.0 * float(config.VACUUM_CENTER_OFFSET_MM)))
 
+    @staticmethod
+    def _estimate_move_time_for_step_delay(distance_mm: float, step_delay: float) -> float | None:
+        distance = abs(float(distance_mm))
+        if distance <= 0.0:
+            return None
+        timing_factor = float(getattr(config, "TIMING_FACTOR", 1.0) or 1.0)
+        total_steps = max(1, int(round(distance / float(config.MM_PER_STEP))))
+        return (2.0 * total_steps * float(step_delay)) / timing_factor
+
     def _run_remote_home_for_automation(self) -> None:
         controller = self._get_remote_controller_for_automation()
         try:
@@ -2626,9 +2674,9 @@ class DrosophilaGUI:
             time.sleep(0.5)
             self._run_remote_command_and_wait("home retry", controller.home)
 
-    def _run_remote_move_absolute_for_automation(self, target_mm: float) -> None:
+    def _run_remote_move_absolute_for_automation(self, target_mm: float, move_time: float | None = None) -> None:
         controller = self._get_remote_controller_for_automation()
-        response = controller.move_absolute(float(target_mm))
+        response = controller.move_absolute(float(target_mm), move_time=move_time)
         message = str(response.get("message", f"Accepted remote move to {target_mm:.2f} mm."))
         self._last_remote_command_summary = f"move_absolute({target_mm:.2f}): {message}"
         self.worker_log(f"Remote move target {target_mm:.2f} mm: {message}")
@@ -5302,12 +5350,19 @@ class DrosophilaGUI:
             self._get_remote_controller_for_automation()
             classify_callable = self._run_remote_classify_for_automation
             home_callable = self._run_remote_home_for_automation
-            move_callable = self._run_remote_move_absolute_for_automation
+            move_callable = lambda position_mm, move_time=None: self._run_remote_move_absolute_for_automation(
+                position_mm,
+                move_time=move_time,
+            )
             vacuum_callable = self._run_remote_set_vacuum_for_automation
             get_operational_max_mm_callable = self._remote_operational_max_mm
         else:
             runtime = self._load_local_runtime()
             classify_callable = runtime["classify_fly"]
+            move_callable = lambda position_mm, move_time=None: runtime["motion"].move_to_absolute(
+                position_mm,
+                move_time,
+            )
 
         def detect_channel():
             if self.is_remote_mode():
@@ -5529,21 +5584,28 @@ class DrosophilaGUI:
         self.run_automated()
 
     def system_stop(self):
+        worker_alive = self.worker_thread is not None and self.worker_thread.is_alive()
         if self.is_remote_mode():
             if not self.remote_connected:
                 messagebox.showinfo("Stop", "Remote backend is not connected.")
                 return
-            if self.current_task_name == "automated run":
+            if worker_alive and self.current_task_name == "automated run":
                 self._resume_tube_counts_after_stop = True
-            self.stop_requested.set()
+            if worker_alive:
+                self.stop_requested.set()
+            else:
+                self.stop_requested.clear()
             self.set_status("stopped", "Emergency stop triggered. Sending immediate stop to Pi backend.")
             self.log_message("Emergency stop triggered for remote operation.")
             self._request_remote_emergency_stop_now()
             return
 
-        if self.current_task_name == "automated run":
+        if worker_alive and self.current_task_name == "automated run":
             self._resume_tube_counts_after_stop = True
-        self.stop_requested.set()
+        if worker_alive:
+            self.stop_requested.set()
+        else:
+            self.stop_requested.clear()
         self.set_status("stopped", "Emergency stop triggered. Forcing local outputs to a safe state.")
         self.log_message("Emergency stop triggered for local operation.")
         self._trigger_local_emergency_stop_now()

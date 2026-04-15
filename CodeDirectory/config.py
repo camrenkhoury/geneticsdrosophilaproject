@@ -62,6 +62,11 @@ DEFAULT_STEP_DELAY = 0.00010
 HOME_STEP_DELAY = 0.00006
 HOME_FINE_STEP_DELAY = 0.00024
 HOME_BACKOFF_MM = 2.0
+# Channel-photo moves should be faster than normal transport, but not as
+# aggressive as the raw homing sweep. The gantry is open-loop here, so pushing
+# this all the way down to HOME_STEP_DELAY can cause missed steps and leave the
+# nozzle physically near home while software believes the move completed.
+CHANNEL_PHOTO_STEP_DELAY = 0.00008
 TIMING_FACTOR = 0.78125
 
 VACUUM_PICK_DELAY = 0.4

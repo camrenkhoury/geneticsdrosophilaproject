@@ -58,6 +58,15 @@ def _sleep_with_stop(seconds: float, stop_requested: Callable[[], bool] | None) 
         time.sleep(min(0.1, remaining))
 
 
+def _estimate_move_time_for_step_delay(distance_mm: float, step_delay: float) -> float | None:
+    distance = abs(float(distance_mm))
+    if distance <= 0.0:
+        return None
+    timing_factor = float(getattr(config, "TIMING_FACTOR", 1.0) or 1.0)
+    total_steps = max(1, int(round(distance / float(config.MM_PER_STEP))))
+    return (2.0 * total_steps * float(step_delay)) / timing_factor
+
+
 def _publish_snapshot(
     tube_states: dict[str, TubeState],
     *,
@@ -384,6 +393,17 @@ def run_operation(
     def clamp_operational(position_mm: float) -> float:
         return max(0.0, min(float(position_mm), float(get_operational_max_mm_callable())))
 
+    def move_absolute_with_profile(position_mm: float, move_time: float | None = None) -> Any:
+        if move_time is None:
+            return move_absolute_callable(position_mm)
+        try:
+            return move_absolute_callable(position_mm, move_time=move_time)
+        except TypeError:
+            try:
+                return move_absolute_callable(position_mm, move_time)
+            except TypeError:
+                return move_absolute_callable(position_mm)
+
     # Channel detection photo and chamber observation both currently use the
     # same explicit machine position. This is intentionally not derived from
     # chamber center so the observation point does not drift with later tuning.
@@ -391,6 +411,14 @@ def run_operation(
     chamber_observe_position_mm = 191.0
     camera_photo_position = clamp_operational(channel_photo_position_mm)
     chamber_observe_position = clamp_operational(chamber_observe_position_mm)
+    channel_photo_step_delay = float(
+        getattr(
+            config,
+            "CHANNEL_PHOTO_STEP_DELAY",
+            getattr(config, "HOME_STEP_DELAY", getattr(config, "DEFAULT_STEP_DELAY", 0.00010)),
+        )
+    )
+    channel_photo_move_time = _estimate_move_time_for_step_delay(camera_photo_position, channel_photo_step_delay)
     publish_snapshot(stage="idle")
 
     try:
@@ -412,7 +440,7 @@ def run_operation(
 
                 status("moving", f"Cycle {cycle_index}: moving to channel photo position.")
                 log(f"Cycle {cycle_index}: channel photo target {camera_photo_position:.2f} mm.")
-                move_absolute_callable(camera_photo_position)
+                move_absolute_with_profile(camera_photo_position, move_time=channel_photo_move_time)
 
                 status("detecting", f"Cycle {cycle_index}: capturing channel detection image.")
                 log(f"Cycle {cycle_index}: running channel detection.")
