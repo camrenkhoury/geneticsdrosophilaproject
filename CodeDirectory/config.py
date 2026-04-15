@@ -59,9 +59,10 @@ TUBE_SECTION_LENGTH = TUBE_SECTION_LOCATION_END - TUBE_SECTION_LOCATION_START
 DEFAULT_STEP_DELAY = 0.00010
 # Make the initial homing sweep much faster, but keep the fine re-approach
 # slower for repeatable zeroing accuracy.
-HOME_STEP_DELAY = 0.00006
+HOME_STEP_DELAY = 0.00008
 HOME_FINE_STEP_DELAY = 0.00024
 HOME_BACKOFF_MM = 2.0
+HOME_MAX_SECONDS = 15.0
 # Channel-photo/setup moves should match the fast homing sweep. Transport moves
 # while carrying flies still use the default profile because only the explicit
 # channel-photo path opts into this timing.

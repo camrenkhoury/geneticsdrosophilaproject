@@ -13,7 +13,7 @@ from pi_backend.core.runtime_state import RuntimeStateSnapshot, RuntimeStateStor
 from pi_backend.core.subsystem_support import SubsystemUnavailableError
 from pi_backend.control.machine_service import MachineService
 from shared.debug.operation_trace import append_operation_trace
-from shared.state.state_enums import BackendLifecycleState, OrchestratorState
+from shared.state.state_enums import BackendLifecycleState, OrchestratorState, TaskState
 
 PI_OPERATION_TRACE_FILENAME = ".pi_operation_trace.log"
 
@@ -32,6 +32,38 @@ class BackendApiContext:
         self._worker_lock = Lock()
         self._active_worker: Thread | None = None
         self._active_command: str | None = None
+
+    @staticmethod
+    def _failure_task_state_for_command(command: str) -> TaskState:
+        normalized = str(command or "").strip().lower()
+        if normalized == "home":
+            return TaskState.HOMING_ERROR
+        if normalized in {"move_absolute", "move_relative"}:
+            return TaskState.MOVE_ERROR
+        if normalized == "classify":
+            return TaskState.CLASSIFY_ERROR
+        if normalized == "run_assay":
+            return TaskState.ASSAY_ERROR
+        return TaskState.AUTOMATED_ERROR
+
+    def _finalize_failed_worker_state(self, command: str, exc: Exception) -> None:
+        snapshot = self.runtime_state.snapshot()
+        if snapshot.current_task is None and (
+            snapshot.task_state is None or str(snapshot.task_state).endswith("_ERROR")
+        ):
+            return
+        failure_state = self._failure_task_state_for_command(command)
+        failure_message = f"{command} failed: {exc}"
+        self._trace(
+            "worker_wrapper_force_fail_state",
+            command=command,
+            failure_state=str(failure_state),
+            failure_message=failure_message,
+            snapshot_current_task=snapshot.current_task,
+            snapshot_task_state=None if snapshot.task_state is None else str(snapshot.task_state),
+            snapshot_orchestrator_state=str(snapshot.orchestrator_state),
+        )
+        self.runtime_state.fail_task(failure_state, failure_message)
 
     def _trace(self, event: str, **fields: Any) -> None:
         snapshot = self.runtime_state.snapshot()
@@ -227,8 +259,6 @@ class BackendApiContext:
             )
             message = "Emergency stop acknowledged. Motion drive and outputs were forced to a safe state."
         self._trace("request_stop_exit", busy=busy, message=message)
-
-        self._trace("apply_actuator_exit", command=command)
         return CommandResponse.from_snapshot(
             self.runtime_state.snapshot(),
             ok=True,
@@ -282,8 +312,9 @@ class BackendApiContext:
         try:
             self._trace("worker_wrapper_enter", command=command)
             worker()
-        except Exception:
-            self._trace("worker_wrapper_exception", command=command)
+        except Exception as exc:
+            self._trace("worker_wrapper_exception", command=command, error=str(exc))
+            self._finalize_failed_worker_state(command, exc)
             self.logger.exception("Background command %s failed.", command)
             self.runtime_state.append_log("ERROR", f"Background command {command} failed.")
         finally:

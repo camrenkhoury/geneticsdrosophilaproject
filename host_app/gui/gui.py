@@ -601,6 +601,7 @@ class DrosophilaGUI:
         self._last_remote_preview_source_mtime: float | None = None
         self._remote_preview_fetch_in_flight = False
         self._remote_preview_wait_in_flight = False
+        self._remote_stop_request_in_flight = False
         self._last_remote_classification_signature: tuple[str, float, tuple[str, ...]] | None = None
         self._remote_classification_seen_once = False
         self.connection_state = ConnectionState.LOCAL
@@ -2612,8 +2613,12 @@ class DrosophilaGUI:
     def _request_remote_emergency_stop_now(self) -> None:
         if not self.remote_connected or self.remote_controller is None:
             return
+        if self._remote_stop_request_in_flight:
+            self._trace_runtime("remote-stop-skip", "Stop request already in flight.", echo_to_log=False)
+            return
 
         controller = self.remote_controller
+        self._remote_stop_request_in_flight = True
 
         def worker() -> None:
             try:
@@ -2629,6 +2634,8 @@ class DrosophilaGUI:
             except Exception as exc:
                 self.ui_queue.put(("log", f"Remote stop failed: {exc}"))
                 self.ui_queue.put(("status", "error", f"Emergency stop request failed: {exc}"))
+            finally:
+                self._remote_stop_request_in_flight = False
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -4375,18 +4382,21 @@ class DrosophilaGUI:
             }
             try:
                 if self.is_remote_mode() and self.remote_connected and self.remote_controller is not None:
-                    stop_response = self.remote_controller.stop()
-                    payload["remote_stop_message"] = str(
-                        stop_response.get("message", "Emergency stop acknowledged during failure recovery.")
-                    )
-                    self.ui_queue.put(("log", f"Failure recovery remote stop: {payload['remote_stop_message']}"))
-                    self.ui_queue.put(("actuator", "vacuum", False))
-                    self.ui_queue.put(("actuator", "vibration", False))
-                    time.sleep(0.2)
-                    with contextlib.suppress(Exception):
-                        status = self.remote_controller.get_status_fresh()
-                        self.ui_queue.put(("remote_status", status))
-                        payload["remote_status_refresh"] = "ok"
+                    if not self._remote_stop_request_in_flight:
+                        stop_response = self.remote_controller.stop()
+                        payload["remote_stop_message"] = str(
+                            stop_response.get("message", "Emergency stop acknowledged during failure recovery.")
+                        )
+                        self.ui_queue.put(("log", f"Failure recovery remote stop: {payload['remote_stop_message']}"))
+                        self.ui_queue.put(("actuator", "vacuum", False))
+                        self.ui_queue.put(("actuator", "vibration", False))
+                        time.sleep(0.2)
+                        with contextlib.suppress(Exception):
+                            status = self.remote_controller.get_status_fresh()
+                            self.ui_queue.put(("remote_status", status))
+                            payload["remote_status_refresh"] = "ok"
+                    else:
+                        payload["remote_stop_message"] = "Skipped duplicate remote stop during failure recovery."
                 else:
                     runtime = self._load_local_runtime()
                     with contextlib.suppress(Exception):
@@ -5683,6 +5693,9 @@ class DrosophilaGUI:
         if self.is_remote_mode():
             if not self.remote_connected:
                 messagebox.showinfo("Stop", "Remote backend is not connected.")
+                return
+            if self._remote_stop_request_in_flight:
+                self.log_message("Remote stop already in progress.")
                 return
             if worker_alive and self.current_task_name == "automated run":
                 self._resume_tube_counts_after_stop = True

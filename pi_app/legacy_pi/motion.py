@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from time import sleep
+from time import monotonic, sleep
 
 from shared.config.project_paths import ensure_code_directory_on_path
+from shared.debug.operation_trace import append_operation_trace
 
 ensure_code_directory_on_path()
 
@@ -39,6 +40,8 @@ except ImportError:
 
 import config
 
+PI_OPERATION_TRACE_FILENAME = ".pi_operation_trace.log"
+
 STEP = None
 DIR = None
 EN = None
@@ -46,6 +49,19 @@ Limit_Min = None
 Limit_Max = None
 
 current_position_mm = 0.0
+
+
+def _trace_motion(event: str, **fields):
+    try:
+        append_operation_trace(
+            PI_OPERATION_TRACE_FILENAME,
+            "legacy_motion",
+            event,
+            current_position_mm=current_position_mm,
+            **fields,
+        )
+    except Exception:
+        pass
 
 
 def _ensure_devices():
@@ -182,7 +198,7 @@ def move_to_absolute(target_mm, move_time=None):
     move_relative(distance, move_time)
 
 
-def home_to_zero(max_steps=50000):
+def home_to_zero(max_steps=None):
     global current_position_mm
 
     print("Homing to zero...")
@@ -195,8 +211,23 @@ def home_to_zero(max_steps=50000):
     _, _, _, limit_min_device, _ = _ensure_devices()
     fast_step_delay = float(getattr(config, "HOME_STEP_DELAY", config.DEFAULT_STEP_DELAY))
     fine_step_delay = float(getattr(config, "HOME_FINE_STEP_DELAY", fast_step_delay))
+    max_seconds = float(getattr(config, "HOME_MAX_SECONDS", 15.0) or 15.0)
+    if max_steps is None:
+        full_travel_steps = _steps_for_distance(get_operational_max_mm())
+        max_steps = max(1, int(round(full_travel_steps * 1.2)))
     backoff_steps = _steps_for_distance(float(getattr(config, "HOME_BACKOFF_MM", 2.0)))
     steps_taken = 0
+    phase_started_at = monotonic()
+
+    _trace_motion(
+        "home_to_zero_enter",
+        fast_step_delay=fast_step_delay,
+        fine_step_delay=fine_step_delay,
+        max_steps=max_steps,
+        max_seconds=max_seconds,
+        backoff_steps=backoff_steps,
+        limit_min_initial=bool(limit_min_device.value),
+    )
 
     enable_motor()
 
@@ -205,40 +236,104 @@ def home_to_zero(max_steps=50000):
         while not limit_min_device.value:
             step_once(fast_step_delay)
             steps_taken += 1
+            if steps_taken % 1000 == 0:
+                _trace_motion(
+                    "home_fast_progress",
+                    steps_taken=steps_taken,
+                    limit_min=bool(limit_min_device.value),
+                )
 
             if steps_taken >= max_steps:
-                print("Homing aborted: max steps reached.")
-                break
+                message = f"Homing failed: exceeded {max_steps} steps on fast approach without reaching home switch."
+                _trace_motion("home_fast_fail_max_steps", steps_taken=steps_taken, limit_min=bool(limit_min_device.value))
+                raise RuntimeError(message)
+            if monotonic() - phase_started_at >= max_seconds:
+                message = f"Homing failed: exceeded {max_seconds:.1f}s on fast approach without reaching home switch."
+                _trace_motion("home_fast_fail_timeout", steps_taken=steps_taken, limit_min=bool(limit_min_device.value))
+                raise RuntimeError(message)
 
         if not limit_min_device.value:
-            print("Home switch not reached. Position not trusted.")
-            return
+            message = "Homing failed: home switch not reached on fast approach."
+            _trace_motion("home_fast_fail_unreached", steps_taken=steps_taken, limit_min=bool(limit_min_device.value))
+            raise RuntimeError(message)
+
+        _trace_motion("home_fast_limit_hit", steps_taken=steps_taken, limit_min=bool(limit_min_device.value))
 
         # Back off the switch, then re-approach slowly to improve zero repeatability.
         set_direction(True)
         backoff_count = 0
+        phase_started_at = monotonic()
         while limit_min_device.value and backoff_count < backoff_steps:
             step_once(fine_step_delay)
             backoff_count += 1
 
         if limit_min_device.value:
-            print("Home switch remained active after backoff. Position not trusted.")
-            return
+            message = "Homing failed: home switch remained active after backoff."
+            _trace_motion(
+                "home_backoff_fail_stuck_switch",
+                backoff_count=backoff_count,
+                backoff_steps=backoff_steps,
+                limit_min=bool(limit_min_device.value),
+            )
+            raise RuntimeError(message)
+        if monotonic() - phase_started_at >= max_seconds:
+            message = f"Homing failed: exceeded {max_seconds:.1f}s during backoff."
+            _trace_motion(
+                "home_backoff_fail_timeout",
+                backoff_count=backoff_count,
+                backoff_steps=backoff_steps,
+                limit_min=bool(limit_min_device.value),
+            )
+            raise RuntimeError(message)
+
+        _trace_motion(
+            "home_backoff_complete",
+            backoff_count=backoff_count,
+            backoff_steps=backoff_steps,
+            limit_min=bool(limit_min_device.value),
+        )
 
         set_direction(False)
         fine_steps_taken = 0
+        phase_started_at = monotonic()
         while not limit_min_device.value:
             step_once(fine_step_delay)
             fine_steps_taken += 1
+            if fine_steps_taken % 500 == 0:
+                _trace_motion(
+                    "home_fine_progress",
+                    fine_steps_taken=fine_steps_taken,
+                    limit_min=bool(limit_min_device.value),
+                )
             if fine_steps_taken >= max_steps:
-                print("Fine homing aborted: max steps reached.")
-                break
+                message = f"Homing failed: exceeded {max_steps} steps on fine approach without reaching home switch."
+                _trace_motion(
+                    "home_fine_fail_max_steps",
+                    fine_steps_taken=fine_steps_taken,
+                    limit_min=bool(limit_min_device.value),
+                )
+                raise RuntimeError(message)
+            if monotonic() - phase_started_at >= max_seconds:
+                message = f"Homing failed: exceeded {max_seconds:.1f}s on fine approach without reaching home switch."
+                _trace_motion(
+                    "home_fine_fail_timeout",
+                    fine_steps_taken=fine_steps_taken,
+                    limit_min=bool(limit_min_device.value),
+                )
+                raise RuntimeError(message)
 
         if limit_min_device.value:
             current_position_mm = 0.0
             print("Homed. Usable position set to 0.0 mm.")
+            _trace_motion("home_to_zero_exit", fine_steps_taken=fine_steps_taken, limit_min=bool(limit_min_device.value))
         else:
-            print("Home switch not reached on fine approach. Position not trusted.")
+            message = "Homing failed: home switch not reached on fine approach."
+            _trace_motion(
+                "home_fine_fail_unreached",
+                fine_steps_taken=fine_steps_taken,
+                limit_min=bool(limit_min_device.value),
+            )
+            raise RuntimeError(message)
     finally:
         disable_motor()
 

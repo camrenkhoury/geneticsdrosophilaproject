@@ -268,7 +268,15 @@ class RemoteController(BaseController):
         try:
             payload = response.json()
         except ValueError as exc:
-            raise ControllerError(f"Pi backend returned non-JSON response for {path}.") from exc
+            body_preview = response.text.strip()
+            if len(body_preview) > 300:
+                body_preview = body_preview[:300] + "..."
+            if not body_preview:
+                body_preview = "<empty body>"
+            raise ControllerError(
+                f"Pi backend returned non-JSON response for {path} "
+                f"(HTTP {response.status_code}): {body_preview}"
+            ) from exc
 
         if response.status_code == 401:
             self._status_etag = None
