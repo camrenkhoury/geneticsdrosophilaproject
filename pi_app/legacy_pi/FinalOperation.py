@@ -258,8 +258,8 @@ def run_operation(
     def clamp_operational(position_mm: float) -> float:
         return max(0.0, min(float(position_mm), float(get_operational_max_mm_callable())))
 
-    camera_photo_position = clamp_operational(config.CHAMBER_CENTER + 25.0)
-    chamber_observe_position = clamp_operational(config.CHAMBER_CENTER + 30.0)
+    camera_photo_position = clamp_operational(config.CHAMBER_CENTER + 23.0)
+    chamber_observe_position = clamp_operational(config.CHAMBER_CENTER + 23.0)
     _publish_snapshot(tube_states, snapshot_callback=snapshot_callback, stage="idle")
 
     try:
@@ -408,10 +408,63 @@ def run_operation(
             status("running", f"Cycle {cycle_index}: classifying fly.")
             last_classification = dict(classify_callable() or {})
             confidence = float(last_classification.get("confidence", 0.0) or 0.0)
+            chamber_count = int(last_classification.get("count", 0) or 0)
             log(
                 f"Cycle {cycle_index}: classification={last_classification.get('class', 'UNCERTAIN')} "
-                f"confidence={confidence:.4f} errors={last_classification.get('errors', [])}"
+                f"confidence={confidence:.4f} count={chamber_count} errors={last_classification.get('errors', [])}"
             )
+
+            if chamber_count <= 0:
+                log(
+                    f"Cycle {cycle_index}: no fly detected in chamber after drop. "
+                    "Returning to channel for a fresh detection and retry."
+                )
+                status("moving", f"Cycle {cycle_index}: returning to channel for retry.")
+                move_absolute_callable(camera_photo_position)
+                set_vacuum_callable(False)
+                pending_pickup_positions = []
+                flies_taken_from_current_detection = max_flies_per_detection
+                first_pickup_after_detection = False
+                _publish_snapshot(
+                    tube_states,
+                    snapshot_callback=snapshot_callback,
+                    cycle_index=cycle_index,
+                    detection_count=last_detection_count,
+                    pickup_position_mm=pickup_position,
+                    classification_result=last_classification,
+                    destination_key=None if last_destination is None else last_destination.key,
+                    destination_label=None if last_destination is None else last_destination.label,
+                    stage="redistributing",
+                )
+                continue
+
+            if chamber_count > 1:
+                log(
+                    f"Cycle {cycle_index}: multiple flies detected in chamber. "
+                    "Picking them up and returning them to the channel for redistribution."
+                )
+                status("moving", f"Cycle {cycle_index}: returning multiple flies to channel.")
+                move_absolute_callable(config.CHAMBER_CENTER)
+                set_vacuum_callable(True)
+                _sleep_with_stop(chamber_pickup_s, stop_requested)
+                move_absolute_callable(camera_photo_position)
+                set_vacuum_callable(False)
+                _sleep_with_stop(tube_drop_s, stop_requested)
+                pending_pickup_positions = []
+                flies_taken_from_current_detection = max_flies_per_detection
+                first_pickup_after_detection = False
+                _publish_snapshot(
+                    tube_states,
+                    snapshot_callback=snapshot_callback,
+                    cycle_index=cycle_index,
+                    detection_count=last_detection_count,
+                    pickup_position_mm=pickup_position,
+                    classification_result=last_classification,
+                    destination_key=None if last_destination is None else last_destination.key,
+                    destination_label=None if last_destination is None else last_destination.label,
+                    stage="redistributing",
+                )
+                continue
 
             destination_tube, destination_reason = _resolve_destination(last_classification, tube_states)
             last_destination = destination_tube

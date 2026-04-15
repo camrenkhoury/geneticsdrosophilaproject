@@ -1309,7 +1309,7 @@ class DrosophilaGUI:
         )
 
     def _run_channel_setup_prep_worker(self) -> None:
-        target_position = float(config.CHAMBER_CENTER + 25.0)
+        target_position = float(config.CHAMBER_CENTER + 23.0)
         if self.is_remote_mode():
             self.worker_status("moving", "Homing before Channel Detection Setup.")
             self._run_remote_home_for_automation()
