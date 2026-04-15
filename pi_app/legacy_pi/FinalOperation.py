@@ -424,12 +424,13 @@ def run_operation(
     retry_pickup_count = 0
     discarded_overflow_count = 0
     DETECTION_CYCLE_STARTUP = "startup"
-    DETECTION_CYCLE_AFTER_ROUTE_HOME = "normal_after_route_home"
+    DETECTION_CYCLE_NORMAL_AFTER_ROUTE = "normal_after_route"
     DETECTION_CYCLE_RETRY_EMPTY = "retry_from_chamber_empty"
     DETECTION_CYCLE_RETRY_GROUPED = "retry_from_grouped_return"
     POSITION_REFERENCE_UNKNOWN = "unknown"
     POSITION_REFERENCE_HOME = "home"
     POSITION_REFERENCE_PHOTO = "photo_position"
+    POSITION_REFERENCE_KNOWN_ABSOLUTE = "known_absolute"
     next_detection_cycle_kind = DETECTION_CYCLE_STARTUP
     position_reference_state = POSITION_REFERENCE_UNKNOWN
 
@@ -471,6 +472,13 @@ def run_operation(
                 "reference. Skipping redundant home."
             )
             op_trace("detect_cycle_skip_home", reason="home_reference_ready")
+        elif position_reference_state == POSITION_REFERENCE_KNOWN_ABSOLUTE:
+            status("running", f"Cycle {cycle_index}: reusing known absolute position for channel detection.")
+            log(
+                f"Cycle {cycle_index}: detection cycle '{next_detection_cycle_kind}' is starting from a known "
+                "absolute position. Skipping redundant home and moving directly to the channel photo position."
+            )
+            op_trace("detect_cycle_skip_home", reason="known_absolute_position")
         else:
             op_trace("detect_cycle_home", reason="position_unknown")
             ensure_home_reference(
@@ -478,7 +486,7 @@ def run_operation(
                 f"Cycle {cycle_index}: homing gantry.",
                 f"Cycle {cycle_index}: homing gantry.",
             )
-        next_detection_cycle_kind = DETECTION_CYCLE_AFTER_ROUTE_HOME
+        next_detection_cycle_kind = DETECTION_CYCLE_NORMAL_AFTER_ROUTE
 
     def ensure_home_reference(reason: str, status_message: str, log_message: str) -> None:
         if position_reference_state == POSITION_REFERENCE_HOME:
@@ -821,7 +829,7 @@ def run_operation(
             if stop_requested is not None and stop_requested():
                 raise OperationCancelled
             move_absolute_callable(destination_tube.position_mm)
-            set_position_reference(POSITION_REFERENCE_UNKNOWN)
+            set_position_reference(POSITION_REFERENCE_KNOWN_ABSOLUTE)
             log(
                 f"Cycle {cycle_index}: arrived for drop at {destination_tube.label} target "
                 f"{destination_tube.position_mm:.2f} mm."
@@ -857,13 +865,18 @@ def run_operation(
                 stage="routed",
             )
 
-            status("running", f"Cycle {cycle_index}: returning home.")
-            ensure_home_reference(
-                "post_route_return_home",
-                f"Cycle {cycle_index}: returning home.",
-                f"Cycle {cycle_index}: returning home.",
+            status("running", f"Cycle {cycle_index}: route complete. Holding current absolute position.")
+            log(
+                f"Cycle {cycle_index}: route complete at {destination_tube.position_mm:.2f} mm. "
+                "Skipping automatic post-route home; the next step will decide whether a home reference is required."
             )
-            next_detection_cycle_kind = DETECTION_CYCLE_AFTER_ROUTE_HOME
+            op_trace(
+                "post_route_hold_position",
+                destination_key=destination_tube.key,
+                destination_label=destination_tube.label,
+                destination_position_mm=destination_tube.position_mm,
+            )
+            next_detection_cycle_kind = DETECTION_CYCLE_NORMAL_AFTER_ROUTE
 
         # Assay handoff occurs once, after the sorting loop genuinely ends.
         status("running", "No more flies detected. Awaiting assay confirmation.")
