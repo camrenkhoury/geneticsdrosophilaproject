@@ -15,12 +15,15 @@ from pi_backend.core.config_runtime import BackendRuntimeConfig
 from pi_backend.core.logging_bridge import attach_runtime_log_handler
 from pi_backend.core.runtime_state import DetectionSummary, RuntimeStateStore
 from pi_backend.core.subsystem_support import SubsystemUnavailableError
+from shared.debug.operation_trace import append_operation_trace
 from shared.state.state_enums import (
     BackendLifecycleState,
     ClientControllerState,
     OrchestratorState,
     TaskState,
 )
+
+PI_OPERATION_TRACE_FILENAME = ".pi_operation_trace.log"
 
 
 class MachineService:
@@ -43,6 +46,23 @@ class MachineService:
         self.classify_service = ClassifyService(runtime_state, self.logger)
         self._fin6_bridge = None
         self._initialize_runtime_state()
+
+    def _trace(self, event: str, **fields: Any) -> None:
+        snapshot = self.runtime_state.snapshot()
+        append_operation_trace(
+            PI_OPERATION_TRACE_FILENAME,
+            "machine_service",
+            event,
+            orchestrator_state=str(snapshot.orchestrator_state),
+            task_state=None if snapshot.task_state is None else str(snapshot.task_state),
+            current_task=snapshot.current_task,
+            current_position_mm=snapshot.current_position_mm,
+            vacuum_on=snapshot.vacuum_on,
+            vibration_on=snapshot.vibration_on,
+            stop_requested=snapshot.stop_requested,
+            latest_message=snapshot.latest_message,
+            **fields,
+        )
 
     def _initialize_runtime_state(self) -> None:
         self.runtime_state.set_backend_lifecycle_state(
@@ -173,6 +193,7 @@ class MachineService:
             raise SubsystemUnavailableError("assay", self._unavailable_detail(error, "assay"))
 
     def emergency_stop(self) -> None:
+        self._trace("emergency_stop_enter")
         self.runtime_state.set_stop_requested(True)
         self.runtime_state.set_orchestrator_state(
             OrchestratorState.STOP_REQUESTED,
@@ -195,6 +216,7 @@ class MachineService:
             self.logger.warning("Emergency stop: vibration disabled.")
         except Exception as exc:
             self.logger.warning("Emergency stop: failed to disable vibration: %s", exc)
+        self._trace("emergency_stop_exit")
 
     def _skip_deferred_safe_off(self, subsystem: str, enabled: bool) -> bool:
         return not enabled and self._subsystem_status(subsystem) == "deferred"
@@ -407,6 +429,7 @@ class MachineService:
         }
 
     def home(self) -> float:
+        self._trace("home_enter")
         self._ensure_motion_ready()
         self.runtime_state.begin_task("home", TaskState.HOMING_RUNNING, "Homing gantry.")
         self.runtime_state.set_orchestrator_state(OrchestratorState.TASK_STARTING, "Starting home task.")
@@ -415,6 +438,7 @@ class MachineService:
         try:
             self.motion.home_to_zero()
         except Exception:
+            self._trace("home_exception")
             self.runtime_state.fail_task(TaskState.HOMING_ERROR, "Homing failed.")
             self.logger.exception("Homing failed.")
             raise
@@ -424,9 +448,11 @@ class MachineService:
         self.runtime_state.complete_task(TaskState.HOMING_COMPLETE, "Homing complete.")
         self.runtime_state.set_orchestrator_state(OrchestratorState.SYSTEM_IDLE, "Machine idle.")
         self.logger.info("Homing complete at %.2f mm.", position)
+        self._trace("home_exit", position=position)
         return position
 
     def move_absolute(self, target_mm: float, move_time: float | None = None) -> float:
+        self._trace("move_absolute_enter", target_mm=target_mm, move_time=move_time)
         self._ensure_motion_ready()
         self.runtime_state.begin_task("move_absolute", TaskState.MOVE_RUNNING, f"Moving to {target_mm:.2f} mm.")
         self.runtime_state.set_orchestrator_state(OrchestratorState.TASK_STARTING, "Starting absolute move.")
@@ -435,6 +461,7 @@ class MachineService:
         try:
             self.motion.move_absolute(target_mm, move_time)
         except Exception:
+            self._trace("move_absolute_exception", target_mm=target_mm, move_time=move_time)
             self.runtime_state.fail_task(TaskState.MOVE_ERROR, "Absolute move failed.")
             self.logger.exception("Absolute move failed.")
             raise
@@ -444,9 +471,11 @@ class MachineService:
         self.runtime_state.complete_task(TaskState.MOVE_COMPLETE, f"Reached {position:.2f} mm.")
         self.runtime_state.set_orchestrator_state(OrchestratorState.SYSTEM_IDLE, "Machine idle.")
         self.logger.info("Absolute move complete at %.2f mm.", position)
+        self._trace("move_absolute_exit", target_mm=target_mm, move_time=move_time, position=position)
         return position
 
     def move_relative(self, delta_mm: float, move_time: float | None = None) -> float:
+        self._trace("move_relative_enter", delta_mm=delta_mm, move_time=move_time)
         self._ensure_motion_ready()
         self.runtime_state.begin_task("move_relative", TaskState.MOVE_RUNNING, f"Moving by {delta_mm:.2f} mm.")
         self.runtime_state.set_orchestrator_state(OrchestratorState.TASK_STARTING, "Starting relative move.")
@@ -455,6 +484,7 @@ class MachineService:
         try:
             self.motion.move_relative(delta_mm, move_time)
         except Exception:
+            self._trace("move_relative_exception", delta_mm=delta_mm, move_time=move_time)
             self.runtime_state.fail_task(TaskState.MOVE_ERROR, "Relative move failed.")
             self.logger.exception("Relative move failed.")
             raise
@@ -464,9 +494,11 @@ class MachineService:
         self.runtime_state.complete_task(TaskState.MOVE_COMPLETE, f"Reached {position:.2f} mm.")
         self.runtime_state.set_orchestrator_state(OrchestratorState.SYSTEM_IDLE, "Machine idle.")
         self.logger.info("Relative move complete at %.2f mm.", position)
+        self._trace("move_relative_exit", delta_mm=delta_mm, move_time=move_time, position=position)
         return position
 
     def set_vacuum(self, enabled: bool) -> bool:
+        self._trace("set_vacuum_enter", enabled=enabled)
         if self._skip_deferred_safe_off("vacuum", enabled):
             return False
         self._ensure_vacuum_ready()
@@ -476,15 +508,18 @@ class MachineService:
         try:
             self.vacuum.set_enabled(enabled)
         except Exception:
+            self._trace("set_vacuum_exception", enabled=enabled)
             self.runtime_state.set_orchestrator_state(OrchestratorState.SYSTEM_IDLE, "Machine idle.")
             self.logger.exception("Vacuum command failed.")
             raise
         self.runtime_state.set_vacuum_on(enabled)
         self.runtime_state.set_orchestrator_state(OrchestratorState.ACTUATOR_COMPLETE, "Vacuum state applied.")
         self.runtime_state.set_orchestrator_state(OrchestratorState.SYSTEM_IDLE, "Machine idle.")
+        self._trace("set_vacuum_exit", enabled=enabled)
         return enabled
 
     def set_vibration(self, enabled: bool) -> bool:
+        self._trace("set_vibration_enter", enabled=enabled)
         if self._skip_deferred_safe_off("vibration", enabled):
             return False
         self._ensure_vibration_ready()
@@ -494,12 +529,14 @@ class MachineService:
         try:
             self.vibration.set_enabled(enabled)
         except Exception:
+            self._trace("set_vibration_exception", enabled=enabled)
             self.runtime_state.set_orchestrator_state(OrchestratorState.SYSTEM_IDLE, "Machine idle.")
             self.logger.exception("Vibration command failed.")
             raise
         self.runtime_state.set_vibration_on(enabled)
         self.runtime_state.set_orchestrator_state(OrchestratorState.ACTUATOR_COMPLETE, "Vibration state applied.")
         self.runtime_state.set_orchestrator_state(OrchestratorState.SYSTEM_IDLE, "Machine idle.")
+        self._trace("set_vibration_exit", enabled=enabled)
         return enabled
 
     def run_assay(self) -> None:
@@ -511,6 +548,7 @@ class MachineService:
 
     def detect_channel(self) -> dict[str, Any]:
         fin6_bridge = self._load_fin6_bridge()
+        self._trace("detect_channel_enter")
         self.runtime_state.begin_task(
             "detect_channel",
             TaskState.AUTO_WAIT_FOR_DETECTION,
@@ -525,6 +563,7 @@ class MachineService:
             result = fin6_bridge.detect_channel_once_from_saved_settings()
             summary = self.refresh_detection_summary()
         except Exception:
+            self._trace("detect_channel_exception")
             self.runtime_state.fail_task(TaskState.AUTOMATED_ERROR, "Pi-side fin6 channel detection failed.")
             self.logger.exception("Pi-side fin6 channel detection failed.")
             raise
@@ -536,6 +575,7 @@ class MachineService:
         )
         self.runtime_state.set_orchestrator_state(OrchestratorState.SYSTEM_IDLE, "Machine idle.")
         self.logger.info("Pi-side fin6 channel detection complete with %d positions.", count)
+        self._trace("detect_channel_exit", count=count, detection_status=summary.status)
         return result
 
     def refresh_detection_summary(self) -> DetectionSummary:

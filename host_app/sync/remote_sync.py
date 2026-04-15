@@ -6,6 +6,9 @@ import threading
 from host_app.controllers.base_controller import ControllerConnectionError, ControllerError
 from host_app.controllers.remote_controller import RemoteController
 from host_app.sync.connection_state import ConnectionState
+from shared.debug.operation_trace import append_operation_trace
+
+HOST_OPERATION_TRACE_FILENAME = ".host_operation_trace.log"
 
 
 class RemoteSyncManager:
@@ -82,6 +85,14 @@ class RemoteSyncManager:
             try:
                 status_payload = self.controller.get_status()
             except ControllerConnectionError as exc:
+                append_operation_trace(
+                    HOST_OPERATION_TRACE_FILENAME,
+                    "remote_sync",
+                    "poll-connection-error",
+                    error=str(exc),
+                    reconnect_pending=self._reconnect_pending,
+                    last_connection_state=None if self._last_connection_state is None else self._last_connection_state.value,
+                )
                 if self._has_connected_once:
                     self._reconnect_pending = True
                 self._last_status_revision = None
@@ -91,6 +102,14 @@ class RemoteSyncManager:
                     return
                 continue
             except ControllerError as exc:
+                append_operation_trace(
+                    HOST_OPERATION_TRACE_FILENAME,
+                    "remote_sync",
+                    "poll-controller-error",
+                    error=str(exc),
+                    reconnect_pending=self._reconnect_pending,
+                    last_connection_state=None if self._last_connection_state is None else self._last_connection_state.value,
+                )
                 if self._has_connected_once:
                     self._reconnect_pending = True
                 self._last_status_revision = None
@@ -107,7 +126,24 @@ class RemoteSyncManager:
             self._emit_connection(ConnectionState.CLIENT_CONNECTED, "Connected to Pi backend.")
             if status_payload is not None:
                 self._last_status_active = self._status_is_active(status_payload)
+                append_operation_trace(
+                    HOST_OPERATION_TRACE_FILENAME,
+                    "remote_sync",
+                    "poll-status",
+                    status_revision=status_payload.get("status_revision"),
+                    current_task=status_payload.get("current_task"),
+                    task_state=status_payload.get("task_state"),
+                    orchestrator_state=status_payload.get("orchestrator_state"),
+                    active=self._last_status_active,
+                    latest_message=status_payload.get("latest_message"),
+                )
             if status_payload is not None and self._should_publish_status(status_payload):
+                append_operation_trace(
+                    HOST_OPERATION_TRACE_FILENAME,
+                    "remote_sync",
+                    "publish-status",
+                    status_revision=status_payload.get("status_revision"),
+                )
                 self.ui_queue.put(("remote_status", status_payload))
 
             if self._wait_for_next_poll(self._poll_interval_for_status(status_payload)):
@@ -156,4 +192,11 @@ class RemoteSyncManager:
 
         self._last_connection_state = state
         self._last_message = message
+        append_operation_trace(
+            HOST_OPERATION_TRACE_FILENAME,
+            "remote_sync",
+            "connection-state",
+            state=state.value,
+            message=message,
+        )
         self.ui_queue.put(("remote_connection", state.value, message))

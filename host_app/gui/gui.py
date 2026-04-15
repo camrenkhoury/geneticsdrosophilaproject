@@ -52,8 +52,10 @@ from shared.config.network_config import (
     save_remote_connection_settings,
 )
 from shared.config.project_paths import CHANNEL_OUTPUT_DIR, FIN6_DIR
+from shared.debug.operation_trace import append_operation_trace
 
 GUI_CRASH_LOG_PATH = FIN6_DIR / ".host_gui_crash_trace.log"
+HOST_OPERATION_TRACE_FILENAME = ".host_operation_trace.log"
 
 
 class TaskCancelled(Exception):
@@ -655,6 +657,7 @@ class DrosophilaGUI:
         self._last_status_trace_key: tuple[str, str] | None = None
         self._last_remote_status_snapshot: dict[str, Any] | None = None
         self._last_remote_command_summary = "--"
+        self._last_control_interactivity_signature: tuple[Any, ...] | None = None
         self.entry_page_scale = self.entry_profile["scale"]
 
         self.state_var = tk.StringVar(value="IDLE")
@@ -2551,9 +2554,19 @@ class DrosophilaGUI:
                 )
             ):
                 saw_state_change = True
+            self._trace_runtime(
+                "remote-backend-wait-poll",
+                (
+                    f"{label} busy={busy} saw_busy={saw_busy} saw_state_change={saw_state_change} "
+                    f"revision={current_revision} current_task={current_task} task_state={current_task_state} "
+                    f"orchestrator_state={status.get('orchestrator_state')} position={status.get('current_position_mm')}"
+                ),
+                echo_to_log=False,
+            )
             if (not busy) and (saw_busy or saw_state_change):
                 if self._remote_status_has_terminal_error(status):
                     raise RuntimeError(str(status.get("latest_message", f"Remote {label} failed.")))
+                self._trace_runtime("remote-backend-wait-exit", f"{label} revision={current_revision}", echo_to_log=False)
                 return status
             time.sleep(0.2)
 
@@ -2566,6 +2579,7 @@ class DrosophilaGUI:
         initial_status: dict | None = None
         with contextlib.suppress(Exception):
             initial_status = controller.get_status_fresh()
+        self._trace_runtime("remote-command-wait-enter", f"{label} timeout_s={timeout_s}", echo_to_log=False)
         response = command_callable()
         message = str(response.get("message", f"Accepted remote {label} request."))
         self._last_remote_command_summary = f"{label}: {message}"
@@ -2584,6 +2598,14 @@ class DrosophilaGUI:
         if not self._backend_busy_from_status(status) and state_changed:
             if self._remote_status_has_terminal_error(status):
                 raise RuntimeError(str(status.get("latest_message", f"Remote {label} failed.")))
+            self._trace_runtime(
+                "remote-command-wait-immediate",
+                (
+                    f"{label} revision={status.get('status_revision')} current_task={status.get('current_task')} "
+                    f"task_state={status.get('task_state')} orchestrator_state={status.get('orchestrator_state')}"
+                ),
+                echo_to_log=False,
+            )
             return status
         return self._wait_for_remote_backend_idle(label, timeout_s=timeout_s)
 
@@ -2680,6 +2702,11 @@ class DrosophilaGUI:
         message = str(response.get("message", f"Accepted remote move to {target_mm:.2f} mm."))
         self._last_remote_command_summary = f"move_absolute({target_mm:.2f}): {message}"
         self.worker_log(f"Remote move target {target_mm:.2f} mm: {message}")
+        self._trace_runtime(
+            "remote-move-enter",
+            f"target={target_mm:.2f} move_time={move_time}",
+            echo_to_log=False,
+        )
         deadline = time.monotonic() + 30.0
         last_status: dict | None = None
         saw_busy = False
@@ -2704,11 +2731,22 @@ class DrosophilaGUI:
                 saw_busy = True
             if abs(current_position - float(target_mm)) > 1.0:
                 saw_off_target_sample = True
+            self._trace_runtime(
+                "remote-move-poll",
+                (
+                    f"target={target_mm:.2f} current={current_position:.2f} busy={busy} "
+                    f"saw_busy={saw_busy} saw_off_target={saw_off_target_sample} "
+                    f"task={status.get('current_task')} task_state={status.get('task_state')} "
+                    f"orchestrator={status.get('orchestrator_state')} revision={status.get('status_revision')}"
+                ),
+                echo_to_log=False,
+            )
             if (
                 abs(current_position - float(target_mm)) <= 1.0
                 and (not busy)
                 and (saw_busy or saw_off_target_sample or (initial_position is not None and abs(initial_position - float(target_mm)) > 1.0))
             ):
+                self._trace_runtime("remote-move-exit", f"target={target_mm:.2f} current={current_position:.2f}", echo_to_log=False)
                 return
             time.sleep(0.1)
         self._request_remote_emergency_stop_now()
@@ -2832,6 +2870,30 @@ class DrosophilaGUI:
 
         self.stop_button.config(state=tk.NORMAL if stop_enabled else tk.DISABLED)
         self.reset_button.config(state=tk.DISABLED if busy or (self.is_remote_mode() and not self.remote_connected) else tk.NORMAL)
+        signature = (
+            bool(worker_alive),
+            bool(self.local_task_busy),
+            bool(self.remote_request_in_flight),
+            bool(self.remote_backend_busy),
+            bool(self.remote_connected),
+            bool(self.stop_requested.is_set()),
+            str(self.start_button.cget("state")) if getattr(self, "start_button", None) is not None else "",
+            str(self.stop_button.cget("state")) if getattr(self, "stop_button", None) is not None else "",
+            str(self.reset_button.cget("state")) if getattr(self, "reset_button", None) is not None else "",
+        )
+        if signature != self._last_control_interactivity_signature:
+            self._last_control_interactivity_signature = signature
+            self._trace_runtime(
+                "control-interactivity",
+                (
+                    f"worker_alive={worker_alive} local_busy={self.local_task_busy} "
+                    f"remote_request={self.remote_request_in_flight} remote_busy={self.remote_backend_busy} "
+                    f"remote_connected={self.remote_connected} stop={self.stop_requested.is_set()} "
+                    f"start={self.start_button.cget('state')} stop_btn={self.stop_button.cget('state')} "
+                    f"reset={self.reset_button.cget('state')}"
+                ),
+                echo_to_log=False,
+            )
 
     def _update_device_availability(self, actuator: str, status: str, error_detail: str | None) -> None:
         if status in {"available", "simulation"}:
@@ -4368,6 +4430,26 @@ class DrosophilaGUI:
 
         if echo_to_log:
             self.log_message(f"[DEBUG] {display_text}")
+        try:
+            append_operation_trace(
+                HOST_OPERATION_TRACE_FILENAME,
+                "host_gui",
+                normalized_event,
+                detail=normalized_detail,
+                current_task_name=self.current_task_name,
+                worker_alive=bool(self.worker_thread is not None and self.worker_thread.is_alive()),
+                stop_requested=bool(self.stop_requested.is_set()),
+                remote_connected=bool(self.remote_connected),
+                remote_request_in_flight=bool(self.remote_request_in_flight),
+                remote_backend_busy=bool(self.remote_backend_busy),
+                remote_last_command=self._last_remote_command_summary,
+                status_state=self.state_var.get() if hasattr(self, "state_var") else "",
+                status_message=self.message_var.get() if hasattr(self, "message_var") else "",
+                position=self.position_var.get() if hasattr(self, "position_var") else "",
+                last_remote_status=self._last_remote_status_snapshot,
+            )
+        except Exception:
+            pass
 
     def _update_debug_snapshot(self) -> None:
         task_name = self.current_task_name or "idle"
@@ -4544,12 +4626,14 @@ class DrosophilaGUI:
         message = f"{name} failed."
 
         try:
+            self._trace_runtime("task-runner-enter", name, echo_to_log=False)
             with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
                 target()
             ok = True
             message = f"{name} complete."
         except TaskCancelled:
             message = f"{name} stopped."
+            self._trace_runtime("task-runner-cancelled", name, echo_to_log=False)
         except Exception as exc:
             tb_text = traceback.format_exc().rstrip()
             for line in tb_text.splitlines():
@@ -4559,7 +4643,9 @@ class DrosophilaGUI:
                 self._capture_failure_context(task_name=name, exc=exc, traceback_text=tb_text),
             )
             message = f"{name} failed."
+            self._trace_runtime("task-runner-exception", f"{name}: {type(exc).__name__}: {exc}", echo_to_log=False)
         finally:
+            self._trace_runtime("task-runner-exit", f"{name} ok={ok} message={message}", echo_to_log=False)
             writer.flush()
             self.ui_queue.put(("task_finished", name, ok, message))
 
@@ -5211,6 +5297,15 @@ class DrosophilaGUI:
             detection_summary = status.get("detection_summary", {}) or {}
             source_mtime_raw = detection_summary.get("source_mtime")
             source_mtime = float(source_mtime_raw) if source_mtime_raw is not None else None
+            self._trace_runtime(
+                "remote-detect-poll",
+                (
+                    f"baseline={previous_source_mtime} source_mtime={source_mtime} "
+                    f"status={detection_summary.get('status')} current_task={status.get('current_task')} "
+                    f"task_state={status.get('task_state')} orchestrator={status.get('orchestrator_state')}"
+                ),
+                echo_to_log=False,
+            )
             if (
                 source_mtime is not None
                 and (previous_source_mtime is None or source_mtime > previous_source_mtime)

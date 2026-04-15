@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from shared.config.project_paths import DETECTION_RESULT_PATH, ensure_code_directory_on_path
+from shared.debug.operation_trace import append_operation_trace
 
 CODE_DIR = ensure_code_directory_on_path()
 REPO_ROOT = CODE_DIR.parent
@@ -16,6 +17,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import config
+
+HOST_OPERATION_TRACE_FILENAME = ".host_operation_trace.log"
 
 
 class OperationCancelled(Exception):
@@ -351,6 +354,25 @@ def run_operation(
     set_vacuum_callable = set_vacuum or vacuum.set_enabled
     get_operational_max_mm_callable = get_operational_max_mm or motion.get_operational_max_mm
 
+    def op_trace(event: str, **fields: Any) -> None:
+        append_operation_trace(
+            HOST_OPERATION_TRACE_FILENAME,
+            "final_operation",
+            event,
+            cycle_index=cycle_index,
+            pending_pickup_positions=list(pending_pickup_positions),
+            flies_taken_from_current_detection=flies_taken_from_current_detection,
+            first_pickup_after_detection=first_pickup_after_detection,
+            last_detection_count=last_detection_count,
+            lost_fly_count=lost_fly_count,
+            retry_pickup_count=retry_pickup_count,
+            discarded_overflow_count=discarded_overflow_count,
+            last_destination=None if last_destination is None else last_destination.key,
+            last_classification_class=None if last_classification is None else last_classification.get("class"),
+            last_classification_count=None if last_classification is None else last_classification.get("count"),
+            **fields,
+        )
+
     chamber_drop_s = 2.0
     chamber_release_settle_s = 0.25
     chamber_settle_s = 6.0
@@ -420,15 +442,31 @@ def run_operation(
     )
     channel_photo_move_time = _estimate_move_time_for_step_delay(camera_photo_position, channel_photo_step_delay)
     publish_snapshot(stage="idle")
+    op_trace(
+        "run_operation_enter",
+        camera_photo_position=camera_photo_position,
+        chamber_observe_position=chamber_observe_position,
+        channel_photo_step_delay=channel_photo_step_delay,
+        channel_photo_move_time=channel_photo_move_time,
+        initial_tube_counts=initial_tube_counts,
+        max_flies_per_detection=max_flies_per_detection,
+        chamber_center=float(config.CHAMBER_CENTER),
+    )
 
     try:
         while True:
             check_stop()
             cycle_index += 1
+            op_trace("cycle_enter")
 
             if not pending_pickup_positions or flies_taken_from_current_detection >= max_flies_per_detection:
                 previous_detection_count = last_detection_count
                 attempted_from_previous_detection = flies_taken_from_current_detection
+                op_trace(
+                    "detection_cycle_enter",
+                    previous_detection_count=previous_detection_count,
+                    attempted_from_previous_detection=attempted_from_previous_detection,
+                )
 
                 # Each detection cycle starts from a known reference:
                 # vacuum off, home, move to the fixed channel photo position,
@@ -448,6 +486,13 @@ def run_operation(
                 detection_result = dict(detection_payload.get("result") or {})
                 pickup_positions = _sorted_pickup_positions(detection_result, clamp_operational)
                 current_detection_count = int(detection_result.get("count", 0) or 0)
+                op_trace(
+                    "detection_result",
+                    detection_payload=detection_payload,
+                    detection_result=detection_result,
+                    pickup_positions=pickup_positions,
+                    current_detection_count=current_detection_count,
+                )
 
                 if previous_detection_count > 0 and attempted_from_previous_detection > 0:
                     expected_remaining = max(previous_detection_count - attempted_from_previous_detection, 0)
@@ -503,6 +548,13 @@ def run_operation(
                                     destination_label=None if last_destination is None else last_destination.label,
                                     stage="lost",
                                 )
+                                op_trace(
+                                    "lost_fly_reconciliation",
+                                    missed_pickups=missed_pickups,
+                                    reconciled_keys=reconciled_keys,
+                                    mismatch_signature=mismatch_signature,
+                                    repeated_count_streak=repeated_count_streak,
+                                )
                             repeated_count_signature = None
                             repeated_count_streak = 0
                     else:
@@ -520,13 +572,16 @@ def run_operation(
                 # That is the only normal path that ends the sorting loop.
                 if pickup_positions == "done":
                     log("Detection reported no flies remaining. Sorting run is complete.")
+                    op_trace("detection_done")
                     break
                 if pickup_positions is None:
+                    op_trace("detection_result_invalid", detection_result=detection_result)
                     raise RuntimeError("Channel detection did not return usable x_positions_mm data.")
 
                 pending_pickup_positions = list(pickup_positions)
                 flies_taken_from_current_detection = 0
                 first_pickup_after_detection = True
+                op_trace("pickup_batch_loaded", pending_pickup_positions=pending_pickup_positions)
 
             pickup_position = float(pending_pickup_positions.pop(0))
             flies_taken_from_current_detection += 1
@@ -534,6 +589,7 @@ def run_operation(
                 f"Cycle {cycle_index}: selected pickup position {pickup_position:.2f} mm "
                 f"(detection batch {flies_taken_from_current_detection}/{max_flies_per_detection})."
             )
+            op_trace("pickup_selected", pickup_position=pickup_position)
 
             if first_pickup_after_detection:
                 # After a fresh channel photo, go directly to the first pickup
@@ -587,6 +643,15 @@ def run_operation(
             class_name = str(last_classification.get("class", "UNCERTAIN") or "UNCERTAIN").strip().lower()
             classification_errors = list(last_classification.get("errors", []) or [])
             count_detail = str(last_classification.get("count_detail", "") or "").strip()
+            op_trace(
+                "classification_result",
+                classification_result=last_classification,
+                confidence=confidence,
+                chamber_count=chamber_count,
+                class_name=class_name,
+                classification_errors=classification_errors,
+                count_detail=count_detail,
+            )
             log(
                 f"Cycle {cycle_index}: classification={last_classification.get('class', 'UNCERTAIN')} "
                 f"confidence={confidence:.4f} count={chamber_count} errors={last_classification.get('errors', [])} "
@@ -615,6 +680,11 @@ def run_operation(
                     destination_label="Channel Retry",
                     stage="detecting",
                 )
+                op_trace(
+                    "channel_retry_zero_count",
+                    retry_pickup_count=retry_pickup_count,
+                    chamber_observe_position=chamber_observe_position,
+                )
                 continue
 
             # Tube routing is determined strictly from the classification result
@@ -622,7 +692,20 @@ def run_operation(
             destination_tube, destination_reason = _resolve_destination(last_classification, tube_states)
             if chamber_count >= 2:
                 discarded_overflow_count += 1
+                op_trace(
+                    "overflow_discard",
+                    chamber_count=chamber_count,
+                    destination_key=destination_tube.key,
+                    destination_label=destination_tube.label,
+                    discard_count=discarded_overflow_count,
+                )
             last_destination = destination_tube
+            op_trace(
+                "route_selected",
+                destination_key=destination_tube.key,
+                destination_label=destination_tube.label,
+                destination_reason=destination_reason,
+            )
             publish_snapshot(
                 cycle_index=cycle_index,
                 detection_count=last_detection_count,
@@ -666,6 +749,14 @@ def run_operation(
             _sleep_with_stop(tube_drop_s, stop_requested)
             destination_tube.count += 1
             recent_route_history.append(destination_tube.key)
+            op_trace(
+                "route_complete",
+                destination_key=destination_tube.key,
+                destination_label=destination_tube.label,
+                destination_reason=destination_reason,
+                tube_count=destination_tube.count,
+                recent_route_history=recent_route_history,
+            )
 
             log(
                 f"Cycle {cycle_index}: routed to {destination_tube.label} "
@@ -690,17 +781,27 @@ def run_operation(
             "Start Assay",
             "No more flies were detected in the channel.\n\nOpen the current assay GUI now?",
         )
+        op_trace("assay_prompt_result", should_launch_assay=should_launch_assay)
         if should_launch_assay:
             log("Opening assay GUI.")
             status("assaying", "Opening assay GUI.")
             launch_assay_callable()
+            op_trace("assay_launch")
         else:
             log("Operator declined assay GUI launch.")
+            op_trace("assay_declined")
+    except OperationCancelled:
+        op_trace("run_operation_cancelled")
+        raise
+    except Exception as exc:
+        op_trace("run_operation_exception", exception_type=type(exc).__name__, exception_message=str(exc))
+        raise
     finally:
         try:
             set_vacuum_callable(False)
         except Exception:
             pass
+        op_trace("run_operation_finally")
 
     publish_snapshot(
         cycle_index=cycle_index,
@@ -711,6 +812,20 @@ def run_operation(
         stage="complete",
     )
     status("idle", "Automated run complete.")
+    op_trace(
+        "run_operation_exit",
+        result={
+            "tube_counts": {
+                key: {"count": int(tube.count), "capacity": int(tube.capacity), "role": tube.role}
+                for key, tube in tube_states.items()
+            },
+            "lost_count": int(lost_fly_count),
+            "retry_count": int(retry_pickup_count),
+            "discard_count": int(discarded_overflow_count),
+            "last_classification": last_classification,
+            "last_destination": None if last_destination is None else last_destination.key,
+        },
+    )
     return {
         "tube_counts": {
             key: {"count": int(tube.count), "capacity": int(tube.capacity), "role": tube.role}

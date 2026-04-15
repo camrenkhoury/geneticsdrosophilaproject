@@ -7,12 +7,15 @@ from datetime import datetime, timezone
 from threading import RLock
 from typing import Any
 
+from shared.debug.operation_trace import append_operation_trace
 from shared.state.state_enums import (
     BackendLifecycleState,
     ClientControllerState,
     OrchestratorState,
     TaskState,
 )
+
+PI_OPERATION_TRACE_FILENAME = ".pi_operation_trace.log"
 
 
 @dataclass(slots=True, frozen=True)
@@ -74,6 +77,25 @@ class RuntimeStateStore:
         self._recent_logs: deque[LogEntry] = deque(maxlen=recent_log_limit)
         self._snapshot = RuntimeStateSnapshot()
 
+    def _trace_locked(self, event: str, **fields: Any) -> None:
+        append_operation_trace(
+            PI_OPERATION_TRACE_FILENAME,
+            "runtime_state",
+            event,
+            status_revision=self._snapshot.status_revision,
+            backend_lifecycle_state=str(self._snapshot.backend_lifecycle_state),
+            controller_state=str(self._snapshot.controller_state),
+            orchestrator_state=str(self._snapshot.orchestrator_state),
+            task_state=None if self._snapshot.task_state is None else str(self._snapshot.task_state),
+            current_task=self._snapshot.current_task,
+            current_position_mm=self._snapshot.current_position_mm,
+            vacuum_on=self._snapshot.vacuum_on,
+            vibration_on=self._snapshot.vibration_on,
+            stop_requested=self._snapshot.stop_requested,
+            latest_message=self._snapshot.latest_message,
+            **fields,
+        )
+
     def snapshot(self) -> RuntimeStateSnapshot:
         with self._lock:
             snapshot_copy = deepcopy(self._snapshot)
@@ -90,6 +112,7 @@ class RuntimeStateStore:
             if self._snapshot.latest_message != message:
                 self._snapshot.latest_message = message
             self._bump_status_revision_locked()
+            self._trace_locked("append_log", level=entry.level, message=message)
         return entry
 
     def set_backend_lifecycle_state(
@@ -107,6 +130,7 @@ class RuntimeStateStore:
                 changed = True
             if changed:
                 self._bump_status_revision_locked()
+                self._trace_locked("set_backend_lifecycle_state", state=str(state), message=message)
 
     def set_controller_state(
         self,
@@ -123,6 +147,7 @@ class RuntimeStateStore:
                 changed = True
             if changed:
                 self._bump_status_revision_locked()
+                self._trace_locked("set_controller_state", state=str(state), message=message)
 
     def set_backend_boot_degraded(self, degraded: bool) -> None:
         with self._lock:
@@ -130,6 +155,7 @@ class RuntimeStateStore:
                 return
             self._snapshot.backend_boot_degraded = degraded
             self._bump_status_revision_locked()
+            self._trace_locked("set_backend_boot_degraded", degraded=degraded)
 
     def set_orchestrator_state(
         self,
@@ -146,6 +172,7 @@ class RuntimeStateStore:
                 changed = True
             if changed:
                 self._bump_status_revision_locked()
+                self._trace_locked("set_orchestrator_state", state=str(state), message=message)
 
     def begin_task(self, task_name: str, task_state: TaskState, message: str) -> None:
         with self._lock:
@@ -161,6 +188,7 @@ class RuntimeStateStore:
             self._snapshot.latest_message = message
             if changed:
                 self._bump_status_revision_locked()
+                self._trace_locked("begin_task", task_name=task_name, task_state=str(task_state), message=message)
 
     def complete_task(self, task_state: TaskState, message: str) -> None:
         with self._lock:
@@ -176,6 +204,7 @@ class RuntimeStateStore:
             self._snapshot.latest_message = message
             if changed:
                 self._bump_status_revision_locked()
+                self._trace_locked("complete_task", task_state=str(task_state), message=message)
 
     def fail_task(self, task_state: TaskState, message: str) -> None:
         with self._lock:
@@ -191,6 +220,7 @@ class RuntimeStateStore:
             self._snapshot.latest_message = message
             if changed:
                 self._bump_status_revision_locked()
+                self._trace_locked("fail_task", task_state=str(task_state), message=message)
 
     def set_current_position_mm(self, position_mm: float) -> None:
         with self._lock:
@@ -198,6 +228,7 @@ class RuntimeStateStore:
                 return
             self._snapshot.current_position_mm = position_mm
             self._bump_status_revision_locked()
+            self._trace_locked("set_current_position_mm", position_mm=position_mm)
 
     def set_vacuum_on(self, enabled: bool) -> None:
         with self._lock:
@@ -205,6 +236,7 @@ class RuntimeStateStore:
                 return
             self._snapshot.vacuum_on = enabled
             self._bump_status_revision_locked()
+            self._trace_locked("set_vacuum_on", enabled=enabled)
 
     def set_vibration_on(self, enabled: bool) -> None:
         with self._lock:
@@ -212,6 +244,7 @@ class RuntimeStateStore:
                 return
             self._snapshot.vibration_on = enabled
             self._bump_status_revision_locked()
+            self._trace_locked("set_vibration_on", enabled=enabled)
 
     def set_stop_requested(self, requested: bool) -> None:
         with self._lock:
@@ -219,6 +252,7 @@ class RuntimeStateStore:
                 return
             self._snapshot.stop_requested = requested
             self._bump_status_revision_locked()
+            self._trace_locked("set_stop_requested", requested=requested)
 
     def set_classifier_result(self, result: ClassifierResultSummary) -> None:
         with self._lock:
@@ -226,6 +260,12 @@ class RuntimeStateStore:
                 return
             self._snapshot.classifier_result = deepcopy(result)
             self._bump_status_revision_locked()
+            self._trace_locked(
+                "set_classifier_result",
+                result_class=result.result_class,
+                confidence=result.confidence,
+                errors=list(result.errors),
+            )
 
     def set_detection_summary(self, summary: DetectionSummary) -> None:
         with self._lock:
@@ -233,6 +273,17 @@ class RuntimeStateStore:
                 return
             self._snapshot.detection_summary = deepcopy(summary)
             self._bump_status_revision_locked()
+            self._trace_locked(
+                "set_detection_summary",
+                source_path=summary.source_path,
+                source_mtime=summary.source_mtime,
+                preview_path=summary.preview_path,
+                preview_mtime=summary.preview_mtime,
+                status=summary.status,
+                fly_remaining=summary.fly_remaining,
+                x_positions_mm=list(summary.x_positions_mm),
+                corrected_positions_mm=list(summary.corrected_positions_mm),
+            )
 
     def set_subsystem_health(self, name: str, value: bool | str | float) -> None:
         with self._lock:
@@ -240,6 +291,7 @@ class RuntimeStateStore:
                 return
             self._snapshot.subsystem_health[name] = value
             self._bump_status_revision_locked()
+            self._trace_locked("set_subsystem_health", name=name, value=value)
 
     def set_subsystem_error(self, name: str, error: str | None) -> None:
         with self._lock:
@@ -248,8 +300,10 @@ class RuntimeStateStore:
                     return
                 self._snapshot.subsystem_errors.pop(name, None)
                 self._bump_status_revision_locked()
+                self._trace_locked("clear_subsystem_error", name=name)
                 return
             if self._snapshot.subsystem_errors.get(name) == error:
                 return
             self._snapshot.subsystem_errors[name] = error
             self._bump_status_revision_locked()
+            self._trace_locked("set_subsystem_error", name=name, error=error)

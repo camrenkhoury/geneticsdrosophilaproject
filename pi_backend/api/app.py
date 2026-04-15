@@ -12,7 +12,10 @@ from pi_backend.core.config_runtime import BackendRuntimeConfig, build_backend_r
 from pi_backend.core.runtime_state import RuntimeStateSnapshot, RuntimeStateStore
 from pi_backend.core.subsystem_support import SubsystemUnavailableError
 from pi_backend.control.machine_service import MachineService
+from shared.debug.operation_trace import append_operation_trace
 from shared.state.state_enums import BackendLifecycleState, OrchestratorState
+
+PI_OPERATION_TRACE_FILENAME = ".pi_operation_trace.log"
 
 
 class BackendApiContext:
@@ -29,6 +32,23 @@ class BackendApiContext:
         self._worker_lock = Lock()
         self._active_worker: Thread | None = None
         self._active_command: str | None = None
+
+    def _trace(self, event: str, **fields: Any) -> None:
+        snapshot = self.runtime_state.snapshot()
+        append_operation_trace(
+            PI_OPERATION_TRACE_FILENAME,
+            "backend_api",
+            event,
+            active_command=self._active_command,
+            busy=self.is_busy(),
+            status_revision=snapshot.status_revision,
+            orchestrator_state=str(snapshot.orchestrator_state),
+            task_state=None if snapshot.task_state is None else str(snapshot.task_state),
+            current_task=snapshot.current_task,
+            stop_requested=snapshot.stop_requested,
+            latest_message=snapshot.latest_message,
+            **fields,
+        )
 
     def is_busy(self) -> bool:
         worker = self._active_worker
@@ -78,6 +98,7 @@ class BackendApiContext:
     ) -> CommandResponse:
         with self._worker_lock:
             if self.is_busy():
+                self._trace("submit_machine_task_rejected_busy", command=command)
                 self.runtime_state.append_log("WARNING", f"Rejected {command}: machine busy with {self._active_command}.")
                 return CommandResponse.from_snapshot(
                     self.runtime_state.snapshot(),
@@ -90,6 +111,7 @@ class BackendApiContext:
             if precheck is not None:
                 error_message = precheck()
                 if error_message is not None:
+                    self._trace("submit_machine_task_rejected_precheck", command=command, error=error_message)
                     self.runtime_state.append_log("WARNING", f"Rejected {command}: {error_message}")
                     return CommandResponse.from_snapshot(
                         self.runtime_state.snapshot(),
@@ -104,6 +126,7 @@ class BackendApiContext:
                 OrchestratorState.TASK_VALIDATING,
                 f"Accepted {command} request.",
             )
+            self._trace("submit_machine_task_accepted", command=command)
 
             thread = Thread(
                 target=self._run_worker_wrapper,
@@ -131,6 +154,7 @@ class BackendApiContext:
     ) -> CommandResponse:
         with self._worker_lock:
             if self.is_busy():
+                self._trace("apply_actuator_rejected_busy", command=command)
                 self.runtime_state.append_log("WARNING", f"Rejected {command}: machine busy with {self._active_command}.")
                 return CommandResponse.from_snapshot(
                     self.runtime_state.snapshot(),
@@ -143,6 +167,7 @@ class BackendApiContext:
             if precheck is not None:
                 error_message = precheck()
                 if error_message is not None:
+                    self._trace("apply_actuator_rejected_precheck", command=command, error=error_message)
                     self.runtime_state.append_log("WARNING", f"Rejected {command}: {error_message}")
                     return CommandResponse.from_snapshot(
                         self.runtime_state.snapshot(),
@@ -153,8 +178,10 @@ class BackendApiContext:
                     )
 
         try:
+            self._trace("apply_actuator_enter", command=command)
             action()
         except Exception as exc:
+            self._trace("apply_actuator_exception", command=command, error=str(exc))
             self.runtime_state.append_log("ERROR", f"{command} failed: {exc}")
             return CommandResponse.from_snapshot(
                 self.runtime_state.snapshot(),
@@ -174,6 +201,7 @@ class BackendApiContext:
 
     def request_stop(self) -> CommandResponse:
         busy = self.is_busy()
+        self._trace("request_stop_enter", busy=busy)
         self.runtime_state.set_stop_requested(True)
         self.machine_service.emergency_stop()
 
@@ -198,7 +226,9 @@ class BackendApiContext:
                 "Machine idle.",
             )
             message = "Emergency stop acknowledged. Motion drive and outputs were forced to a safe state."
+        self._trace("request_stop_exit", busy=busy, message=message)
 
+        self._trace("apply_actuator_exit", command=command)
         return CommandResponse.from_snapshot(
             self.runtime_state.snapshot(),
             ok=True,
@@ -250,8 +280,10 @@ class BackendApiContext:
 
     def _run_worker_wrapper(self, command: str, worker: Callable[[], Any]) -> None:
         try:
+            self._trace("worker_wrapper_enter", command=command)
             worker()
         except Exception:
+            self._trace("worker_wrapper_exception", command=command)
             self.logger.exception("Background command %s failed.", command)
             self.runtime_state.append_log("ERROR", f"Background command {command} failed.")
         finally:
@@ -259,6 +291,7 @@ class BackendApiContext:
             with self._worker_lock:
                 self._active_worker = None
                 self._active_command = None
+            self._trace("worker_wrapper_exit", command=command)
 
 
 def create_app() -> FastAPI:
