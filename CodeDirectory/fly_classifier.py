@@ -70,7 +70,9 @@ SINGLE_FLY_MAX_AREA_PX = 40000
 
 # Extra robustness for chamber count:
 # - merge nearby significant contours before counting
-# - require stronger evidence before upgrading a single merged group to "2"
+# - count spatial groups, not contour fragments
+# - only upgrade a single merged group to "2" when the combined area strongly
+#   suggests multiple flies occupying the same cluster
 GROUP_GAP_PX = 36
 GROUP_GAP_FRAC = 0.015
 DOUBLE_FLY_AREA_FACTOR = 1.85
@@ -300,10 +302,7 @@ def _count_flies(bgr_img: np.ndarray, *, debug: bool = False) -> dict[str, Any]:
 
         group_count = 1
         reason = "single_group"
-        if len(members) >= 2 and max_separation >= separation_threshold:
-            group_count = 2
-            reason = "separated_components"
-        elif total_area >= max_area * float(config["double_fly_area_factor"]):
+        if total_area >= max_area * float(config["double_fly_area_factor"]):
             group_count = 2
             reason = "oversized_group"
 
@@ -319,9 +318,20 @@ def _count_flies(bgr_img: np.ndarray, *, debug: bool = False) -> dict[str, Any]:
             }
         )
 
+    # The automation only needs a robust empty / single / multiple decision.
+    # Count spatial groups first, then only allow one merged cluster to upgrade
+    # itself to 2. This avoids the common false-double case where one fly gets
+    # split into two contour fragments by the mask.
+    total_count = min(total_count, max(0, len(counted_groups)))
+    if len(counted_groups) == 1 and int(counted_groups[0]["count"]) >= 2:
+        total_count = 2
+    elif len(counted_groups) >= 2:
+        total_count = min(len(counted_groups), 2)
+
     detail = (
         f"count={total_count} significant_contours={len(significant_contours)} groups={len(counted_groups)} "
-        f"largest_area={largest_area:.1f} min_area={min_area:.1f} max_area={max_area:.1f} gap_px={gap_px}"
+        f"largest_area={largest_area:.1f} min_area={min_area:.1f} max_area={max_area:.1f} "
+        f"gap_px={gap_px} separation_threshold={separation_threshold:.1f}"
     )
 
     debug_image = None
