@@ -82,6 +82,7 @@ class ChannelSetupPanel:
 
         self._build_ui()
         self._focus_window()
+        self._reset_transient_state()
         self.refresh_status_and_preview()
 
     def show(self) -> None:
@@ -113,6 +114,14 @@ class ChannelSetupPanel:
             self._apply_status_payload,
             lock_controls=False,
         )
+
+    def _reset_transient_state(self) -> None:
+        self._selected_points.clear()
+        self._pil_image = None
+        self._photo = None
+        self._display_box = None
+        self._needs_preview_refresh = True
+        self.selection_var.set("Pick the left channel end, then the right channel end.")
 
     def _build_ui(self) -> None:
         self.window.columnconfigure(0, weight=1)

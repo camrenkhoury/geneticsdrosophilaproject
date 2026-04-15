@@ -571,6 +571,8 @@ class DrosophilaGUI:
         self.last_preview_mtime: float | None = None
         self.last_result_mtime: float | None = None
         self.last_used_detection_mtime: float | None = None
+        self._awaiting_current_detection = False
+        self._current_detection_baseline_mtime: float | None = None
         self._last_output_dir_text = ""
         self.remote_settings = load_remote_connection_settings(self.repo_root)
         self.remote_controller: RemoteController | None = None
@@ -755,6 +757,14 @@ class DrosophilaGUI:
             "Run channel calibration\n"
             "Save the setup\n\n"
             "Open Channel Detection Setup now?"
+        )
+
+    def _channel_setup_reuse_message(self, action_label: str) -> str:
+        return (
+            f"{action_label} found a saved Channel Detection Setup.\n\n"
+            "Yes: use the saved channel background and calibration for this run.\n"
+            "No: open Channel Detection Setup and recalibrate before continuing.\n"
+            "Cancel: stop here."
         )
 
     def _assay_setup_required_message(self, action_label: str) -> str:
@@ -1179,7 +1189,17 @@ class DrosophilaGUI:
         if fin6_status is None:
             return False
         if self._channel_setup_ready(fin6_status):
-            return True
+            decision = messagebox.askyesnocancel(
+                "Use Saved Setup?",
+                self._channel_setup_reuse_message(action_label),
+            )
+            if decision is None:
+                self.set_status("idle", f"{action_label} cancelled.")
+                return False
+            if decision:
+                return True
+            self._open_channel_setup_panel(action_label, resume_callable)
+            return False
 
         should_open = messagebox.askyesno("Setup Required", self._channel_setup_required_message(action_label))
         if not should_open:
@@ -1884,13 +1904,24 @@ class DrosophilaGUI:
         self.position_var.set(f"{float(status.get('current_position_mm', 0.0)):.2f} mm")
         self.mode_var.set("Remote Mode (Degraded)" if self.remote_backend_degraded else "Remote Mode")
         self.mode_label.config(bg="#FF9800" if self.remote_backend_degraded else "#4CAF50")
-        self.detection_var.set(self._format_remote_detection(status.get("detection_summary", {}) or {}))
-
         detection_summary = status.get("detection_summary", {}) or {}
+        source_mtime_raw = detection_summary.get("source_mtime")
+        source_mtime = float(source_mtime_raw) if source_mtime_raw is not None else None
+        if self._awaiting_current_detection:
+            baseline = self._current_detection_baseline_mtime
+            if source_mtime is None or (baseline is not None and source_mtime <= baseline):
+                self.detection_var.set("Waiting for current channel detection output.")
+            else:
+                self._awaiting_current_detection = False
+                self._current_detection_baseline_mtime = source_mtime
+                self.detection_var.set(self._format_remote_detection(detection_summary))
+        else:
+            self.detection_var.set(self._format_remote_detection(detection_summary))
+
         source_path = detection_summary.get("source_path")
-        if source_path:
+        if source_path and not self._awaiting_current_detection:
             self.output_dir_var.set(str(source_path))
-        self._request_remote_preview_if_needed(detection_summary)
+        self._request_remote_preview_if_needed(detection_summary if not self._awaiting_current_detection else {})
 
         self.update_actuator_state("vacuum", bool(status.get("vacuum_on", False)))
         self.update_actuator_state("vibration", bool(status.get("vibration_on", False)))
@@ -3674,6 +3705,9 @@ class DrosophilaGUI:
         self.detection_var.set(f"remaining={remaining} count={count} last_update={modified}")
         self.sort_detected_var.set(str(count))
         self.last_result_mtime = result_path.stat().st_mtime
+        self.last_used_detection_mtime = self.last_result_mtime
+        self._awaiting_current_detection = False
+        self._current_detection_baseline_mtime = self.last_result_mtime
 
         if annotated_path.exists():
             self.load_channel_preview(annotated_path)
@@ -3692,6 +3726,30 @@ class DrosophilaGUI:
         self.sort_notes_var.set("Tube counts and classifier output will appear here during automated loading.")
         for var in self.sort_tube_count_vars.values():
             var.set("0 / 10")
+
+    def _begin_new_detection_session(self, *, placeholder: str) -> None:
+        baseline = self.last_used_detection_mtime
+        if self.is_remote_mode():
+            if self._last_remote_preview_source_mtime is not None:
+                baseline = max(
+                    float(self._last_remote_preview_source_mtime),
+                    float(baseline) if baseline is not None else float(self._last_remote_preview_source_mtime),
+                )
+        elif self.last_result_mtime is not None:
+            baseline = max(
+                float(self.last_result_mtime),
+                float(baseline) if baseline is not None else float(self.last_result_mtime),
+            )
+
+        self._awaiting_current_detection = True
+        self._current_detection_baseline_mtime = baseline
+        self.preview_image = None
+        self.preview_source_image = None
+        self.last_preview_mtime = None
+        self.detection_var.set("Waiting for current channel detection output.")
+        if self.is_remote_mode():
+            self._last_remote_preview_source_mtime = None
+        self.set_preview_placeholder(placeholder)
 
     def _apply_automation_snapshot(self, snapshot: dict[str, Any]) -> None:
         stage = str(snapshot.get("stage") or "running").strip() or "running"
@@ -3733,6 +3791,8 @@ class DrosophilaGUI:
         if self.is_remote_mode():
             if not self.remote_connected:
                 self.set_preview_placeholder("Remote mode preview unavailable while disconnected.")
+            elif self._awaiting_current_detection:
+                self.set_preview_placeholder("Waiting for current remote channel detection image...")
             elif self.preview_image is None and not self._remote_preview_fetch_in_flight:
                 self.set_preview_placeholder("Waiting for remote channel detection image...")
             self.root.after(1000, self.update_channel_preview)
@@ -3748,6 +3808,15 @@ class DrosophilaGUI:
         result_path = self._resolve_channel_file("last_channel_result.json")
 
         result = self._read_detection_result(result_path) if result_path.exists() else None
+        current_result_mtime = result_path.stat().st_mtime if result_path.exists() else None
+        if self._awaiting_current_detection and current_result_mtime is not None:
+            baseline = self._current_detection_baseline_mtime
+            if baseline is None or current_result_mtime > baseline:
+                self._awaiting_current_detection = False
+                self._current_detection_baseline_mtime = current_result_mtime
+            else:
+                result = None
+
         if result:
             positions = result.get("x_positions_mm", [])
             count = len(positions) if isinstance(positions, list) else 0
@@ -3755,16 +3824,23 @@ class DrosophilaGUI:
             modified = time.strftime("%H:%M:%S", time.localtime(result_path.stat().st_mtime))
             self.detection_var.set(f"remaining={remaining} count={count} last_update={modified}")
             self.last_result_mtime = result_path.stat().st_mtime
+            self.last_used_detection_mtime = self.last_result_mtime
         else:
-            self.detection_var.set("Waiting for channel detection output.")
+            if self._awaiting_current_detection:
+                self.detection_var.set("Waiting for current channel detection output.")
+            else:
+                self.detection_var.set("Waiting for channel detection output.")
 
-        if preview_path.exists():
+        if preview_path.exists() and not self._awaiting_current_detection:
             preview_mtime = preview_path.stat().st_mtime
             if preview_mtime != self.last_preview_mtime:
                 self.load_channel_preview(preview_path)
                 self.last_preview_mtime = preview_mtime
         else:
-            self.set_preview_placeholder("Waiting for channel detection image...")
+            if self._awaiting_current_detection:
+                self.set_preview_placeholder("Waiting for current channel detection image...")
+            else:
+                self.set_preview_placeholder("Waiting for channel detection image...")
 
         self.root.after(1000, self.update_channel_preview)
 
@@ -3909,7 +3985,13 @@ class DrosophilaGUI:
 
     def _run_remote_channel_detection_capture(self):
         controller = self._get_remote_controller_for_automation()
-        status = self._run_remote_command_and_wait("channel detection", controller.detect_channel, timeout_s=60.0)
+        baseline_status = controller.get_status_fresh()
+        baseline_summary = baseline_status.get("detection_summary", {}) or {}
+        baseline_mtime_raw = baseline_summary.get("source_mtime")
+        baseline_mtime = float(baseline_mtime_raw) if baseline_mtime_raw is not None else self.last_used_detection_mtime
+        response = controller.detect_channel()
+        self.worker_log(f"Remote channel detection: {response.get('message', 'accepted')}")
+        status = self._wait_for_remote_detection_result(baseline_mtime, timeout_s=60.0)
         detection_summary = status.get("detection_summary", {}) or {}
         positions_raw = detection_summary.get("corrected_positions_mm") or detection_summary.get("x_positions_mm") or []
         positions = [float(position) for position in positions_raw]
@@ -3926,6 +4008,25 @@ class DrosophilaGUI:
             },
             "result_path": Path(source_path_text) if source_path_text else None,
         }
+
+    def _wait_for_remote_detection_result(self, previous_source_mtime: float | None, timeout_s: float = 60.0) -> dict:
+        deadline = time.monotonic() + timeout_s
+        last_status: dict | None = None
+        while time.monotonic() < deadline:
+            self._check_stop()
+            status = self._poll_remote_status_fresh()
+            last_status = status
+            if self._remote_status_has_terminal_error(status):
+                raise RuntimeError(str(status.get("latest_message", "Remote channel detection failed.")))
+            detection_summary = status.get("detection_summary", {}) or {}
+            source_mtime_raw = detection_summary.get("source_mtime")
+            source_mtime = float(source_mtime_raw) if source_mtime_raw is not None else None
+            if source_mtime is not None and (previous_source_mtime is None or source_mtime > previous_source_mtime):
+                return status
+            time.sleep(0.2)
+        if last_status is not None and self._remote_status_has_terminal_error(last_status):
+            raise RuntimeError(str(last_status.get("latest_message", "Remote channel detection failed.")))
+        raise RuntimeError("Timed out waiting for a fresh remote channel detection result.")
 
     def _resolve_tube_for_classification(self, classification_result: dict) -> tuple[str, float]:
         class_name = str(classification_result.get("class") or "UNCERTAIN").strip().lower()
@@ -4176,6 +4277,7 @@ class DrosophilaGUI:
             return
         if not self._ensure_channel_setup_ready_or_begin_setup("Detect Channel", self.run_channel_detection):
             return
+        self._begin_new_detection_session(placeholder="Waiting for current channel detection image...")
         if self.is_remote_mode():
             self._start_remote_command(
                 "channel detection",
@@ -4209,6 +4311,7 @@ class DrosophilaGUI:
                 return
         if not self._ensure_channel_setup_ready_or_begin_setup("Automated Run", self.run_automated):
             return
+        self._begin_new_detection_session(placeholder="Waiting for current channel detection image...")
         self._reset_sorting_status_display()
         self.sort_stage_var.set("Channel setup ready")
         self.sort_notes_var.set("Automated loading is starting. No further prompts will appear during the sorting loop unless Emergency Stop is used.")
