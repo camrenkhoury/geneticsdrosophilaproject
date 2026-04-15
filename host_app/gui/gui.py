@@ -3284,6 +3284,9 @@ class DrosophilaGUI:
             pass
 
     def create_channel_tab(self, parent):
+        parent.rowconfigure(0, weight=0)
+        parent.rowconfigure(2, weight=1, minsize=320)
+
         summary_card = ttk.LabelFrame(parent, text="Channel Detection", padding="10")
         summary_card.grid(row=0, column=0, sticky=(tk.W, tk.E))
         summary_card.columnconfigure(0, weight=1)
@@ -3314,11 +3317,10 @@ class DrosophilaGUI:
         self.channel_setup_button.grid(row=0, column=2, sticky=tk.W, padx=(8, 0))
         self.local_vision_widgets.append(self.channel_setup_button)
 
-        preview_frame = ttk.LabelFrame(parent, text="Annotated Preview", padding="10")
+        preview_frame = ttk.LabelFrame(parent, text="Annotated Preview", padding="8")
         preview_frame.grid(row=2, column=0, sticky=(tk.N, tk.S, tk.W, tk.E), pady=(10, 0))
         preview_frame.columnconfigure(0, weight=1)
         preview_frame.rowconfigure(0, weight=1)
-        parent.rowconfigure(2, weight=1)
 
         self.preview_label = tk.Label(
             preview_frame,
@@ -3343,8 +3345,9 @@ class DrosophilaGUI:
 
         summary_card = ttk.LabelFrame(content, text="Sexing / Routing", padding="10")
         summary_card.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E), padx=(0, 10))
-        summary_card.columnconfigure(1, weight=1, minsize=140)
-        summary_card.columnconfigure(4, weight=1, minsize=160)
+        summary_card.columnconfigure(1, weight=0, minsize=140)
+        summary_card.columnconfigure(2, weight=0, minsize=20)
+        summary_card.columnconfigure(4, weight=0, minsize=140)
 
         preview_card = ttk.LabelFrame(content, text="Classification Preview", padding="10")
         preview_card.grid(row=0, column=1, sticky=(tk.N, tk.S, tk.W, tk.E), padx=(0, 10))
@@ -3385,7 +3388,6 @@ class DrosophilaGUI:
             ("Last Sex", self.sort_last_sex_var),
             ("Confidence", self.sort_confidence_var),
             ("Destination", self.sort_destination_var),
-            ("Notes", self.sort_notes_var),
         ]
 
         for row_index, (label_text, value_var) in enumerate(left_rows, start=1):
@@ -3405,7 +3407,7 @@ class DrosophilaGUI:
                 pady=2,
                 anchor="w",
                 justify="left",
-                width=14,
+                width=13,
             ).grid(row=row_index, column=1, sticky=(tk.W, tk.E), pady=2, padx=(0, 10))
 
         for row_index, (label_text, value_var) in enumerate(right_rows, start=1):
@@ -3417,23 +3419,48 @@ class DrosophilaGUI:
             )
             label_kwargs = {
                 "textvariable": value_var,
-                "bg": "#FFFFFF" if label_text != "Notes" else "#F7F7F7",
+                "bg": "#FFFFFF",
                 "relief": "sunken",
-                "font": ("Arial", 9 if label_text != "Notes" else 8),
+                "font": ("Arial", 9),
                 "padx": 5,
-                "pady": 2 if label_text != "Notes" else 4,
+                "pady": 2,
                 "anchor": "w",
                 "justify": "left",
-                "width": 18,
+                "width": 13,
             }
-            if label_text == "Notes":
-                label_kwargs["wraplength"] = 220
             tk.Label(summary_card, **label_kwargs).grid(
                 row=row_index,
                 column=4,
                 sticky=(tk.W, tk.E),
                 pady=2,
             )
+
+        notes_row = max(len(left_rows), len(right_rows)) + 1
+        ttk.Label(summary_card, text="Notes:", font=("Arial", 9, "bold")).grid(
+            row=notes_row,
+            column=0,
+            sticky=tk.NW,
+            pady=(8, 2),
+        )
+        tk.Label(
+            summary_card,
+            textvariable=self.sort_notes_var,
+            bg="#F7F7F7",
+            relief="sunken",
+            font=("Arial", 8),
+            padx=5,
+            pady=4,
+            anchor="w",
+            justify="left",
+            wraplength=430,
+            width=34,
+        ).grid(
+            row=notes_row,
+            column=1,
+            columnspan=4,
+            sticky=(tk.W, tk.E),
+            pady=(8, 2),
+        )
 
         tube_frame = ttk.LabelFrame(content, text="Tube Counts", padding="10")
         tube_frame.grid(row=0, column=2, sticky=(tk.N, tk.E))
@@ -3570,11 +3597,11 @@ class DrosophilaGUI:
             system_frame.columnconfigure(column, weight=1)
 
     def create_log_section(self, parent):
-        log_frame = ttk.LabelFrame(parent, text="Activity Log", style="Log.TLabelframe", padding="8")
+        log_frame = ttk.LabelFrame(parent, text="Runtime Log", style="Log.TLabelframe", padding="6")
         log_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(8, 0))
         log_frame.columnconfigure(0, weight=1)
 
-        debug_frame = ttk.LabelFrame(log_frame, text="Runtime History", padding="8")
+        debug_frame = ttk.Frame(log_frame)
         debug_frame.grid(row=0, column=0, sticky=(tk.W, tk.E))
         debug_frame.columnconfigure(0, weight=1)
         debug_frame.columnconfigure(1, weight=0)
@@ -3597,7 +3624,7 @@ class DrosophilaGUI:
 
         self.debug_trace_text = scrolledtext.ScrolledText(
             log_frame,
-            height=6,
+            height=5,
             wrap=tk.WORD,
             font=("Consolas", 8),
             bg="#111827",
@@ -3607,18 +3634,8 @@ class DrosophilaGUI:
             borderwidth=1,
             exportselection=False,
         )
-        self.debug_trace_text.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(8, 8))
-
-        self.log_text = scrolledtext.ScrolledText(
-            log_frame,
-            height=4,
-            wrap=tk.WORD,
-            font=("Consolas", 9),
-            bg="#F8F8F8",
-            relief="sunken",
-            borderwidth=1,
-        )
-        self.log_text.grid(row=2, column=0, sticky=(tk.W, tk.E))
+        self.debug_trace_text.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(6, 0))
+        self.log_text = self.debug_trace_text
 
     def create_footer_banners(self, parent, row: int, column: int, background: str, pady=(12, 0)):
         footer_frame = tk.Frame(parent, bg=background)
