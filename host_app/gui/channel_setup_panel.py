@@ -56,8 +56,7 @@ class ChannelSetupPanel:
         self.detail_var = tk.StringVar(
             value=(
                 "Empty the channel, move the nozzle out of the camera view, "
-                "review the photo, retake it if needed, click the left and right channel ends, and save. "
-                "Saving will also recapture the clean subtraction background."
+                "review the photo, retake it if needed, click the left and right channel ends, and save."
             )
         )
         self.background_state_var = tk.StringVar(value="Background: checking")
@@ -672,7 +671,7 @@ class ChannelSetupPanel:
 
         left_pt, right_pt = self._selected_points
         self._run_worker(
-            "Capturing a clean background and saving channel calibration...",
+            "Saving channel calibration...",
             lambda: self.actions.save_calibration(left_pt, right_pt, channel_mm),
             self._handle_save_complete,
         )

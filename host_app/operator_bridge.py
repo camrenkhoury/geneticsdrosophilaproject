@@ -679,6 +679,7 @@ def capture_channel_preview_from_saved_settings() -> dict[str, Any]:
     channel = status.channel
     preview_path = FIN6_DIR / "backgrounds" / "channel_setup_preview.jpg"
     preview_path.parent.mkdir(parents=True, exist_ok=True)
+    channel.background_path.parent.mkdir(parents=True, exist_ok=True)
 
     with BrioCamera(
         BrioConfig(
@@ -696,6 +697,9 @@ def capture_channel_preview_from_saved_settings() -> dict[str, Any]:
         )
     ) as camera:
         frame_bgr = camera.read()
+
+    if not cv2.imwrite(str(channel.background_path), frame_bgr):
+        raise IOError(f"Could not save setup background image to {channel.background_path}")
 
     preview_bgr = frame_bgr
     preview_max_width = 1280
@@ -717,6 +721,7 @@ def capture_channel_preview_from_saved_settings() -> dict[str, Any]:
 
     return {
         "preview_path": str(preview_path.resolve()),
+        "background_path": str(channel.background_path.resolve()),
         "preview_jpeg_base64": preview_b64,
         "camera_description": _camera_description(
             channel.device,
@@ -738,16 +743,14 @@ def save_channel_calibration_from_points(
 
     status = get_setup_status()
     channel = status.channel
-    preview_path = FIN6_DIR / "backgrounds" / "channel_setup_preview.jpg"
-    background_source_path = preview_path if preview_path.exists() else channel.background_path
-    if not background_source_path.exists():
-        raise FileNotFoundError("Capture or retake a current setup photo before saving channel calibration.")
+    if not channel.background_path.exists():
+        raise FileNotFoundError(_missing_channel_setup_message(status))
 
     channel.background_path.parent.mkdir(parents=True, exist_ok=True)
     channel.calibration_path.parent.mkdir(parents=True, exist_ok=True)
-    background_gray = cv2.imread(str(background_source_path), cv2.IMREAD_GRAYSCALE)
+    background_gray = cv2.imread(str(channel.background_path), cv2.IMREAD_GRAYSCALE)
     if background_gray is None:
-        raise FileNotFoundError(f"Could not read channel setup photo: {background_source_path}")
+        raise FileNotFoundError(f"Could not read saved channel background image: {channel.background_path}")
 
     left_pt = (int(left_point_px[0]), int(left_point_px[1]))
     right_pt = (int(right_point_px[0]), int(right_point_px[1]))
@@ -766,7 +769,6 @@ def save_channel_calibration_from_points(
         crop_above_px=crop_above_px,
         crop_below_px=crop_below_px,
     )
-    capture_channel_background_from_saved_settings(frame_count=15)
     return {
         "background_path": str(Path(channel.background_path).resolve()),
         "calibration_path": str(Path(channel.calibration_path).resolve()),
