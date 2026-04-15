@@ -654,9 +654,9 @@ class DrosophilaGUI:
         self.state_var = tk.StringVar(value="IDLE")
         self.position_var = tk.StringVar(value="0.00 mm")
         self.message_var = tk.StringVar(value="Ready")
-        self.mode_var = tk.StringVar(value="Local Mode")
-        self.connection_var = tk.StringVar(value="Local controller active.")
-        self.controller_mode_choice = tk.StringVar(value="Local")
+        self.mode_var = tk.StringVar(value="Simulation Mode")
+        self.connection_var = tk.StringVar(value="Simulation controller active.")
+        self.controller_mode_choice = tk.StringVar(value="Simulation")
         self.remote_url_var = tk.StringVar(value=self.remote_settings.base_url)
         self.remote_api_key_var = tk.StringVar(value=self.remote_settings.api_key)
         self.detection_var = tk.StringVar(value="Waiting for channel detection output.")
@@ -710,7 +710,7 @@ class DrosophilaGUI:
         self.update_position()
         self.update_channel_preview()
         self.process_queue()
-        self._apply_connection_state(ConnectionState.LOCAL, "Local controller active.")
+        self._apply_connection_state(ConnectionState.LOCAL, "Simulation controller active.")
         self.root.after(600, self._maybe_request_startup_channel_preview)
 
     def _load_local_runtime(self) -> dict[str, object]:
@@ -747,7 +747,7 @@ class DrosophilaGUI:
         except RuntimeError as exc:
             self.set_status("error", str(exc))
             self.log_message(f"{action_label} unavailable: {exc}")
-            messagebox.showerror("Local Mode Unavailable", f"{action_label} requires local dependencies.\n\n{exc}")
+            messagebox.showerror("Simulation Mode Unavailable", f"{action_label} requires local dependencies.\n\n{exc}")
             return None
 
     def _load_fin6_bridge(self):
@@ -781,14 +781,14 @@ class DrosophilaGUI:
 
     def _local_mode_presentation(self) -> tuple[str, str]:
         if self._local_runtime_error:
-            return "Local Mode (Unavailable)", "#F44336"
+            return "Simulation Mode (Unavailable)", "#F44336"
 
         gpio_available = self._get_local_gpio_available()
         if gpio_available is True:
-            return "Local Hardware Mode", "#4CAF50"
+            return "Simulation Mode", "#4CAF50"
         if gpio_available is False:
-            return "Local Simulation Mode", "#FF9800"
-        return "Local Mode", "#607D8B"
+            return "Simulation Mode", "#FF9800"
+        return "Simulation Mode", "#607D8B"
 
     def _refresh_local_mode_display(self) -> None:
         if self.is_remote_mode():
@@ -1970,7 +1970,7 @@ class DrosophilaGUI:
         self._last_remote_classification_signature = None
         self._remote_classification_seen_once = False
         self.output_dir_var.set(str(self._current_channel_output_dir()))
-        self._apply_connection_state(ConnectionState.LOCAL, "Local controller active.")
+        self._apply_connection_state(ConnectionState.LOCAL, "Simulation controller active.")
         self.set_status("idle", "Ready")
 
     def _apply_connection_state(self, state: ConnectionState, message: str) -> None:
@@ -3057,7 +3057,7 @@ class DrosophilaGUI:
         self.controller_mode_combo = ttk.Combobox(
             controller_row,
             textvariable=self.controller_mode_choice,
-            values=("Local", "Remote"),
+            values=("Simulation", "Remote"),
             state="readonly",
             width=14,
         )
