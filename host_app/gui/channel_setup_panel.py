@@ -529,7 +529,7 @@ class ChannelSetupPanel:
             return
         self._set_busy(False)
         self._workflow_phase = "select_points"
-        self.background_state_var.set("Saved")
+        self.background_state_var.set("Current photo ready")
         if len(self._selected_points) == 0:
             self.status_var.set("Current photo captured. Click the left channel end, then the right channel end.")
         else:
@@ -540,7 +540,7 @@ class ChannelSetupPanel:
         if not self._load_preview_from_payload(payload):
             self._refresh_preview_bytes()
         if callable(self.log_callback):
-            self.log_callback("Current channel setup photo captured and saved as background.")
+            self.log_callback("Current channel setup photo captured.")
         if callable(self.status_callback):
             self.status_callback("running", "Current channel setup photo captured.")
         self._update_selection_label()
@@ -652,7 +652,7 @@ class ChannelSetupPanel:
         if self._workflow_phase != "select_points":
             messagebox.showwarning(
                 "Channel Detection Setup",
-                "Capture the background first, then click the left and right channel ends.",
+                "Wait for the current setup photo, then click the left and right channel ends.",
                 parent=self.window,
             )
             return
@@ -679,6 +679,8 @@ class ChannelSetupPanel:
     def _handle_save_complete(self, payload: dict[str, Any]) -> None:
         if self._closed:
             return
+        self.background_state_var.set("Saved")
+        self.calibration_state_var.set("Saved")
         self._set_busy(False, "Channel Detection Setup saved.")
         if callable(self.log_callback):
             self.log_callback("Channel Detection Setup saved.")
