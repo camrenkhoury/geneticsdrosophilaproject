@@ -2220,7 +2220,6 @@ class DrosophilaGUI:
 
         preview_exists = bool(detection_summary.get("preview_exists", False))
         preview_mtime = detection_summary.get("preview_mtime")
-        source_mtime = detection_summary.get("source_mtime")
         if not preview_exists:
             self._last_remote_preview_source_mtime = None
             if self.preview_image is None:
@@ -2231,24 +2230,20 @@ class DrosophilaGUI:
             preview_mtime_value = float(preview_mtime) if preview_mtime is not None else None
         except Exception:
             preview_mtime_value = None
-        try:
-            source_mtime_value = float(source_mtime) if source_mtime is not None else None
-        except Exception:
-            source_mtime_value = None
 
-        # Only render the annotated preview once it is at least as fresh as the
-        # detection result JSON it belongs to. Otherwise we can fetch the
-        # previous run's PNG while the new JSON is already visible.
-        if (
-            preview_mtime_value is None
-            or source_mtime_value is None
-            or preview_mtime_value < source_mtime_value
-        ):
+        if preview_mtime_value is None:
             if self.preview_image is None:
                 self.set_preview_placeholder("Capturing current remote channel detection image...")
             return
 
         if self._remote_preview_fetch_in_flight:
+            return
+
+        if (
+            self.preview_image is not None
+            and self.last_preview_mtime is not None
+            and preview_mtime_value <= self.last_preview_mtime
+        ):
             return
 
         if preview_mtime_value is not None and preview_mtime_value == self._last_remote_preview_source_mtime and self.preview_image is not None:
@@ -2271,18 +2266,7 @@ class DrosophilaGUI:
 
         if detection_summary:
             self._request_remote_preview_if_needed(detection_summary)
-            preview_exists = bool(detection_summary.get("preview_exists", False))
-            preview_mtime_raw = detection_summary.get("preview_mtime")
-            try:
-                preview_mtime = float(preview_mtime_raw) if preview_mtime_raw is not None else None
-            except Exception:
-                preview_mtime = None
-            if (
-                preview_exists
-                and preview_mtime is not None
-                and expected_source_mtime is not None
-                and preview_mtime >= expected_source_mtime
-            ):
+            if self._remote_preview_fetch_in_flight:
                 return
 
         if expected_source_mtime is None or self._remote_preview_wait_in_flight:
@@ -2318,11 +2302,18 @@ class DrosophilaGUI:
                     source_mtime = None
 
                 if (
-                    preview_exists
-                    and preview_mtime is not None
-                    and preview_mtime >= expected_source_mtime
-                    and (source_mtime is None or source_mtime >= expected_source_mtime)
+                    source_mtime is not None
+                    and source_mtime >= expected_source_mtime
+                    and preview_exists
                 ):
+                    current_last_preview = self.last_preview_mtime
+                    if (
+                        preview_mtime is not None
+                        and current_last_preview is not None
+                        and preview_mtime <= current_last_preview
+                    ):
+                        time.sleep(0.2)
+                        continue
                     if self._remote_preview_fetch_in_flight:
                         return
                     image_bytes = controller.get_channel_preview_image()
@@ -3103,11 +3094,24 @@ class DrosophilaGUI:
         self.create_device_operations(content_frame)
 
     def create_motion_control(self, parent):
-        motion_frame = ttk.LabelFrame(parent, text="Motion Control", style="Motion.TLabelframe", padding="10")
-        motion_frame.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E), padx=(0, 8))
+        motion_frame = ttk.LabelFrame(parent, text="Motion Control", style="Motion.TLabelframe", padding="8")
+        motion_frame.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E), padx=(0, 8))
+        motion_frame.columnconfigure(0, weight=1)
 
-        home_button = self.make_button(motion_frame, "Home", "#4CAF50", self.home_gantry)
-        home_button.grid(row=0, column=0, pady=3, sticky=(tk.W, tk.E))
+        rail_button_font = ("Arial", 9, "bold")
+        rail_button_padx = 10
+        rail_button_pady = 4
+
+        home_button = self.make_button(
+            motion_frame,
+            "Home",
+            "#4CAF50",
+            self.home_gantry,
+            font=rail_button_font,
+            padx=rail_button_padx,
+            pady=rail_button_pady,
+        )
+        home_button.grid(row=0, column=0, pady=2, sticky=(tk.W, tk.E))
         self.motion_widgets.append(home_button)
 
         positions = [
@@ -3126,30 +3130,41 @@ class DrosophilaGUI:
                 label,
                 "#2196F3",
                 lambda pos=position, name=label: self.move_to_position(pos, name),
+                font=rail_button_font,
+                padx=rail_button_padx,
+                pady=rail_button_pady,
             )
-            button.grid(row=index, column=0, pady=2, sticky=(tk.W, tk.E))
+            button.grid(row=index, column=0, pady=1, sticky=(tk.W, tk.E))
             self.motion_widgets.append(button)
 
-        ttk.Separator(motion_frame, orient="horizontal").grid(row=8, column=0, sticky=(tk.W, tk.E), pady=8)
+        ttk.Separator(motion_frame, orient="horizontal").grid(row=8, column=0, sticky=(tk.W, tk.E), pady=6)
         ttk.Label(motion_frame, text="Manual Position (mm):", font=("Arial", 9, "bold")).grid(
             row=9,
             column=0,
-            pady=(5, 2),
+            pady=(4, 1),
             sticky=tk.W,
         )
-        self.manual_move_entry = ttk.Entry(motion_frame, width=12, font=("Arial", 10))
-        self.manual_move_entry.grid(row=10, column=0, pady=2, sticky=(tk.W, tk.E))
+        self.manual_move_entry = ttk.Entry(motion_frame, width=10, font=("Arial", 9))
+        self.manual_move_entry.grid(row=10, column=0, pady=1, sticky=(tk.W, tk.E))
         self.register_control(self.manual_move_entry)
         self.motion_widgets.append(self.manual_move_entry)
 
-        manual_button = self.make_button(motion_frame, "Move Absolute", "#607D8B", self.manual_move)
-        manual_button.grid(row=11, column=0, pady=3, sticky=(tk.W, tk.E))
+        manual_button = self.make_button(
+            motion_frame,
+            "Move Absolute",
+            "#607D8B",
+            self.manual_move,
+            font=rail_button_font,
+            padx=rail_button_padx,
+            pady=rail_button_pady,
+        )
+        manual_button.grid(row=11, column=0, pady=2, sticky=(tk.W, tk.E))
         self.motion_widgets.append(manual_button)
 
         ttk.Label(motion_frame, text="Current Position:", font=("Arial", 9, "bold")).grid(
             row=12,
             column=0,
-            pady=(10, 2),
+            pady=(6, 1),
             sticky=tk.W,
         )
         self.motion_position_label = tk.Label(
@@ -3157,9 +3172,9 @@ class DrosophilaGUI:
             textvariable=self.position_var,
             bg="white",
             relief="sunken",
-            font=("Arial", 10),
+            font=("Arial", 9),
             padx=5,
-            pady=2,
+            pady=1,
             anchor="w",
         )
         self.motion_position_label.grid(row=13, column=0, sticky=(tk.W, tk.E))
@@ -3455,11 +3470,10 @@ class DrosophilaGUI:
 
     def create_device_operations(self, parent):
         controls_frame = ttk.Frame(parent)
-        controls_frame.grid(row=0, column=2, sticky=(tk.N, tk.S))
+        controls_frame.grid(row=0, column=2, sticky=(tk.N, tk.W, tk.E))
         controls_frame.columnconfigure(0, weight=1)
-        controls_frame.rowconfigure(1, weight=1)
 
-        device_padding = (8, 6) if self._is_compact_screen() else (10, 8)
+        device_padding = (7, 5) if self._is_compact_screen() else (8, 6)
         device_frame = ttk.LabelFrame(
             controls_frame,
             text="Device Control",
@@ -3489,19 +3503,19 @@ class DrosophilaGUI:
         )
         self.register_toggle(self.vibration_switch)
 
-        note_frame = ttk.LabelFrame(controls_frame, text="Workspace Note", padding=(10, 8))
-        note_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.S), pady=(10, 0))
+        note_frame = ttk.LabelFrame(controls_frame, text="Workspace Note", padding=(8, 6))
+        note_frame.grid(row=1, column=0, sticky=(tk.N, tk.W, tk.E), pady=(8, 0))
         tk.Label(
             note_frame,
             text="Live channel, sexing, routing, and assay actions are separated into the tabs in the Vision Workspace.",
             bg="#F7F7F7",
             relief="sunken",
-            font=("Arial", 8),
-            padx=6,
-            pady=6,
+            font=("Arial", 7),
+            padx=5,
+            pady=5,
             anchor="w",
             justify="left",
-            wraplength=220,
+            wraplength=200,
         ).grid(row=0, column=0, sticky=(tk.W, tk.E))
 
     def create_system_controls(self, parent):
@@ -3659,15 +3673,15 @@ class DrosophilaGUI:
 
     def create_device_card(self, parent, row: int, actuator: str, title: str, description: str, command):
         compact = self._is_compact_screen()
-        card_padx = 8 if compact else 10
-        card_pady = 6 if compact else 8
-        header_font_size = 10 if compact else 11
+        card_padx = 7 if compact else 8
+        card_pady = 5 if compact else 6
+        header_font_size = 10 if compact else 10
         badge_font_size = 7 if compact else 8
         desc_font_size = 7 if compact else 8
-        detail_font_size = 9 if compact else 10
-        wrap_length = 200 if compact else 220
-        switch_width = 70 if compact else 78
-        switch_height = 32 if compact else 38
+        detail_font_size = 8 if compact else 9
+        wrap_length = 190 if compact else 200
+        switch_width = 66 if compact else 72
+        switch_height = 30 if compact else 34
         card = tk.Frame(
             parent,
             bg="#FFFFFF",
@@ -3677,7 +3691,7 @@ class DrosophilaGUI:
             padx=card_padx,
             pady=card_pady,
         )
-        card.grid(row=row, column=0, pady=(0, 8 if row == 0 else 0), sticky=(tk.W, tk.E))
+        card.grid(row=row, column=0, pady=(0, 6 if row == 0 else 0), sticky=(tk.W, tk.E))
         card.columnconfigure(0, weight=1)
 
         header = tk.Frame(card, bg="#FFFFFF")
@@ -3716,7 +3730,7 @@ class DrosophilaGUI:
             font=("Arial", desc_font_size),
             justify="left",
             wraplength=wrap_length,
-        ).grid(row=1, column=0, pady=(4, 6), sticky=tk.W)
+        ).grid(row=1, column=0, pady=(3, 5), sticky=tk.W)
 
         control_row = tk.Frame(card, bg="#FFFFFF")
         control_row.grid(row=2, column=0, sticky=(tk.W, tk.E))
@@ -3739,7 +3753,7 @@ class DrosophilaGUI:
             fg="#1F2933",
             font=("Arial", detail_font_size, "bold"),
             anchor="w",
-        ).grid(row=0, column=1, padx=(10, 0), sticky=(tk.W, tk.E))
+        ).grid(row=0, column=1, padx=(8, 0), sticky=(tk.W, tk.E))
 
         self.update_device_card_state(actuator, False)
         return switch
