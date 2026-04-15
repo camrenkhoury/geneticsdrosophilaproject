@@ -594,6 +594,7 @@ class DrosophilaGUI:
         self._last_remote_status_revision: int | None = None
         self._last_remote_preview_source_mtime: float | None = None
         self._remote_preview_fetch_in_flight = False
+        self._remote_preview_wait_in_flight = False
         self._last_remote_classification_signature: tuple[str, float, tuple[str, ...]] | None = None
         self._remote_classification_seen_once = False
         self.connection_state = ConnectionState.LOCAL
@@ -1941,6 +1942,7 @@ class DrosophilaGUI:
             self._last_remote_status_revision = None
             self._last_remote_preview_source_mtime = None
             self._remote_preview_fetch_in_flight = False
+            self._remote_preview_wait_in_flight = False
             self.set_preview_placeholder("Waiting for remote channel detection image...")
             self._apply_connection_state(ConnectionState.CONNECTING_TO_PI, "Connecting to Pi backend.")
             self._start_remote_sync()
@@ -1964,6 +1966,7 @@ class DrosophilaGUI:
         self._last_remote_status_revision = None
         self._last_remote_preview_source_mtime = None
         self._remote_preview_fetch_in_flight = False
+        self._remote_preview_wait_in_flight = False
         self._last_remote_classification_signature = None
         self._remote_classification_seen_once = False
         self.output_dir_var.set(str(self._current_channel_output_dir()))
@@ -2257,6 +2260,80 @@ class DrosophilaGUI:
             daemon=True,
         ).start()
 
+    def _schedule_remote_preview_refresh(
+        self,
+        detection_summary: dict,
+        expected_source_mtime: float | None,
+    ) -> None:
+        if not self.is_remote_mode() or not self.remote_connected or self.remote_controller is None:
+            return
+
+        if detection_summary:
+            self._request_remote_preview_if_needed(detection_summary)
+            preview_exists = bool(detection_summary.get("preview_exists", False))
+            preview_mtime_raw = detection_summary.get("preview_mtime")
+            try:
+                preview_mtime = float(preview_mtime_raw) if preview_mtime_raw is not None else None
+            except Exception:
+                preview_mtime = None
+            if (
+                preview_exists
+                and preview_mtime is not None
+                and expected_source_mtime is not None
+                and preview_mtime >= expected_source_mtime
+            ):
+                return
+
+        if expected_source_mtime is None or self._remote_preview_wait_in_flight:
+            return
+
+        self._remote_preview_wait_in_flight = True
+        threading.Thread(
+            target=self._remote_preview_wait_worker,
+            args=(expected_source_mtime,),
+            daemon=True,
+        ).start()
+
+    def _remote_preview_wait_worker(self, expected_source_mtime: float) -> None:
+        deadline = time.monotonic() + 10.0
+        controller = self.remote_controller
+        try:
+            while time.monotonic() < deadline:
+                if controller is None or not self.is_remote_mode() or not self.remote_connected:
+                    return
+
+                status = controller.get_status_fresh()
+                detection_summary = status.get("detection_summary", {}) or {}
+                preview_exists = bool(detection_summary.get("preview_exists", False))
+                preview_mtime_raw = detection_summary.get("preview_mtime")
+                source_mtime_raw = detection_summary.get("source_mtime")
+                try:
+                    preview_mtime = float(preview_mtime_raw) if preview_mtime_raw is not None else None
+                except Exception:
+                    preview_mtime = None
+                try:
+                    source_mtime = float(source_mtime_raw) if source_mtime_raw is not None else None
+                except Exception:
+                    source_mtime = None
+
+                if (
+                    preview_exists
+                    and preview_mtime is not None
+                    and preview_mtime >= expected_source_mtime
+                    and (source_mtime is None or source_mtime >= expected_source_mtime)
+                ):
+                    if self._remote_preview_fetch_in_flight:
+                        return
+                    image_bytes = controller.get_channel_preview_image()
+                    self.ui_queue.put(("remote_preview", image_bytes, preview_mtime))
+                    return
+
+                time.sleep(0.2)
+        except (ControllerConnectionError, ControllerError) as exc:
+            self.ui_queue.put(("remote_preview_error", str(exc)))
+        finally:
+            self._remote_preview_wait_in_flight = False
+
     def _remote_preview_worker(self, preview_mtime: float | None) -> None:
         try:
             image_bytes = self.remote_controller.get_channel_preview_image() if self.remote_controller is not None else None
@@ -2266,6 +2343,31 @@ class DrosophilaGUI:
 
     def _apply_remote_preview(self, image_bytes: bytes | None, preview_mtime: float | None) -> None:
         self._remote_preview_fetch_in_flight = False
+        self._remote_preview_wait_in_flight = False
+        baseline_mtime = self._current_detection_baseline_mtime
+        if (
+            preview_mtime is not None
+            and self._awaiting_current_detection
+            and baseline_mtime is not None
+            and preview_mtime <= baseline_mtime
+        ):
+            self._trace_runtime(
+                "channel-preview-remote",
+                f"ignored stale preview while awaiting current detection preview_mtime={preview_mtime} baseline={baseline_mtime}",
+                echo_to_log=False,
+            )
+            return
+        if (
+            preview_mtime is not None
+            and self.last_preview_mtime is not None
+            and preview_mtime <= self.last_preview_mtime
+        ):
+            self._trace_runtime(
+                "channel-preview-remote",
+                f"ignored preview_mtime={preview_mtime} last_preview_mtime={self.last_preview_mtime}",
+                echo_to_log=False,
+            )
+            return
         if image_bytes is None:
             self.preview_image = None
             self._last_remote_preview_source_mtime = None
@@ -2280,6 +2382,7 @@ class DrosophilaGUI:
 
     def _fail_remote_preview(self, message: str) -> None:
         self._remote_preview_fetch_in_flight = False
+        self._remote_preview_wait_in_flight = False
         self.preview_image = None
         self.set_preview_placeholder(f"Remote preview unavailable:\n{message}")
         self._trace_runtime("channel-preview-remote-error", message, echo_to_log=False)
@@ -3840,6 +3943,9 @@ class DrosophilaGUI:
                     self._apply_connection_state(connection_state, item[2])
                 elif kind == "remote_status":
                     self._apply_remote_status(item[1])
+                elif kind == "remote_preview_refresh":
+                    self._trace_runtime("queue", f"remote_preview_refresh expected={item[2]}", echo_to_log=False)
+                    self._schedule_remote_preview_refresh(item[1], item[2])
                 elif kind == "remote_preview":
                     self._trace_runtime("queue", "remote_preview received", echo_to_log=False)
                     self._apply_remote_preview(item[1], item[2])
@@ -4196,6 +4302,7 @@ class DrosophilaGUI:
         self.preview_image = None
         self.preview_source_image = None
         self.last_preview_mtime = None
+        self._remote_preview_wait_in_flight = False
         self.detection_var.set("Waiting for current channel detection output.")
         if self.is_remote_mode():
             self._last_remote_preview_source_mtime = None
@@ -4209,6 +4316,8 @@ class DrosophilaGUI:
         self.last_result_mtime = None
         self.last_used_detection_mtime = None
         self._last_remote_preview_source_mtime = None
+        self._remote_preview_fetch_in_flight = False
+        self._remote_preview_wait_in_flight = False
         self._awaiting_current_detection = False
         self._current_detection_baseline_mtime = None
         self._startup_preview_requested = False
@@ -4640,8 +4749,19 @@ class DrosophilaGUI:
         positions = [float(position) for position in positions_raw]
         source_path_text = str(detection_summary.get("source_path", "") or "")
         source_mtime = detection_summary.get("source_mtime")
-        if source_mtime is not None:
-            self.last_used_detection_mtime = float(source_mtime)
+        try:
+            expected_source_mtime = float(source_mtime) if source_mtime is not None else None
+        except Exception:
+            expected_source_mtime = None
+        if expected_source_mtime is not None:
+            self.last_used_detection_mtime = expected_source_mtime
+        self.ui_queue.put(
+            (
+                "remote_preview_refresh",
+                dict(detection_summary),
+                expected_source_mtime,
+            )
+        )
         return {
             "result": {
                 "fly_remaining": bool(detection_summary.get("fly_remaining", False)),
