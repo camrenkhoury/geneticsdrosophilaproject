@@ -620,6 +620,15 @@ class DrosophilaGUI:
         self._embedded_assay_controller = None
         self._embedded_assay_ui = None
         self._embedded_assay_attached = False
+        self.status_frame = None
+        self.main_content_frame = None
+        self.motion_control_frame = None
+        self.workspace_frame = None
+        self.device_operations_frame = None
+        self.system_frame = None
+        self.log_frame = None
+        self.assay_focus_mode = False
+        self.assay_focus_button = None
         self.operations_logo_image = None
         self.footer_banner_images = []
         self.window_icon_images = []
@@ -955,12 +964,18 @@ class DrosophilaGUI:
     def open_fin6_setup(self):
         if not self._ensure_remote_connection_for_action("Open Assay Setup"):
             return
+        if self.is_remote_mode():
+            self._open_remote_fin6_setup()
+            return
         fin6_bridge = self._ensure_fin6_bridge_or_warn("Open fin6 Setup")
         if fin6_bridge is None:
             return
         self._open_fin6_setup_with_bridge(fin6_bridge)
 
     def open_assay_setup(self):
+        if self.is_remote_mode():
+            self._open_remote_fin6_setup()
+            return
         self._open_embedded_assay_workspace(action_label="Start Assay", show_error_dialog=True)
 
     def open_channel_setup(self):
@@ -3287,6 +3302,7 @@ class DrosophilaGUI:
         status_frame = ttk.LabelFrame(parent, text="System Status", style="Status.TLabelframe", padding="10")
         status_frame.grid(row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
         status_frame.columnconfigure(1, weight=1)
+        self.status_frame = status_frame
 
         ttk.Label(status_frame, text="State:", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky=tk.W, pady=2)
         self.state_label = tk.Label(
@@ -3375,6 +3391,7 @@ class DrosophilaGUI:
         content_frame.columnconfigure(1, weight=1, minsize=520 if self.gui_profile.is_macos else 0)
         content_frame.columnconfigure(2, weight=0)
         content_frame.rowconfigure(0, weight=1)
+        self.main_content_frame = content_frame
 
         self.create_motion_control(content_frame)
         self.create_workspace_tabs(content_frame)
@@ -3384,6 +3401,7 @@ class DrosophilaGUI:
         motion_frame = ttk.LabelFrame(parent, text="Motion Control", style="Motion.TLabelframe", padding="8")
         motion_frame.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E), padx=(0, 8))
         motion_frame.columnconfigure(0, weight=1)
+        self.motion_control_frame = motion_frame
 
         rail_button_font = ("Arial", 9, "bold")
         rail_button_padx = 10
@@ -3520,6 +3538,7 @@ class DrosophilaGUI:
         workspace_frame.grid(row=0, column=1, sticky=(tk.N, tk.S, tk.W, tk.E), padx=8)
         workspace_frame.columnconfigure(0, weight=1)
         workspace_frame.rowconfigure(0, weight=1)
+        self.workspace_frame = workspace_frame
 
         notebook = ttk.Notebook(workspace_frame)
         notebook.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
@@ -3560,6 +3579,92 @@ class DrosophilaGUI:
             self.workspace_notebook.select(target)
         except Exception:
             pass
+
+    def toggle_assay_focus_mode(self):
+        self._set_assay_focus_mode(not self.assay_focus_mode)
+
+    def _update_assay_focus_button(self) -> None:
+        if self.assay_focus_button is None:
+            return
+        label = "Exit Assay Focus" if self.assay_focus_mode else "Expand Assay"
+        with contextlib.suppress(Exception):
+            self.assay_focus_button.configure(text=label)
+
+    def _set_assay_focus_mode(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if self.assay_focus_mode == enabled:
+            self._update_assay_focus_button()
+            return
+
+        self.assay_focus_mode = enabled
+
+        if self.motion_control_frame is not None:
+            if enabled:
+                self.motion_control_frame.grid_remove()
+            else:
+                self.motion_control_frame.grid()
+
+        if self.device_operations_frame is not None:
+            if enabled:
+                self.device_operations_frame.grid_remove()
+            else:
+                self.device_operations_frame.grid()
+
+        if self.log_frame is not None:
+            if enabled:
+                self.log_frame.grid_remove()
+            else:
+                self.log_frame.grid()
+
+        if self.main_content_frame is not None:
+            self.main_content_frame.columnconfigure(0, weight=0, minsize=0)
+            self.main_content_frame.columnconfigure(1, weight=1, minsize=520 if self.gui_profile.is_macos and not enabled else 0)
+            self.main_content_frame.columnconfigure(2, weight=0, minsize=0)
+
+        if self.workspace_frame is not None:
+            if enabled:
+                self.workspace_frame.grid_configure(column=0, columnspan=3, padx=0)
+            else:
+                self.workspace_frame.grid_configure(column=1, columnspan=1, padx=8)
+
+        if self.workspace_notebook is not None:
+            for tab, state in (
+                (self.workspace_channel_tab, "hidden" if enabled else "normal"),
+                (self.workspace_sexing_tab, "hidden" if enabled else "normal"),
+                (self.workspace_assay_tab, "normal"),
+            ):
+                if tab is None:
+                    continue
+                with contextlib.suppress(Exception):
+                    self.workspace_notebook.tab(tab, state=state)
+            if enabled and self.workspace_assay_tab is not None:
+                with contextlib.suppress(Exception):
+                    self.workspace_notebook.select(self.workspace_assay_tab)
+
+        if getattr(self, "start_button", None) is not None:
+            if enabled:
+                self.start_button.grid_remove()
+            else:
+                self.start_button.grid()
+        if getattr(self, "reset_button", None) is not None:
+            if enabled:
+                self.reset_button.grid_remove()
+            else:
+                self.reset_button.grid()
+        if getattr(self, "clear_log_button", None) is not None:
+            if enabled:
+                self.clear_log_button.grid_remove()
+            else:
+                self.clear_log_button.grid()
+        if getattr(self, "stop_button", None) is not None:
+            with contextlib.suppress(Exception):
+                self.stop_button.configure(text="EMERGENCY STOP" if enabled else "STOP")
+                if enabled:
+                    self.stop_button.grid_configure(column=0, columnspan=4)
+                else:
+                    self.stop_button.grid_configure(column=1, columnspan=1)
+
+        self._update_assay_focus_button()
 
     def create_channel_tab(self, parent):
         parent.rowconfigure(0, weight=0)
@@ -3807,6 +3912,11 @@ class DrosophilaGUI:
         self.assay_button.grid(row=0, column=0, sticky=tk.W)
         self.local_vision_widgets.append(self.assay_button)
 
+        self.assay_focus_button = self.make_button(button_row, "Expand Assay", "#455A64", self.toggle_assay_focus_mode)
+        self.assay_focus_button.grid(row=0, column=1, sticky=tk.W, padx=(8, 0))
+        self.local_vision_widgets.append(self.assay_focus_button)
+        self._update_assay_focus_button()
+
         workspace_shell = ttk.Frame(assay_card)
         workspace_shell.grid(row=2, column=0, sticky=(tk.N, tk.S, tk.W, tk.E), pady=(12, 0))
         workspace_shell.columnconfigure(0, weight=1)
@@ -3832,6 +3942,7 @@ class DrosophilaGUI:
         controls_frame = ttk.Frame(parent)
         controls_frame.grid(row=0, column=2, sticky=(tk.N, tk.W, tk.E))
         controls_frame.columnconfigure(0, weight=1)
+        self.device_operations_frame = controls_frame
 
         device_padding = (7, 5) if self._is_compact_screen() else (8, 6)
         device_frame = ttk.LabelFrame(
@@ -3881,6 +3992,7 @@ class DrosophilaGUI:
     def create_system_controls(self, parent):
         system_frame = ttk.LabelFrame(parent, text="System Control", padding="10")
         system_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        self.system_frame = system_frame
 
         self.start_button = self.make_button(system_frame, "START", "#4CAF50", self.system_start)
         self.start_button.grid(row=0, column=0, pady=3, padx=5, sticky=(tk.W, tk.E))
@@ -3902,6 +4014,7 @@ class DrosophilaGUI:
         log_frame = ttk.LabelFrame(parent, text="Runtime Log", style="Log.TLabelframe", padding="6")
         log_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(8, 0))
         log_frame.columnconfigure(0, weight=1)
+        self.log_frame = log_frame
 
         debug_frame = ttk.Frame(log_frame)
         debug_frame.grid(row=0, column=0, sticky=(tk.W, tk.E))
@@ -5769,6 +5882,20 @@ class DrosophilaGUI:
         )
 
     def run_assay(self):
+        if not self._ensure_remote_connection_for_action("Start Assay"):
+            return
+        if self.is_remote_mode():
+            if not self._ensure_assay_setup_ready_or_prompt("Start Assay"):
+                return
+            self._start_remote_command(
+                "assay",
+                "assaying",
+                "Running Pi-side fin6 assay from saved settings.",
+                self.remote_controller.run_assay,
+            )
+            return
+        if not self._ensure_assay_setup_ready_or_prompt("Start Assay"):
+            return
         self.open_assay_setup()
 
     def _embedded_assay_setup_ready(self) -> bool:
@@ -5834,12 +5961,13 @@ class DrosophilaGUI:
         if self.assay_workspace_notebook is not None and self.assay_workspace_main_tab is not None:
             with contextlib.suppress(Exception):
                 self.assay_workspace_notebook.select(self.assay_workspace_main_tab)
+        self._set_assay_focus_mode(True)
 
         setup_ready = self._embedded_assay_setup_ready()
         if not setup_ready:
-            message = "Assay Setup is not saved yet. Opened the embedded assay workspace for configuration."
+            message = "Assay Setup is not saved yet. Opened the embedded assay workspace in assay focus mode for configuration."
         else:
-            message = "Opened the embedded assay workspace."
+            message = "Opened the embedded assay workspace in assay focus mode."
         self.log_message(message)
         self.set_status("running", message)
         return True

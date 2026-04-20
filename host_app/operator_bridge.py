@@ -14,7 +14,17 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
-from shared.config.project_paths import ASSAY_OUTPUT_DIR, CHANNEL_OUTPUT_DIR, FIN6_DIR, REPO_ROOT
+from shared.config.project_paths import (
+    ASSAY_OUTPUT_DIR,
+    CHANNEL_OUTPUT_DIR,
+    FIN6_DIR,
+    REPO_ROOT,
+    ensure_code_directory_on_path,
+    ensure_repo_root_on_path,
+)
+
+ensure_repo_root_on_path()
+ensure_code_directory_on_path()
 import config
 
 
