@@ -1,5 +1,5 @@
 {
-  "active_assay_profile": "stitch_operator",
+  "active_assay_profile": "assay_profile",
   "sexing_model_path": "models/best.pt",
   "sexing_capture_dir": "outputs/sexing",
   "sexing_capture_command": "/usr/bin/rpicam-still",
