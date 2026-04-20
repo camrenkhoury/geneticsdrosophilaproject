@@ -32,7 +32,7 @@ class LocalController(BaseController):
             "vacuum": vacuum,
             "vibration": vibration,
             "assay": importlib.import_module("assay"),
-            "fly_classifier": importlib.import_module("fly_classifier"),
+            "fly_classifier": importlib.import_module("fly_classifier1"),
             "gpio_available": bool(getattr(motion, "GPIO_AVAILABLE", False)),
         }
         return self._runtime_cache

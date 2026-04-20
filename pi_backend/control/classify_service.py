@@ -27,7 +27,7 @@ class ClassifyService:
 
         self._initialized = True
         try:
-            module = import_legacy_module("fly_classifier")
+            module = import_legacy_module("fly_classifier1")
             self._classify_callable = getattr(module, "classify_fly")
         except Exception as exc:
             self._classify_callable = None
