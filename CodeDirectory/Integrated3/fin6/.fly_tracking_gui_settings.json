@@ -33,5 +33,11 @@
   "assay_view_var": "calibration",
   "assay_freeze_var": false,
   "editor_split_count_var": 4,
-  "assay_no_align_var": false
+  "assay_no_align_var": false,
+  "channel_background": "C:\\Users\\khour\\Desktop\\Drosophila\\geneticsdrosophilaproject\\CodeDirectory\\Integrated3\\fin6\\backgrounds\\channel_bg.png",
+  "channel_calibration": "C:\\Users\\khour\\Desktop\\Drosophila\\geneticsdrosophilaproject\\CodeDirectory\\Integrated3\\fin6\\calibrations\\channel_calibration.json",
+  "assay_preview_mode": "calibration",
+  "channel_mm": "111",
+  "channel_score_thresh": "20",
+  "channel_band_half_width": "35"
 }

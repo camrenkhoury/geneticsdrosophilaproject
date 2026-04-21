@@ -20,13 +20,15 @@ class RemoteAssayWorkspace(ttk.Frame):
         *,
         get_controller: Callable[[], Any | None],
         on_back: Callable[[], None],
+        can_exit_callback: Callable[[], bool] | None = None,
         status_callback: Callable[[str, str], None],
         log_callback: Callable[[str], None],
         open_setup_callback: Callable[[], None] | None = None,
     ) -> None:
-        super().__init__(master, padding=10)
+        super().__init__(master, padding=6)
         self.get_controller = get_controller
         self.on_back = on_back
+        self.can_exit_callback = can_exit_callback
         self.status_callback = status_callback
         self.log_callback = log_callback
         self.open_setup_callback = open_setup_callback
@@ -43,6 +45,8 @@ class RemoteAssayWorkspace(ttk.Frame):
         self._worker_count = 0
         self._last_status_payload: dict[str, Any] | None = None
         self._last_manifest_payload: dict[str, Any] | None = None
+        self.controls_visible = True
+        self.results_visible = False
 
         self.connection_var = tk.StringVar(value="Disconnected")
         self.workspace_status_var = tk.StringVar(value="Open the assay workspace to begin.")
@@ -64,45 +68,54 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.rowconfigure(1, weight=1)
 
         topbar = ttk.Frame(self)
-        topbar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        topbar.columnconfigure(1, weight=1)
+        topbar.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        topbar.columnconfigure(2, weight=1)
 
-        ttk.Button(topbar, text="Back", command=self.on_back).grid(row=0, column=0, sticky="w")
-        ttk.Label(topbar, text="Assay Workspace", font=("Arial", 14, "bold")).grid(row=0, column=1, sticky="w", padx=(10, 0))
+        ttk.Button(topbar, text="Exit Assay", command=self._request_exit).grid(row=0, column=0, sticky="w")
+        ttk.Button(topbar, text="Controls", command=self.toggle_controls).grid(row=0, column=1, sticky="w", padx=(6, 0))
+        ttk.Label(topbar, textvariable=self.workspace_status_var, foreground="#374151").grid(row=0, column=2, sticky="ew", padx=(10, 8))
+        ttk.Button(topbar, text="Results", command=self.toggle_results).grid(row=0, column=3, sticky="e", padx=(0, 6))
 
         self.connection_label = tk.Label(
             topbar,
             textvariable=self.connection_var,
             bg="#607D8B",
             fg="white",
-            padx=10,
-            pady=4,
+            padx=8,
+            pady=2,
             relief="ridge",
             anchor="center",
         )
-        self.connection_label.grid(row=0, column=2, sticky="e")
+        self.connection_label.grid(row=0, column=4, sticky="e")
 
-        paned = ttk.Panedwindow(self, orient=tk.HORIZONTAL)
-        paned.grid(row=1, column=0, sticky="nsew")
+        self.body = ttk.Frame(self)
+        self.body.grid(row=1, column=0, sticky="nsew")
+        self.body.columnconfigure(0, weight=0, minsize=270)
+        self.body.columnconfigure(1, weight=1)
+        self.body.columnconfigure(2, weight=0, minsize=300)
+        self.body.rowconfigure(0, weight=1)
 
-        left_panel = ttk.Frame(paned)
-        left_panel.columnconfigure(0, weight=1)
-        left_panel.rowconfigure(0, weight=1)
-        paned.add(left_panel, weight=2)
+        self.left_panel = ttk.Frame(self.body, width=270)
+        self.left_panel.grid(row=0, column=0, sticky="nsw", padx=(0, 6))
+        self.left_panel.grid_propagate(False)
+        self.left_panel.columnconfigure(0, weight=1)
+        self.left_panel.rowconfigure(0, weight=1)
 
-        center_panel = ttk.Frame(paned)
+        center_panel = ttk.Frame(self.body)
+        center_panel.grid(row=0, column=1, sticky="nsew")
         center_panel.columnconfigure(0, weight=1)
         center_panel.rowconfigure(1, weight=1)
-        paned.add(center_panel, weight=5)
 
-        right_panel = ttk.Frame(paned)
-        right_panel.columnconfigure(0, weight=1)
-        right_panel.rowconfigure(1, weight=1)
-        paned.add(right_panel, weight=3)
+        self.right_panel = ttk.Frame(self.body, width=300)
+        self.right_panel.grid(row=0, column=2, sticky="nse", padx=(6, 0))
+        self.right_panel.grid_propagate(False)
+        self.right_panel.columnconfigure(0, weight=1)
+        self.right_panel.rowconfigure(1, weight=1)
 
-        self._build_scrollable_controls(left_panel)
+        self._build_scrollable_controls(self.left_panel)
         self._build_preview_panel(center_panel)
-        self._build_results_panel(right_panel)
+        self._build_results_panel(self.right_panel)
+        self._apply_panel_visibility()
 
     def _build_scrollable_controls(self, parent: ttk.Frame) -> None:
         canvas = tk.Canvas(parent, highlightthickness=0, bd=0, background="#f3f4f6")
@@ -135,11 +148,11 @@ class RemoteAssayWorkspace(ttk.Frame):
         body.rowconfigure(row, weight=1)
 
     def _card(self, parent: ttk.Frame, row: int, title: str, subtitle: str) -> ttk.LabelFrame:
-        frame = ttk.LabelFrame(parent, text=title, padding=10)
-        frame.grid(row=row, column=0, sticky="ew", pady=(0, 8))
+        frame = ttk.LabelFrame(parent, text=title, padding=6)
+        frame.grid(row=row, column=0, sticky="ew", pady=(0, 5))
         frame.columnconfigure(1, weight=1)
-        ttk.Label(frame, text=subtitle, foreground="#4b5563", wraplength=300, justify="left").grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8)
+        ttk.Label(frame, text=subtitle, foreground="#4b5563", wraplength=220, justify="left").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 5)
         )
         return frame
 
@@ -195,7 +208,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         ttk.Button(actions, text="Save", command=self.save_calibration).pack(side="left", padx=(6, 0))
         ttk.Button(actions, text="Test", command=self.test_calibration).pack(side="left", padx=(6, 0))
 
-        self.calibration_text = scrolledtext.ScrolledText(frame, height=14, wrap=tk.WORD, font=("Consolas", 8))
+        self.calibration_text = scrolledtext.ScrolledText(frame, height=7, wrap=tk.WORD, font=("Consolas", 8))
         self.calibration_text.grid(row=3, column=0, columnspan=2, sticky="nsew")
         frame.rowconfigure(3, weight=1)
         return row + 1
@@ -243,9 +256,9 @@ class RemoteAssayWorkspace(ttk.Frame):
 
     def _build_preview_panel(self, parent: ttk.Frame) -> None:
         header = ttk.Frame(parent)
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 4))
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="Preview / Work Area", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(header, text="Preview / Work Area", font=("Arial", 11, "bold")).grid(row=0, column=0, sticky="w")
         ttk.Label(header, textvariable=self.preview_info_var, foreground="#4b5563").grid(row=1, column=0, sticky="w")
 
         preview_frame = ttk.Frame(parent, relief="sunken")
@@ -265,21 +278,57 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.preview_label.bind("<Configure>", self._refresh_preview_image)
 
     def _build_results_panel(self, parent: ttk.Frame) -> None:
-        ttk.Label(parent, text="Results / Status", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(parent, text="Results / Status", font=("Arial", 11, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 4))
         ttk.Label(parent, textvariable=self.results_status_var, foreground="#4b5563", wraplength=340, justify="left").grid(
             row=1, column=0, sticky="ew", pady=(0, 6)
         )
 
-        self.results_text = scrolledtext.ScrolledText(parent, height=20, wrap=tk.WORD, font=("Consolas", 8))
+        self.results_text = scrolledtext.ScrolledText(parent, height=18, wrap=tk.WORD, font=("Consolas", 8))
         self.results_text.grid(row=2, column=0, sticky="nsew")
 
-        self.workspace_log = scrolledtext.ScrolledText(parent, height=8, wrap=tk.WORD, font=("Consolas", 8))
+        self.workspace_log = scrolledtext.ScrolledText(parent, height=6, wrap=tk.WORD, font=("Consolas", 8))
         self.workspace_log.grid(row=3, column=0, sticky="nsew", pady=(8, 0))
         parent.rowconfigure(2, weight=3)
         parent.rowconfigure(3, weight=1)
 
     def enter_workspace(self) -> None:
+        self.preview_mode_var.set("raw")
+        self.preview_info_var.set("Opening Pi-side assay camera preview...")
         self.refresh_workspace()
+        if self.connected:
+            self.after(500, self.capture_preview)
+
+    def _request_exit(self) -> None:
+        if self.can_exit_callback is not None and not self.can_exit_callback():
+            messagebox.showwarning(
+                "Assay Locked",
+                "Assay is locked during the active automated flow. Use Emergency Stop if motion must be stopped.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+        self.on_back()
+
+    def toggle_controls(self) -> None:
+        self.controls_visible = not self.controls_visible
+        self._apply_panel_visibility()
+
+    def toggle_results(self) -> None:
+        self.results_visible = not self.results_visible
+        self._apply_panel_visibility()
+
+    def _apply_panel_visibility(self) -> None:
+        if self.controls_visible:
+            self.body.columnconfigure(0, weight=0, minsize=270)
+            self.left_panel.grid()
+        else:
+            self.left_panel.grid_remove()
+            self.body.columnconfigure(0, weight=0, minsize=0)
+        if self.results_visible:
+            self.body.columnconfigure(2, weight=0, minsize=300)
+            self.right_panel.grid()
+        else:
+            self.right_panel.grid_remove()
+            self.body.columnconfigure(2, weight=0, minsize=0)
 
     def update_connection_state(self, *, connected: bool, message: str, remote_busy: bool, assay_available: bool) -> None:
         self.connected = bool(connected)
@@ -368,7 +417,7 @@ class RemoteAssayWorkspace(ttk.Frame):
             if manifest.get("ok", True):
                 self._apply_manifest_payload(manifest)
             self._apply_summary_payload(payload.get("summary", {}))
-            if self.background_var.get():
+            if self.background_var.get() and self.preview_mode_var.get().strip().lower() != "raw":
                 self.load_preview_image("background")
 
         self._run_async("Refreshing assay workspace", worker, on_success)

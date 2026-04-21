@@ -975,10 +975,7 @@ class DrosophilaGUI:
         self._open_fin6_setup_with_bridge(fin6_bridge)
 
     def open_assay_setup(self):
-        if self.is_remote_mode():
-            self._open_assay_workspace(action_label="Open Assay Setup", show_error_dialog=True)
-            return
-        self._open_embedded_assay_workspace(action_label="Start Assay", show_error_dialog=True)
+        self._open_assay_workspace(action_label="Open Assay Setup", show_error_dialog=True)
 
     def open_channel_setup(self):
         if not self._ensure_remote_connection_for_action("Open Channel Detection Setup"):
@@ -1639,7 +1636,8 @@ class DrosophilaGUI:
         self.remote_assay_workspace = RemoteAssayWorkspace(
             self.assay_page_frame,
             get_controller=lambda: self.remote_controller,
-            on_back=self.show_control_panel,
+            on_back=self._exit_assay_workspace,
+            can_exit_callback=self._assay_exit_allowed,
             status_callback=self.set_status,
             log_callback=self.log_message,
             open_setup_callback=self._open_remote_fin6_setup,
@@ -3951,21 +3949,24 @@ class DrosophilaGUI:
         workspace_shell.columnconfigure(0, weight=1)
         workspace_shell.rowconfigure(0, weight=1)
 
-        inner_notebook = ttk.Notebook(workspace_shell)
-        inner_notebook.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
-        self.assay_workspace_notebook = inner_notebook
-
-        main_tab = ttk.Frame(inner_notebook, padding="4")
-        main_tab.columnconfigure(0, weight=1)
-        main_tab.rowconfigure(0, weight=1)
-        inner_notebook.add(main_tab, text="Setup + Run")
-        self.assay_workspace_main_tab = main_tab
-
-        results_tab = ttk.Frame(inner_notebook, padding="4")
-        results_tab.columnconfigure(0, weight=1)
-        results_tab.rowconfigure(0, weight=1)
-        inner_notebook.add(results_tab, text="Results")
-        self.assay_workspace_results_tab = results_tab
+        self.assay_workspace_notebook = None
+        self.assay_workspace_main_tab = None
+        self.assay_workspace_results_tab = None
+        tk.Label(
+            workspace_shell,
+            text=(
+                "Assay opens as a full-page remote workspace so the Pi-side camera preview, "
+                "calibration, processing, upload, and artifacts are not clipped into this tab."
+            ),
+            bg="#F7F7F7",
+            relief="sunken",
+            font=("Arial", 9),
+            padx=8,
+            pady=8,
+            anchor="nw",
+            justify="left",
+            wraplength=900,
+        ).grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
 
     def create_device_operations(self, parent):
         controls_frame = ttk.Frame(parent)
@@ -5911,14 +5912,7 @@ class DrosophilaGUI:
         )
 
     def run_assay(self):
-        if not self._ensure_remote_connection_for_action("Start Assay"):
-            return
-        if self.is_remote_mode():
-            self._open_assay_workspace(action_label="Start Assay", show_error_dialog=True)
-            return
-        if not self._ensure_assay_setup_ready_or_prompt("Start Assay"):
-            return
-        self.open_assay_setup()
+        self._open_assay_workspace(action_label="Start Assay", show_error_dialog=True)
 
     def _embedded_assay_setup_ready(self) -> bool:
         if self._embedded_assay_controller is None:
@@ -5962,7 +5956,30 @@ class DrosophilaGUI:
     def _open_assay_workspace(self, *, action_label: str, show_error_dialog: bool) -> bool:
         if self.is_remote_mode():
             return self._open_remote_assay_workspace(action_label=action_label, show_error_dialog=show_error_dialog)
-        return self._open_embedded_assay_workspace(action_label=action_label, show_error_dialog=show_error_dialog)
+        message = (
+            f"{action_label} uses the Pi-side assay camera and API. "
+            "Switch Controller to Remote and connect to the Pi backend before opening assay."
+        )
+        self.set_status("error", message)
+        self.log_message(message)
+        if show_error_dialog:
+            messagebox.showwarning("Remote Assay Required", message)
+        return False
+
+    def _assay_exit_allowed(self) -> bool:
+        worker_alive = self.worker_thread is not None and self.worker_thread.is_alive()
+        return not (worker_alive and self.current_task_name == "automated run")
+
+    def _exit_assay_workspace(self) -> None:
+        if not self._assay_exit_allowed():
+            messagebox.showwarning(
+                "Assay Locked",
+                "Assay is locked during the active automated flow. Use Emergency Stop if motion must be stopped.",
+            )
+            return
+        self.show_control_panel()
+        self._show_workspace_tab("channel")
+        self.set_status("idle", "Returned from assay workspace.")
 
     def _ensure_embedded_assay_workspace(self):
         if self._embedded_assay_attached and self._embedded_assay_ui is not None:

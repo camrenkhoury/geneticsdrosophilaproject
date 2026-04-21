@@ -218,6 +218,7 @@ class EmbeddedAssayWorkspaceController:
         self.assay = assay_service_mod.AssayService(self.settings)
         self.state = state_mod.OperatorState()
         self._update(status_message="Assay workspace ready.")
+        _sync_assay_camera_role_to_integrated3(self)
         self.refresh_readiness()
         if getattr(self.assay.profile, "last_run_dir", ""):
             self._set_assay_state({"run_dir": self.assay.profile.last_run_dir})
@@ -309,11 +310,33 @@ def _get_remote_assay_controller() -> EmbeddedAssayWorkspaceController:
     global _REMOTE_ASSAY_CONTROLLER
     if _REMOTE_ASSAY_CONTROLLER is None:
         _REMOTE_ASSAY_CONTROLLER = EmbeddedAssayWorkspaceController()
+    else:
+        _sync_assay_camera_role_to_integrated3(_REMOTE_ASSAY_CONTROLLER)
     return _REMOTE_ASSAY_CONTROLLER
 
 
 def _get_remote_assay_service():
     return _get_remote_assay_controller().assay
+
+
+def _sync_assay_camera_role_to_integrated3(controller: EmbeddedAssayWorkspaceController) -> None:
+    normalized = normalize_settings_file(persist=False)
+    profile = getattr(controller.assay, "profile", None)
+    camera = getattr(profile, "assay_camera", None)
+    if camera is None:
+        return
+
+    desired_device = _normalize_string_setting("assay_camera_device_var", normalized.get("assay_camera_device_var"))
+    desired_hint = str(normalized.get("assay_camera_preferred_hint_var") or "").strip()
+    changed = False
+    if str(getattr(camera, "device", "") or "") != desired_device:
+        camera.device = desired_device
+        changed = True
+    if str(getattr(camera, "preferred_hint", "") or "") != desired_hint:
+        camera.preferred_hint = desired_hint
+        changed = True
+    if changed:
+        controller.assay.save_profile()
 
 
 def _assay_runtime_dir() -> Path:
@@ -1533,6 +1556,9 @@ def save_camera_role_assignments(
     normalized["assay_camera_device_var"] = assay_device_text or "auto:assay"
     normalized["assay_camera_preferred_hint_var"] = str(assay_preferred_hint or "").strip()
     _save_settings_file(normalized)
+    if _REMOTE_ASSAY_CONTROLLER is not None:
+        _sync_assay_camera_role_to_integrated3(_REMOTE_ASSAY_CONTROLLER)
+        _REMOTE_ASSAY_CONTROLLER.refresh_readiness()
     return {
         "ok": True,
         "message": "Camera role assignments saved.",
