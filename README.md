@@ -297,20 +297,58 @@ The desktop GUI currently includes a dedicated loading / landing page that serve
   <em>Loading / landing page of the desktop GUI.</em>
 </p>
 
-The current application also includes the primary operator control panel used for status monitoring, manual gantry movement, device toggling, preview inspection, and direct operation access.
+After launch, the operator enters the primary control panel used for status monitoring, manual control access, remote connection management, actuator state visibility, and access to the Channel, Sexing, and Assay workspaces.
 
 <p align="center">
   <img src=".github/assets/GUI-Control-Panel-V1.png" alt="Channel View" width="900">
 </p>
 <p align="center">
-  <em>Channel View.</em>
+  <em>Channel View. Main control panel with remote status, motion controls, device state, and workspace access.</em>
 </p>
+
+Before automated operation, channel calibration is completed through the dedicated setup window. This workflow captures the channel image, allows endpoint selection, and saves the channel calibration used for detection and movement reference.
 
 <p align="center">
   <img src=".github/assets/GUI-Channel-Calibration-Menu.png" alt="Channel Calibration Menu" width="900">
 </p>
 <p align="center">
-  <em>Channel Calibration Menu.</em>
+  <em>Channel Calibration Menu. Used to capture the setup image, select channel endpoints, and save calibration.</em>
+</p>
+
+During operation, the Sexing / Routing view displays the live classification result, confidence, routing destination, cycle information, and tube counts while the system places flies into their assigned outputs.
+
+<p align="center">
+  <img src=".github/assets/sexing-chamber.png" alt="Classification GUI View" width="900">
+</p>
+<p align="center">
+  <em>Classification GUI View. Displays chamber classification results, routing information, and live output-tube counts.</em>
+</p>
+
+The assay workspace provides the dedicated host-side remote assay control panel. This view is used for assay preview, calibration/config access, assay recording, processing, export, and report/debug utilities. The image shown here is a single-vial demonstration/example view; normal assay operation is designed around multi-vial workflows.
+
+<p align="center">
+  <img src=".github/assets/GUI-Assay-Example-Menu.png" alt="Assay GUI Control Panel" width="900">
+</p>
+<p align="center">
+  <em>Assay GUI Control Panel. Remote assay workspace for preview, recording, processing, export, and report access. Shown here in a single-vial example configuration; standard operation is multi-vial.</em>
+</p>
+
+Assay setup and calibration are handled through a separate calibration/config window. In this workflow, the operator reviews the clean assay background, defines tube regions, saves calibration, and tests the calibration overlay before entering the main assay workspace.
+
+<p align="center">
+  <img src=".github/assets/Assay-Calibration-Menu.png" alt="Assay Calibration Menu" width="900">
+</p>
+<p align="center">
+  <em>Assay Calibration Menu. Used to define assay tube regions, save calibration, and validate the tested overlay before assay execution.</em>
+</p>
+
+After assay processing completes, reports can be reviewed directly in the built-in PDF viewer. This allows the operator to inspect generated graphs and the full report output without leaving the GUI.
+
+<p align="center">
+  <img src=".github/assets/assay-report-viewer.png" alt="Assay Report Viewer" width="900">
+</p>
+<p align="center">
+  <em>Assay Report Viewer. Scrollable in-GUI PDF viewer for processed assay graphs and full report output.</em>
 </p>
 
 The current host GUI also includes:
