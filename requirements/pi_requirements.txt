@@ -7,5 +7,12 @@ gpiozero
 lgpio
 numpy
 opencv-python
+Pillow
+pandas
+matplotlib
+scipy
+scikit-image
+scikit-learn
 ultralytics
-
+box-sdk-gen
+PyMuPDF

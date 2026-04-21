@@ -2,3 +2,5 @@
 # tkinter is provided by the Python standard library / OS packages.
 requests
 Pillow
+opencv-python
+PyMuPDF
