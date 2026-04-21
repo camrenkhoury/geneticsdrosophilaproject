@@ -2062,6 +2062,18 @@ def _render_pdf_text_page(pdf: PdfPages, title: str, lines: Sequence[str], *, fo
     plt.close(fig)
 
 
+def _render_pdf_section_divider(pdf: PdfPages, title: str, subtitle: str = "") -> None:
+    fig = plt.figure(figsize=(11.0, 8.5))
+    ax = fig.add_subplot(111)
+    ax.axis("off")
+    ax.text(0.5, 0.56, title, va="center", ha="center", fontsize=34, fontweight="bold")
+    if subtitle:
+        wrapped = "\n".join(textwrap.wrap(str(subtitle), width=72, break_long_words=False, break_on_hyphens=False))
+        ax.text(0.5, 0.42, wrapped, va="center", ha="center", fontsize=15, linespacing=1.45)
+    pdf.savefig(fig, bbox_inches="tight")
+    plt.close(fig)
+
+
 def _render_pdf_table_pages(
     pdf: PdfPages,
     title: str,
@@ -2155,6 +2167,8 @@ def _render_prior_style_assay_graphs(
         return paths
 
     overview_rows: List[pd.DataFrame] = []
+    multi_fly_header_written = False
+    individual_fly_header_written = False
     for assay_tube_index, grp in working.groupby("assay_tube_index", sort=True):
         unit_col, ylabel = _distance_series_column(grp)
         if unit_col is None:
@@ -2182,6 +2196,19 @@ def _render_prior_style_assay_graphs(
             ax.grid(alpha=0.22)
             ax.legend(loc="best", fontsize=8)
             fig.tight_layout(pad=2.0)
+            if not multi_fly_header_written:
+                _render_pdf_section_divider(
+                    pdf,
+                    "Multi-Fly Tracking Data",
+                    "Each graph overlays all detected flies in one assay tube so movement patterns can be compared together.",
+                )
+                if graphs_pdf is not None:
+                    _render_pdf_section_divider(
+                        graphs_pdf,
+                        "Multi-Fly Tracking Data",
+                        "Each graph overlays all detected flies in one assay tube so movement patterns can be compared together.",
+                    )
+                multi_fly_header_written = True
             tube_path = graph_dir / f"tube_{int(assay_tube_index)}_overlay.png"
             fig.savefig(tube_path, dpi=160, bbox_inches="tight")
             pdf.savefig(fig, bbox_inches="tight")
@@ -2216,6 +2243,19 @@ def _render_prior_style_assay_graphs(
             continue
 
         label = str(row.get("label") or f"fly ({assay_tube_index},{display_id})")
+        if not individual_fly_header_written:
+            _render_pdf_section_divider(
+                pdf,
+                "Individual Fly Tracking Data",
+                "Each graph shows one fly over time, including highlighted linear movement windows and threshold crossings when available.",
+            )
+            if graphs_pdf is not None:
+                _render_pdf_section_divider(
+                    graphs_pdf,
+                    "Individual Fly Tracking Data",
+                    "Each graph shows one fly over time, including highlighted linear movement windows and threshold crossings when available.",
+                )
+            individual_fly_header_written = True
         fig = plt.figure(figsize=(10.0, 4.8))
         ax = fig.add_subplot(111)
         ax.set_title(f"{label}\nDistance from baseline over time", fontsize=13, pad=12)
