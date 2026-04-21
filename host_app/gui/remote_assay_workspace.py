@@ -368,7 +368,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=2)
         ttk.Checkbutton(
             frame,
-            text="Generate demo graphs (PDF pages + PNG artifacts)",
+            text="Generate assay graphs (graph PDF + PNG artifacts)",
             variable=self.save_demo_graphs_var,
         ).grid(row=3, column=0, columnspan=2, sticky="w", pady=2)
         ttk.Checkbutton(
@@ -388,7 +388,7 @@ class RemoteAssayWorkspace(ttk.Frame):
             parent,
             row,
             "Box Upload Settings",
-            "Default artifact mode is raw+annotated+pdf: raw video, processed video, report PDF, and generated demo graphs.",
+            "Default artifact mode is raw+annotated+pdf: raw video, processed video, report PDF, and generated assay graphs PDF.",
         )
         ttk.Checkbutton(frame, text="Box enabled", variable=self.box_enabled_var).grid(
             row=1, column=0, columnspan=2, sticky="w", pady=2
@@ -436,7 +436,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         return row + 1
 
     def _build_artifact_card(self, parent: ttk.Frame, row: int) -> int:
-        frame = self._card(parent, row, "Artifacts", "Fetch the latest manifest, videos, CSVs, PDF, demo graphs, and processing JSON.")
+        frame = self._card(parent, row, "Artifacts", "Fetch the latest manifest, videos, CSVs, PDFs, assay graphs, and processing JSON.")
         actions = ttk.Frame(frame)
         actions.grid(row=1, column=0, columnspan=2, sticky="ew")
         ttk.Button(actions, text="Manifest", command=self.load_manifest).pack(side="left")
@@ -450,6 +450,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         third_row = ttk.Frame(frame)
         third_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         ttk.Button(third_row, text="Report PDF", command=lambda: self.fetch_artifact("report_pdf")).pack(side="left")
+        ttk.Button(third_row, text="Graphs PDF", command=lambda: self.fetch_artifact("graphs_report_pdf")).pack(side="left", padx=(6, 0))
         ttk.Button(third_row, text="Processing JSON", command=lambda: self.fetch_artifact("processing_json")).pack(side="left", padx=(6, 0))
         fourth_row = ttk.Frame(frame)
         fourth_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0))
@@ -1749,7 +1750,7 @@ class RemoteAssayWorkspace(ttk.Frame):
                 self._apply_panel_visibility()
             elif artifact_kind.endswith("_graph_png") or artifact_kind.endswith("_plot_png"):
                 self._set_preview_from_bytes(path.read_bytes())
-                self.preview_info_var.set(f"Showing assay demo graph: {path.name}.")
+                self.preview_info_var.set(f"Showing assay graph: {path.name}.")
                 self.results_status_var.set(f"Loaded {path.name} into preview.")
             else:
                 self._open_file(path)
@@ -1776,6 +1777,9 @@ class RemoteAssayWorkspace(ttk.Frame):
             suffix = ".csv"
         elif kind_key == "report_pdf":
             data = controller.get_latest_assay_report_pdf()
+            suffix = ".pdf"
+        elif kind_key == "graphs_report_pdf":
+            data = controller.get_latest_assay_graphs_report_pdf()
             suffix = ".pdf"
         elif kind_key == "processing_json":
             data = controller.get_latest_assay_processing_json()

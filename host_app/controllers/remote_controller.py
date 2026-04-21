@@ -45,6 +45,7 @@ class RemoteController(BaseController):
         "/artifacts/assay/run/latest/per_vial_summary_csv": "Pi-side assay per-vial summary CSV",
         "/artifacts/assay/run/latest/per_fly_summary_csv": "Pi-side assay per-fly summary CSV",
         "/artifacts/assay/run/latest/report_pdf": "Pi-side assay report PDF",
+        "/artifacts/assay/run/latest/graphs_report_pdf": "Pi-side assay graph report PDF",
         "/artifacts/assay/run/latest/processing_json": "Pi-side assay processing JSON",
         "/artifacts/assay/run/latest/tube_overlay_graph": "Pi-side assay tube overlay graph",
         "/artifacts/assay/run/latest/individual_fly_graph": "Pi-side assay individual-fly graph",
@@ -345,6 +346,9 @@ class RemoteController(BaseController):
 
     def get_latest_assay_report_pdf(self) -> bytes | None:
         return self._request_bytes("GET", "/artifacts/assay/run/latest/report_pdf", timeout_s=30.0)
+
+    def get_latest_assay_graphs_report_pdf(self) -> bytes | None:
+        return self._request_bytes("GET", "/artifacts/assay/run/latest/graphs_report_pdf", timeout_s=30.0)
 
     def get_latest_assay_processing_json(self) -> bytes | None:
         return self._request_bytes("GET", "/artifacts/assay/run/latest/processing_json", timeout_s=20.0)

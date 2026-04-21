@@ -752,6 +752,7 @@ def _collect_core_assay_artifacts(run_dir: Path) -> List[Path]:
             processing_dir / "annotated_video.mp4",
             processing_dir / "annotated_video.avi",
             processing_dir / "report.pdf",
+            processing_dir / "graphs_report.pdf",
         ):
             if candidate.exists() and candidate.is_file():
                 selected.append(candidate)

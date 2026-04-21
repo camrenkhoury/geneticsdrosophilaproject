@@ -444,6 +444,16 @@ def get_assay_report_pdf(request: Request) -> FileResponse:
     return FileResponse(path, media_type="application/pdf", filename=path.name)
 
 
+@router.get("/artifacts/assay/run/latest/graphs_report_pdf", dependencies=[Depends(require_api_key)])
+def get_assay_graphs_report_pdf(request: Request) -> FileResponse:
+    context = request.app.state.backend_context
+    try:
+        path = context.machine_service.get_latest_assay_artifact_path("graphs_report_pdf")
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, media_type="application/pdf", filename=path.name)
+
+
 @router.get("/artifacts/assay/run/latest/processing_json", dependencies=[Depends(require_api_key)])
 def get_assay_processing_json(request: Request) -> FileResponse:
     context = request.app.state.backend_context

@@ -1039,6 +1039,14 @@ def resolve_latest_assay_artifact_path(kind: str) -> Path:
             candidate = _candidate(raw)
             if candidate is not None:
                 candidates.append(candidate)
+    elif kind_key == "graphs_report_pdf":
+        for raw in (
+            latest_processing.get("graphs_report_pdf"),
+            run_dir / "processed" / "graphs_report.pdf",
+        ):
+            candidate = _candidate(raw)
+            if candidate is not None:
+                candidates.append(candidate)
     elif kind_key == "processing_json":
         for raw in (
             latest_processing.get("processing_session_json"),

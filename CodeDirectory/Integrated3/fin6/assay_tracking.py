@@ -2128,6 +2128,8 @@ def _render_prior_style_assay_graphs(
     graphs_dir: Path,
     tracks_df: pd.DataFrame,
     fly_summary_df: pd.DataFrame,
+    *,
+    graphs_pdf: Optional[PdfPages] = None,
 ) -> Dict[str, str]:
     paths: Dict[str, str] = {}
     if tracks_df.empty or "assay_tube_index" not in tracks_df.columns or "time_s" not in tracks_df.columns:
@@ -2160,7 +2162,11 @@ def _render_prior_style_assay_graphs(
 
         fig = plt.figure(figsize=(11.0, 8.5))
         ax = fig.add_subplot(111)
-        ax.set_title(f"Tube {int(assay_tube_index)}: fly distance from baseline vs time")
+        ax.set_title(
+            f"Tube {int(assay_tube_index)}: all flies\nDistance from baseline over time",
+            fontsize=15,
+            pad=16,
+        )
         plotted = False
         for display_id, g in grp.groupby(track_id_col, sort=True):
             sort_cols = [col for col in ("frame_index", "time_s") if col in g.columns]
@@ -2175,9 +2181,12 @@ def _render_prior_style_assay_graphs(
             ax.set_ylabel(ylabel)
             ax.grid(alpha=0.22)
             ax.legend(loc="best", fontsize=8)
+            fig.tight_layout(pad=2.0)
             tube_path = graph_dir / f"tube_{int(assay_tube_index)}_overlay.png"
             fig.savefig(tube_path, dpi=160, bbox_inches="tight")
             pdf.savefig(fig, bbox_inches="tight")
+            if graphs_pdf is not None:
+                graphs_pdf.savefig(fig, bbox_inches="tight")
             paths.setdefault("tube_overlay_graph_png", str(tube_path))
             paths[f"tube_{int(assay_tube_index)}_overlay_png"] = str(tube_path)
             overview_rows.append(grp)
@@ -2209,7 +2218,7 @@ def _render_prior_style_assay_graphs(
         label = str(row.get("label") or f"fly ({assay_tube_index},{display_id})")
         fig = plt.figure(figsize=(10.0, 4.8))
         ax = fig.add_subplot(111)
-        ax.set_title(label)
+        ax.set_title(f"{label}\nDistance from baseline over time", fontsize=13, pad=12)
         ax.plot(g["time_s"], series, linewidth=1.8)
         ax.set_xlabel("Time (s)")
         ax.set_ylabel(ylabel)
@@ -2227,8 +2236,11 @@ def _render_prior_style_assay_graphs(
             ax.legend(loc="best", fontsize=8)
 
         fly_path = graph_dir / f"tube_{assay_tube_index}_fly_{display_id}.png"
+        fig.tight_layout(pad=1.8)
         fig.savefig(fly_path, dpi=160, bbox_inches="tight")
         pdf.savefig(fig, bbox_inches="tight")
+        if graphs_pdf is not None:
+            graphs_pdf.savefig(fig, bbox_inches="tight")
         paths.setdefault("individual_fly_graph_png", str(fly_path))
         paths[f"tube_{assay_tube_index}_fly_{display_id}_png"] = str(fly_path)
         plt.close(fig)
@@ -2238,7 +2250,7 @@ def _render_prior_style_assay_graphs(
         if unit_col is not None:
             fig = plt.figure(figsize=(11.0, 6.2))
             ax = fig.add_subplot(111)
-            ax.set_title("Mean fly height over time by tube")
+            ax.set_title("Mean fly height over time by tube", fontsize=15, pad=16)
             plotted = False
             for assay_tube_index, grp in working.groupby("assay_tube_index", sort=True):
                 curve = (
@@ -2257,9 +2269,12 @@ def _render_prior_style_assay_graphs(
                 ax.set_ylabel(ylabel)
                 ax.grid(alpha=0.22)
                 ax.legend(loc="best", fontsize=8)
+                fig.tight_layout(pad=2.0)
                 velocity_path = graph_dir / "velocity_plot.png"
                 fig.savefig(velocity_path, dpi=160, bbox_inches="tight")
                 pdf.savefig(fig, bbox_inches="tight")
+                if graphs_pdf is not None:
+                    graphs_pdf.savefig(fig, bbox_inches="tight")
                 paths["velocity_plot_png"] = str(velocity_path)
             plt.close(fig)
 
@@ -2283,15 +2298,18 @@ def _render_prior_style_assay_graphs(
             ylabel = "Max height (mm)" if value_col.endswith("_mm") else "Max height (px)"
             fig = plt.figure(figsize=(11.0, 5.5))
             ax = fig.add_subplot(111)
-            ax.set_title("Per-fly maximum height")
+            ax.set_title("Per-fly maximum height", fontsize=15, pad=16)
             ax.bar(range(len(summary)), summary[value_col], color="#2563eb")
             ax.set_xticks(range(len(labels)))
             ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
             ax.set_ylabel(ylabel)
             ax.grid(axis="y", alpha=0.22)
             summary_bar = graph_dir / "per_fly_max_height.png"
+            fig.tight_layout(pad=2.0)
             fig.savefig(summary_bar, dpi=160, bbox_inches="tight")
             pdf.savefig(fig, bbox_inches="tight")
+            if graphs_pdf is not None:
+                graphs_pdf.savefig(fig, bbox_inches="tight")
             paths["per_fly_max_height_graph_png"] = str(summary_bar)
             plt.close(fig)
 
@@ -2478,6 +2496,7 @@ def generate_graphs_and_pdf(
 
     pdf_path = out_dir / "report.pdf"
     paths: Dict[str, str] = {"report_pdf": str(pdf_path)}
+    graphs_pdf_path = out_dir / "graphs_report.pdf"
 
     assay_tube_count = 0
     if not vial_summary_df.empty and "assay_tube_index" in vial_summary_df.columns:
@@ -2517,7 +2536,22 @@ def generate_graphs_and_pdf(
         _render_pdf_text_page(pdf, "Fruit fly assay report", cover_lines, fontsize=11)
 
         if save_demo_graphs:
-            paths.update(_render_prior_style_assay_graphs(pdf, out_dir / "graphs", tracks_df, fly_summary_df))
+            with PdfPages(graphs_pdf_path) as graphs_pdf:
+                graph_paths = _render_prior_style_assay_graphs(
+                    pdf,
+                    out_dir / "graphs",
+                    tracks_df,
+                    fly_summary_df,
+                    graphs_pdf=graphs_pdf,
+                )
+            paths.update(graph_paths)
+            if graph_paths and graphs_pdf_path.exists():
+                paths["graphs_report_pdf"] = str(graphs_pdf_path)
+            elif graphs_pdf_path.exists():
+                try:
+                    graphs_pdf_path.unlink()
+                except OSError:
+                    pass
 
         if not displacement_df.empty:
             _render_pdf_table_pages(
