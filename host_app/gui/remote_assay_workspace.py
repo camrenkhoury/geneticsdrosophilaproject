@@ -69,6 +69,8 @@ class RemoteAssayWorkspace(ttk.Frame):
         self._calibration_drag_start: tuple[int, int] | None = None
         self._guided_calibration_saved = False
         self._guided_calibration_tested = False
+        self._guided_calibration_busy = False
+        self._guided_calibration_busy_message = ""
         self._video_capture = None
         self._video_after_id: str | None = None
         self._video_paused = False
@@ -510,31 +512,60 @@ class RemoteAssayWorkspace(ttk.Frame):
         ).grid(row=2, column=0, sticky="ew", pady=(0, 12))
 
         self.calibration_buttons = {}
-        actions = (
-            ("retake", "Retake clean background", self.capture_guided_background),
-            ("load", "Load existing calibration", self.load_calibration),
-            ("undo", "Undo last box", self.undo_calibration_region),
-            ("clear", "Clear boxes", self.clear_calibration_regions),
-            ("save_test", "Save + Test Calibration", self.save_and_test_guided_calibration),
-            ("continue", "Continue to Assay", self.continue_from_calibration),
-        )
-        for row, (key, label, command) in enumerate(actions, start=3):
+        ttk.Label(
+            step_panel,
+            text="1) Draw tube boxes on the image",
+            font=("Arial", 10, "bold"),
+        ).grid(row=3, column=0, sticky="ew", pady=(2, 3))
+        for row, (key, label, command) in enumerate(
+            (
+                ("retake", "(Optional) Retake Clean Background", self.capture_guided_background),
+                ("undo", "Undo last box", self.undo_calibration_region),
+                ("clear", "Clear boxes", self.clear_calibration_regions),
+            ),
+            start=4,
+        ):
             button = ttk.Button(step_panel, text=label, command=command)
             button.grid(row=row, column=0, sticky="ew", pady=3)
             self.calibration_buttons[key] = button
 
+        ttk.Separator(step_panel).grid(row=7, column=0, sticky="ew", pady=(8, 8))
+        for row, (key, label, command) in enumerate(
+            (
+                ("save", "2) Save Calibration", self.save_guided_calibration),
+                ("test", "3) Test Calibration", self.test_guided_calibration),
+            ),
+            start=8,
+        ):
+            button = ttk.Button(step_panel, text=label, command=command)
+            button.grid(row=row, column=0, sticky="ew", pady=3)
+            self.calibration_buttons[key] = button
+
+        ttk.Label(step_panel, text="Secondary shortcut", foreground="#6b7280").grid(
+            row=10, column=0, sticky="w", pady=(10, 2)
+        )
+        load_button = ttk.Button(step_panel, text="Reuse old calibration", command=self.load_calibration)
+        load_button.grid(row=11, column=0, sticky="ew", pady=3)
+        self.calibration_buttons["load"] = load_button
+
+        ttk.Separator(step_panel).grid(row=12, column=0, sticky="ew", pady=(8, 8))
+        continue_button = ttk.Button(step_panel, text="4) Continue to Assay", command=self.continue_from_calibration)
+        continue_button.grid(row=13, column=0, sticky="ew", pady=3)
+        self.calibration_buttons["continue"] = continue_button
+
         help_text = (
             "How to calibrate:\n"
-            "1) The clean assay background is loaded or captured automatically.\n"
-            "2) Drag one box around each visible assay tube in the image.\n"
-            "3) Use Save + Test Calibration.\n"
-            "4) Continue once the overlay/test image looks correct.\n\n"
+            "1) A clean assay background loads or captures automatically.\n"
+            "2) Draw one box around each visible assay tube.\n"
+            "3) Save Calibration.\n"
+            "4) Test Calibration and confirm the overlay looks right.\n"
+            "5) Continue to the assay workspace.\n\n"
             "Debug-only controls like preview modes and Pi setup launch are in the Debug window."
         )
         ttk.Label(step_panel, text=help_text, foreground="#374151", wraplength=290, justify="left").grid(
-            row=9, column=0, sticky="ew", pady=(14, 0)
+            row=14, column=0, sticky="ew", pady=(14, 0)
         )
-        step_panel.rowconfigure(10, weight=1)
+        step_panel.rowconfigure(15, weight=1)
         self._update_calibration_workflow_state()
 
     def _close_calibration_window(self) -> None:
@@ -783,32 +814,64 @@ class RemoteAssayWorkspace(ttk.Frame):
             "vials": vials,
         }
 
-    def save_and_test_guided_calibration(self) -> None:
+    def save_guided_calibration(self) -> None:
         calibration = self._build_guided_calibration_payload()
-
-        def worker() -> dict[str, Any]:
-            controller = self._require_controller()
-            saved = controller.save_assay_calibration(calibration)
-            tested = controller.test_assay_calibration(calibration)
-            return {"saved": saved, "tested": tested}
+        self._guided_calibration_saved = False
+        self._guided_calibration_tested = False
+        self._guided_calibration_busy = True
+        self._guided_calibration_busy_message = "Saving calibration..."
+        self._update_calibration_workflow_state()
 
         def on_success(payload: dict[str, Any]) -> None:
-            saved = payload.get("saved", {}) or {}
-            self.calibration_path_var.set(str(saved.get("calibration_path", "") or self.calibration_path_var.get()))
+            self.calibration_path_var.set(str(payload.get("calibration_path", "") or self.calibration_path_var.get()))
             self._guided_calibration_saved = True
-            self._guided_calibration_tested = True
-            self.preview_mode_var.set("calibration")
-            self.load_preview_image("calibration")
+            self._guided_calibration_tested = False
+            self._guided_calibration_busy = False
+            self._guided_calibration_busy_message = ""
+            self.calibration_ready_var.set("Calibration saved. Next: Test Calibration.")
             self.refresh_workspace()
             self._update_calibration_workflow_state()
 
-        self._run_async("Saving and testing assay calibration", worker, on_success)
+        self._run_async(
+            "Saving assay calibration",
+            lambda: self._require_controller().save_assay_calibration(calibration),
+            on_success,
+        )
+
+    def test_guided_calibration(self) -> None:
+        if not self._guided_calibration_saved:
+            messagebox.showwarning(
+                "Save Required",
+                "Save Calibration before testing.",
+                parent=self.calibration_window or self.winfo_toplevel(),
+            )
+            return
+        calibration = self._build_guided_calibration_payload()
+        self._guided_calibration_tested = False
+        self._guided_calibration_busy = True
+        self._guided_calibration_busy_message = "Testing calibration overlay..."
+        self._update_calibration_workflow_state()
+
+        def on_success(_payload: dict[str, Any]) -> None:
+            self._guided_calibration_tested = True
+            self._guided_calibration_busy = False
+            self._guided_calibration_busy_message = ""
+            self.preview_mode_var.set("calibration")
+            self.load_preview_image("calibration")
+            self.calibration_ready_var.set("Calibration tested. Continue to Assay is now enabled.")
+            self._update_calibration_workflow_state()
+
+        self._run_async(
+            "Testing assay calibration",
+            lambda: self._require_controller().test_assay_calibration(calibration),
+            on_success,
+        )
 
     def continue_from_calibration(self) -> None:
-        if not self._guided_calibration_tested:
+        if not self._guided_calibration_saved or not self._guided_calibration_tested:
             messagebox.showwarning(
                 "Calibration Not Ready",
-                "Save + Test Calibration before continuing to the assay workspace.",
+                "Save Calibration and Test Calibration must both complete before continuing to the assay workspace.",
                 parent=self.calibration_window or self.winfo_toplevel(),
             )
             return
@@ -836,13 +899,22 @@ class RemoteAssayWorkspace(ttk.Frame):
     def _update_calibration_workflow_state(self) -> None:
         has_image = self._calibration_image is not None
         region_count = len(self._calibration_regions)
-        setup_ready = self._assay_setup_ready() or self._guided_calibration_tested
+        ready_to_continue = bool(
+            has_image
+            and region_count
+            and self._guided_calibration_saved
+            and self._guided_calibration_tested
+        )
         self.calibration_region_summary_var.set(
             f"{region_count} tube region{'s' if region_count != 1 else ''} defined."
             if region_count
             else "No tube regions defined yet."
         )
-        if not has_image:
+        if self._guided_calibration_busy:
+            self.calibration_step_var.set("Working...")
+            self.calibration_instruction_var.set(self._guided_calibration_busy_message or "Working on assay calibration.")
+            self.calibration_ready_var.set(self._guided_calibration_busy_message or "Working...")
+        elif not has_image:
             self.calibration_step_var.set("Step 1: capture clean assay background")
             self.calibration_instruction_var.set(
                 "Assay setup starts by loading or capturing a clean background image. "
@@ -850,32 +922,40 @@ class RemoteAssayWorkspace(ttk.Frame):
             )
             self.calibration_ready_var.set("Waiting for assay background.")
         elif region_count == 0:
-            self.calibration_step_var.set("Step 2: draw tube boxes")
+            self.calibration_step_var.set("Step 1: draw tube boxes")
             self.calibration_instruction_var.set(
                 "Drag boxes directly on the assay background, one box around each tube region. "
-                "Use Retake only if the background image is wrong."
+                "Use Retake Clean Background only if the background image is wrong."
             )
-            self.calibration_ready_var.set("Draw at least one tube box to enable save/test.")
+            self.calibration_ready_var.set("Blocked: draw at least one tube box before saving.")
+        elif not self._guided_calibration_saved:
+            self.calibration_step_var.set("Step 2: save calibration")
+            self.calibration_instruction_var.set(
+                "Review the green tube boxes. Use Undo/Clear if needed, then Save Calibration."
+            )
+            self.calibration_ready_var.set("Blocked: calibration regions are drawn but not saved.")
         elif not self._guided_calibration_tested:
-            self.calibration_step_var.set("Step 3: save and test calibration")
+            self.calibration_step_var.set("Step 3: test calibration")
             self.calibration_instruction_var.set(
-                "Review the green tube boxes. Use Undo/Clear if needed, then Save + Test Calibration."
+                "Calibration saved. Use Test Calibration to render and verify the overlay before continuing."
             )
-            self.calibration_ready_var.set("Calibration regions are defined but not tested yet.")
+            self.calibration_ready_var.set("Blocked: calibration saved but not tested.")
         else:
-            self.calibration_step_var.set("Step 4: continue")
+            self.calibration_step_var.set("Step 4: continue to assay")
             self.calibration_instruction_var.set(
-                "Calibration was saved and tested. Continue to the main assay workflow."
+                "Calibration was saved and tested successfully. Continue to the main assay workflow."
             )
-            self.calibration_ready_var.set("Calibration ready.")
+            self.calibration_ready_var.set("Ready: Continue to Assay is enabled.")
 
+        idle = not self._guided_calibration_busy
         state_by_key = {
-            "retake": tk.NORMAL if self.connected else tk.DISABLED,
-            "load": tk.NORMAL if self.connected and has_image else tk.DISABLED,
-            "undo": tk.NORMAL if region_count else tk.DISABLED,
-            "clear": tk.NORMAL if region_count else tk.DISABLED,
-            "save_test": tk.NORMAL if self.connected and has_image and region_count else tk.DISABLED,
-            "continue": tk.NORMAL if setup_ready else tk.DISABLED,
+            "retake": tk.NORMAL if self.connected and idle else tk.DISABLED,
+            "load": tk.NORMAL if self.connected and has_image and idle else tk.DISABLED,
+            "undo": tk.NORMAL if region_count and idle else tk.DISABLED,
+            "clear": tk.NORMAL if region_count and idle else tk.DISABLED,
+            "save": tk.NORMAL if self.connected and has_image and region_count and idle else tk.DISABLED,
+            "test": tk.NORMAL if self.connected and has_image and region_count and self._guided_calibration_saved and idle else tk.DISABLED,
+            "continue": tk.NORMAL if ready_to_continue and idle else tk.DISABLED,
         }
         for key, button in self.calibration_buttons.items():
             if button.winfo_exists():
@@ -984,10 +1064,13 @@ class RemoteAssayWorkspace(ttk.Frame):
 
     def _handle_error(self, label: str, exc: Exception) -> None:
         self._worker_count = max(0, self._worker_count - 1)
+        self._guided_calibration_busy = False
+        self._guided_calibration_busy_message = ""
         message = f"{label} failed: {exc}"
         self._append_log(message)
         self.status_callback("error", message)
         self._set_workspace_status(message)
+        self._update_calibration_workflow_state()
         messagebox.showerror("Assay Workspace Error", str(exc), parent=self.winfo_toplevel())
 
     def _handle_success(self, label: str, result: Any, on_success: Callable[[Any], None] | None) -> None:
