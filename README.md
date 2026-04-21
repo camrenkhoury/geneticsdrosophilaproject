@@ -62,7 +62,7 @@ Primary GitHub Contributor/Owner: **Camren J. Khoury**
 
 **Software & Computational Systems**
 - Computer Vision Implementation (Channel + Assay): **Avi Patel**, Dylan Britch
-- Machine Learning (Classification + Database) Model Development + Deployment: **Avi Patel**, Dylan Britch, Ainara Garcia
+- Machine Learning (Classification/Database) Model Development & Deployment: Avi Patel, Dylan Britch, Ainara Garcia
 - Networking and Automation: **Camren J. Khoury**
 - GUI: **Camren J. Khoury**, Avi Patel
 
