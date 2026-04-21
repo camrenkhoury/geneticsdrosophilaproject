@@ -105,12 +105,11 @@ class RemoteAssayWorkspace(ttk.Frame):
 
         topbar = ttk.Frame(self)
         topbar.grid(row=0, column=0, sticky="ew", pady=(0, 2))
-        topbar.columnconfigure(1, weight=1)
+        topbar.columnconfigure(0, weight=1)
 
-        ttk.Button(topbar, text="Exit Assay", command=self._request_exit).grid(row=0, column=0, sticky="w")
-        ttk.Label(topbar, text="Assay Workspace", font=("Arial", 11, "bold")).grid(row=0, column=1, sticky="w", padx=(10, 0))
-        ttk.Button(topbar, text="Debug", command=self.open_debug_menu).grid(row=0, column=2, sticky="e", padx=(0, 6))
-        ttk.Button(topbar, text="Results", command=self.toggle_results).grid(row=0, column=3, sticky="e", padx=(0, 6))
+        ttk.Label(topbar, text="Assay Workspace", font=("Arial", 11, "bold")).grid(row=0, column=0, rowspan=2, sticky="w")
+        ttk.Button(topbar, text="Debug", command=self.open_debug_menu).grid(row=0, column=1, sticky="e", padx=(0, 6))
+        ttk.Button(topbar, text="Results", command=self.toggle_results).grid(row=0, column=2, sticky="e", padx=(0, 6))
 
         self.connection_label = tk.Label(
             topbar,
@@ -122,7 +121,21 @@ class RemoteAssayWorkspace(ttk.Frame):
             relief="ridge",
             anchor="center",
         )
-        self.connection_label.grid(row=0, column=4, sticky="e")
+        self.connection_label.grid(row=0, column=3, sticky="e")
+
+        self.exit_assay_button = tk.Button(
+            topbar,
+            text="Exit Assay",
+            command=self._request_exit,
+            bg="#B91C1C",
+            fg="white",
+            activebackground="#7F1D1D",
+            activeforeground="white",
+            relief="raised",
+            padx=10,
+            pady=2,
+        )
+        self.exit_assay_button.grid(row=1, column=3, sticky="e", pady=(3, 0))
 
         self.status_label = tk.Label(
             self,
@@ -707,8 +720,9 @@ class RemoteAssayWorkspace(ttk.Frame):
 
         for index, region in enumerate(self._calibration_regions, start=1):
             self._draw_calibration_region(canvas, region, index, "#22c55e")
+        self._draw_calibration_alignment_guides(canvas)
         if self._calibration_draft_region is not None:
-            self._draw_calibration_region(canvas, self._calibration_draft_region, None, "#f59e0b")
+            self._draw_calibration_region(canvas, self._calibration_draft_region, None, "#f59e0b", dashed=True)
         if not self._calibration_regions:
             canvas.create_rectangle(offset_x + 12, offset_y + 12, offset_x + draw_w - 12, offset_y + 68, fill="#111827", outline="#f59e0b", stipple="gray25")
             canvas.create_text(
@@ -727,6 +741,8 @@ class RemoteAssayWorkspace(ttk.Frame):
         region: dict[str, int],
         index: int | None,
         color: str,
+        *,
+        dashed: bool = False,
     ) -> None:
         if self._calibration_display_box is None:
             return
@@ -735,7 +751,8 @@ class RemoteAssayWorkspace(ttk.Frame):
         y1 = offset_y + int(region["y"] * scale)
         x2 = offset_x + int((region["x"] + region["w"]) * scale)
         y2 = offset_y + int((region["y"] + region["h"]) * scale)
-        canvas.create_rectangle(x1, y1, x2, y2, outline=color, width=3)
+        dash = (6, 4) if dashed else None
+        canvas.create_rectangle(x1, y1, x2, y2, outline=color, width=3, dash=dash)
         canvas.create_line((x1 + x2) // 2, y1, (x1 + x2) // 2, y2, fill=color, width=1, dash=(4, 3))
         if index is not None:
             canvas.create_text(
@@ -746,6 +763,29 @@ class RemoteAssayWorkspace(ttk.Frame):
                 anchor="nw",
                 font=("Arial", 11, "bold"),
             )
+
+    def _draw_calibration_alignment_guides(self, canvas: tk.Canvas) -> None:
+        if self._calibration_display_box is None or len(self._calibration_regions) < 2:
+            return
+        offset_x, offset_y, _draw_w, _draw_h, scale = self._calibration_display_box
+        left = min(int(region["x"]) for region in self._calibration_regions)
+        right = max(int(region["x"] + region["w"]) for region in self._calibration_regions)
+        top = int(self._calibration_regions[0]["y"])
+        bottom = int(self._calibration_regions[0]["y"] + self._calibration_regions[0]["h"])
+        x1 = offset_x + int(left * scale)
+        x2 = offset_x + int(right * scale)
+        top_y = offset_y + int(top * scale)
+        bottom_y = offset_y + int(bottom * scale)
+        canvas.create_line(x1, top_y, x2, top_y, fill="#22c55e", width=2, dash=(8, 5))
+        canvas.create_line(x1, bottom_y, x2, bottom_y, fill="#22c55e", width=2, dash=(8, 5))
+        canvas.create_text(
+            x1 + 8,
+            max(12, top_y - 18),
+            text="auto-aligned top/bottom from first box",
+            fill="#bbf7d0",
+            anchor="nw",
+            font=("Arial", 9, "bold"),
+        )
 
     def _canvas_to_calibration_point(self, event: tk.Event) -> tuple[int, int] | None:
         if self._calibration_image is None or self._calibration_display_box is None:
@@ -773,7 +813,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         point = self._canvas_to_calibration_point(event)
         if point is None:
             return
-            self._calibration_draft_region = self._region_from_points(self._calibration_drag_start, point)
+            self._calibration_draft_region = self._raw_region_from_points(self._calibration_drag_start, point)
         self._refresh_calibration_canvas()
 
     def _on_calibration_drag_end(self, event: tk.Event) -> None:
@@ -786,8 +826,9 @@ class RemoteAssayWorkspace(ttk.Frame):
         if point is None:
             self._refresh_calibration_canvas()
             return
+        raw_region = self._raw_region_from_points(start, point)
         region = self._region_from_points(start, point)
-        if region["w"] < 10 or region["h"] < 10:
+        if raw_region["w"] < 10 or raw_region["h"] < 10:
             self._refresh_calibration_canvas()
             return
         self._calibration_regions.append(region)
@@ -798,16 +839,20 @@ class RemoteAssayWorkspace(ttk.Frame):
         self._refresh_calibration_canvas()
         self._update_calibration_workflow_state()
 
-    def _region_from_points(self, start: tuple[int, int], end: tuple[int, int]) -> dict[str, int]:
+    @staticmethod
+    def _raw_region_from_points(start: tuple[int, int], end: tuple[int, int]) -> dict[str, int]:
         x1, y1 = start
         x2, y2 = end
         x = min(x1, x2)
-        w = abs(x2 - x1)
+        y = min(y1, y2)
+        return {"x": x, "y": y, "w": abs(x2 - x1), "h": abs(y2 - y1)}
+
+    def _region_from_points(self, start: tuple[int, int], end: tuple[int, int]) -> dict[str, int]:
+        raw = self._raw_region_from_points(start, end)
         if self._calibration_regions:
             first = self._calibration_regions[0]
-            return {"x": x, "y": int(first["y"]), "w": w, "h": int(first["h"])}
-        y = min(y1, y2)
-        return {"x": x, "y": y, "w": w, "h": abs(y2 - y1)}
+            return {"x": int(raw["x"]), "y": int(first["y"]), "w": int(raw["w"]), "h": int(first["h"])}
+        return raw
 
     def undo_calibration_region(self) -> None:
         if self._calibration_regions:
