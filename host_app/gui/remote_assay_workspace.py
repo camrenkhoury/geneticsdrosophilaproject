@@ -603,26 +603,41 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.capture_guided_background(auto=True)
 
     def capture_guided_background(self, *, auto: bool = False) -> None:
+        if self._guided_calibration_busy:
+            return
         label = "Auto-capturing assay background" if auto else "Retaking assay background"
+        self._guided_calibration_busy = True
+        self._guided_calibration_busy_message = f"{label}..."
+        self._update_calibration_workflow_state()
 
         def on_success(_payload: dict[str, Any]) -> None:
             self._guided_calibration_saved = False
             self._guided_calibration_tested = False
+            self._guided_calibration_busy_message = "Background captured. Loading image..."
             self.refresh_workspace()
             self.load_guided_background()
 
         self._run_async(label, lambda: self._require_controller().capture_assay_background(), on_success)
 
     def load_guided_background(self) -> None:
+        self._guided_calibration_busy = True
+        self._guided_calibration_busy_message = "Loading assay background image..."
+        self._update_calibration_workflow_state()
+
         def on_success(image_bytes: bytes | None) -> None:
             if not image_bytes:
+                self._guided_calibration_busy = False
+                self._guided_calibration_busy_message = ""
                 self.calibration_instruction_var.set(
                     "No assay background image is available. Use Retake clean background."
                 )
                 self._update_calibration_workflow_state()
                 return
             self._set_calibration_image_from_bytes(image_bytes)
+            self._guided_calibration_busy = False
+            self._guided_calibration_busy_message = ""
             self.preview_info_var.set("Showing assay background for calibration.")
+            self.calibration_ready_var.set("Background loaded. Drag boxes around the tubes on the image.")
             self._update_calibration_workflow_state()
 
         self._run_async(
@@ -680,6 +695,17 @@ class RemoteAssayWorkspace(ttk.Frame):
             self._draw_calibration_region(canvas, region, index, "#22c55e")
         if self._calibration_draft_region is not None:
             self._draw_calibration_region(canvas, self._calibration_draft_region, None, "#f59e0b")
+        if not self._calibration_regions:
+            canvas.create_rectangle(offset_x + 12, offset_y + 12, offset_x + draw_w - 12, offset_y + 68, fill="#111827", outline="#f59e0b", stipple="gray25")
+            canvas.create_text(
+                offset_x + 24,
+                offset_y + 24,
+                text="Step 1: drag boxes around each tube directly on this image.\nSave Calibration unlocks after the first box is drawn.",
+                fill="white",
+                anchor="nw",
+                justify="left",
+                font=("Arial", 11, "bold"),
+            )
 
     def _draw_calibration_region(
         self,
@@ -943,10 +969,10 @@ class RemoteAssayWorkspace(ttk.Frame):
         elif region_count == 0:
             self.calibration_step_var.set("Step 1: draw tube boxes")
             self.calibration_instruction_var.set(
-                "Drag boxes directly on the assay background, one box around each tube region. "
-                "Use Retake Clean Background only if the background image is wrong."
+                "The background is loaded. Drag boxes directly on the image, one box around each tube. "
+                "Save/Test stay disabled until at least one box is drawn."
             )
-            self.calibration_ready_var.set("Blocked: draw at least one tube box before saving.")
+            self.calibration_ready_var.set("Blocked: draw at least one tube box on the image before saving.")
         elif not self._guided_calibration_saved:
             self.calibration_step_var.set("Step 2: save calibration")
             self.calibration_instruction_var.set(
@@ -969,7 +995,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         idle = not self._guided_calibration_busy
         state_by_key = {
             "retake": tk.NORMAL if self.connected and idle else tk.DISABLED,
-            "load": tk.NORMAL if self.connected and has_image and idle else tk.DISABLED,
+            "load": tk.NORMAL if self.connected and idle else tk.DISABLED,
             "undo": tk.NORMAL if region_count and idle else tk.DISABLED,
             "clear": tk.NORMAL if region_count and idle else tk.DISABLED,
             "save": tk.NORMAL if self.connected and has_image and region_count and idle else tk.DISABLED,
