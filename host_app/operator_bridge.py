@@ -686,8 +686,11 @@ def _render_assay_preview(
         show_positions=bool(service.profile.analysis.show_positions),
     )
     overlay_bgr = modules["render_assay_calibration_overlay"](background_bgr, calibration)
+    calibration_preview = preview_images.get("calibration")
+    if calibration_preview is None:
+        calibration_preview = overlay_bgr
     _write_preview_image("background", background_bgr)
-    _write_preview_image("calibration", preview_images.get("calibration") or overlay_bgr)
+    _write_preview_image("calibration", calibration_preview)
     if preview_images.get("aligned") is not None:
         _write_preview_image("aligned", preview_images["aligned"])
     if preview_images.get("annotated") is not None:

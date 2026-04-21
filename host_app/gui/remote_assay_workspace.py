@@ -346,7 +346,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.refresh_workspace()
         if setup_required:
             self.after(250, self.enter_setup_flow)
-        if self.connected:
+        elif self.connected:
             self.after(500, self.capture_preview)
 
     def enter_setup_flow(self) -> None:
@@ -358,10 +358,12 @@ class RemoteAssayWorkspace(ttk.Frame):
             self._setup_prompt_shown = True
             messagebox.showinfo(
                 "Assay Setup Required",
-                "No saved assay setup was found. The setup controls are open now.\n\n"
+                "No saved assay setup was found. Press OK to open Assay Setup.\n\n"
                 "Complete the assay background and calibration before running the assay.",
                 parent=self.winfo_toplevel(),
             )
+            if self.open_setup_callback is not None:
+                self.open_setup_callback()
 
     def _request_exit(self) -> None:
         if self.can_exit_callback is not None and not self.can_exit_callback():
