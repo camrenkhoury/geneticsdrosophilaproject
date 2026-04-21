@@ -124,6 +124,10 @@ class MachineService:
             if available:
                 status = "simulation" if simulation_enabled else "available"
 
+        snapshot_before = self.runtime_state.snapshot()
+        previous_status = snapshot_before.subsystem_health.get(f"{name}_status")
+        previous_error = snapshot_before.subsystem_errors.get(name)
+
         self.runtime_state.set_subsystem_health(f"{name}_deferred", deferred)
         self.runtime_state.set_subsystem_health(f"{name}_available", available)
         self.runtime_state.set_subsystem_health(f"{name}_simulation", simulation_enabled)
@@ -133,16 +137,48 @@ class MachineService:
         if deferred:
             return
 
-        boot_degraded = self.runtime_state.snapshot().backend_boot_degraded
         if simulation_enabled or not available:
-            self.runtime_state.set_backend_boot_degraded(True)
-            if last_error:
-                self.logger.warning("%s subsystem degraded: %s", name, last_error)
-            else:
-                self.logger.warning("%s subsystem running in simulation mode.", name)
+            self._refresh_backend_degraded_state()
+            if previous_status != status or previous_error != last_error:
+                if last_error:
+                    self.logger.warning("%s subsystem degraded: %s", name, last_error)
+                else:
+                    self.logger.warning("%s subsystem running in simulation mode.", name)
             return
 
-        self.runtime_state.set_backend_boot_degraded(boot_degraded)
+        self._refresh_backend_degraded_state()
+
+    def _refresh_backend_degraded_state(self) -> None:
+        snapshot = self.runtime_state.snapshot()
+        degraded = False
+        subsystem_names = {
+            key[: -len("_status")]
+            for key in snapshot.subsystem_health
+            if str(key).endswith("_status")
+        }
+        for subsystem_name in subsystem_names:
+            if bool(snapshot.subsystem_health.get(f"{subsystem_name}_deferred", False)):
+                continue
+            status = str(snapshot.subsystem_health.get(f"{subsystem_name}_status", "") or "")
+            if status in {"unavailable", "simulation"}:
+                degraded = True
+                break
+            if snapshot.subsystem_errors.get(subsystem_name):
+                degraded = True
+                break
+        self.runtime_state.set_backend_boot_degraded(degraded)
+
+    def _refresh_classifier_state(self) -> None:
+        self.classify_service.initialize()
+        self._record_component_state(
+            "classifier",
+            available=self.classify_service.available,
+            simulation_enabled=False,
+            last_error=self.classify_service.last_error,
+        )
+
+    def refresh_recoverable_subsystems(self) -> None:
+        self._refresh_classifier_state()
 
     def _subsystem_status(self, subsystem: str) -> str:
         snapshot = self.runtime_state.snapshot()
@@ -267,6 +303,7 @@ class MachineService:
         return None
 
     def validate_classifier_command(self) -> str | None:
+        self._refresh_classifier_state()
         return self._unavailable_message("classifier")
 
     def validate_assay_command(self) -> str | None:

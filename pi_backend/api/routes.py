@@ -37,6 +37,7 @@ def _reject_busy(context, action_description: str) -> dict[str, Any] | None:
 @router.get("/health", response_model=HealthResponse, dependencies=[Depends(require_api_key)])
 def get_health(request: Request) -> HealthResponse:
     context = request.app.state.backend_context
+    context.machine_service.refresh_recoverable_subsystems()
     snapshot = context.runtime_state.snapshot()
     return context.build_health_response(snapshot)
 
@@ -44,6 +45,7 @@ def get_health(request: Request) -> HealthResponse:
 @router.get("/status", response_model=StatusResponse, dependencies=[Depends(require_api_key)])
 def get_status(request: Request) -> Response:
     context = request.app.state.backend_context
+    context.machine_service.refresh_recoverable_subsystems()
     context.machine_service.refresh_detection_summary()
     snapshot = context.runtime_state.snapshot()
     etag = _status_etag(snapshot.status_revision)

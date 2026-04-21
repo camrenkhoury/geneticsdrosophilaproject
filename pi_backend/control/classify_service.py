@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Callable
 
 from pi_backend.core.subsystem_support import (
@@ -20,11 +21,16 @@ class ClassifyService:
         self._initialized = False
         self._available = False
         self._last_error: str | None = None
+        self._last_initialize_attempt_s = 0.0
 
     def initialize(self) -> None:
-        if self._initialized:
+        if self._initialized and self._available:
+            return
+        now_s = time.monotonic()
+        if self._initialized and now_s - self._last_initialize_attempt_s < 5.0:
             return
 
+        self._last_initialize_attempt_s = now_s
         self._initialized = True
         try:
             module = import_legacy_module("fly_classifier1")
