@@ -153,10 +153,12 @@ class AssayService:
             "box_artifact_mode": str(effective.artifact_mode or "summaries"),
             "box_auto_upload_processing": bool(effective.upload_after_processing),
             "box_auto_upload_recording": bool(effective.upload_after_recording),
+            "box_upload_backgrounds": bool(effective.upload_backgrounds),
             "box_tokens_file": str(effective.tokens_file or ""),
             "box_config_file": config_candidate,
             "box_legacy_source": str(legacy.get("legacy_source", "") or ""),
             "box_parent_folder_id": str(effective.parent_folder_id or ""),
+            "box_folder_prefix": str(effective.folder_prefix or "fly_assay"),
         }
 
     def status(self) -> Dict[str, Any]:
@@ -179,6 +181,9 @@ class AssayService:
             "detector_min_area": int(self.profile.detector.min_area),
             "detector_max_area": int(self.profile.detector.max_area),
             "auto_process_after_recording": bool(self.profile.analysis.auto_process_after_recording),
+            "save_mask_video": bool(self.profile.analysis.save_mask_video),
+            "save_preview_snapshots": bool(self.profile.outputs.save_preview_snapshots),
+            "snapshot_interval_s": float(self.profile.outputs.snapshot_interval_s),
         }
         payload.update(self._box_status())
         self._status_cache = dict(payload)
@@ -220,8 +225,16 @@ class AssayService:
             self.profile.detector.max_area = int(float(fields["detector_max_area"]))
         if "auto_process_after_recording" in fields:
             self.profile.analysis.auto_process_after_recording = bool(fields["auto_process_after_recording"])
+        if "save_mask_video" in fields:
+            self.profile.analysis.save_mask_video = bool(fields["save_mask_video"])
+        if "save_preview_snapshots" in fields:
+            self.profile.outputs.save_preview_snapshots = bool(fields["save_preview_snapshots"])
+        if "snapshot_interval_s" in fields:
+            self.profile.outputs.snapshot_interval_s = float(fields["snapshot_interval_s"])
         if "box_enabled" in fields:
             self.profile.box_upload.enabled = bool(fields["box_enabled"])
+        if "box_parent_folder_id" in fields:
+            self.profile.box_upload.parent_folder_id = str(fields["box_parent_folder_id"] or "").strip()
         if "box_config_file" in fields:
             self.profile.box_upload.config_file = str(fields["box_config_file"] or "").strip()
         if "box_tokens_file" in fields:
@@ -236,6 +249,10 @@ class AssayService:
             self.profile.box_upload.upload_after_recording = bool(fields["box_upload_after_recording"])
         if "box_upload_backgrounds" in fields:
             self.profile.box_upload.upload_backgrounds = bool(fields["box_upload_backgrounds"])
+        if "box_folder_prefix" in fields:
+            text = str(fields["box_folder_prefix"] or "").strip()
+            if text:
+                self.profile.box_upload.folder_prefix = text
         return self.save_profile()
 
     def seed_box_templates(self, *, overwrite: bool = True) -> Dict[str, str]:

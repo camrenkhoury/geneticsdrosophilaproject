@@ -33,6 +33,7 @@ CHANNEL_ARTIFACT_TRACE_PATH = FIN6_DIR / ".channel_artifact_trace.log"
 CHANNEL_SETUP_SOURCE_PATH = FIN6_DIR / "backgrounds" / "channel_setup_source.png"
 CHANNEL_PHOTO_POSITION_MM = 191.0
 CHANNEL_PHOTO_POSITION_TOL_MM = 1.0
+DEFAULT_ASSAY_BOX_ARTIFACT_MODE = "raw+annotated+pdf"
 
 _DEFAULT_PROJECT_PATHS: dict[str, Path] = {
     "channel_background_var": FIN6_DIR / "backgrounds" / "channel_bg.png",
@@ -463,6 +464,7 @@ def list_assay_profiles() -> dict[str, Any]:
 
 def get_assay_status() -> dict[str, Any]:
     controller = _get_remote_assay_controller()
+    _prepare_integrated3_processing_upload_profile(controller.assay)
     controller.refresh_readiness()
     payload = dict(controller.assay.status())
     payload.update(_assay_background_paths())
@@ -471,6 +473,7 @@ def get_assay_status() -> dict[str, Any]:
 
 def get_assay_profile_summary() -> dict[str, Any]:
     controller = _get_remote_assay_controller()
+    _prepare_integrated3_processing_upload_profile(controller.assay)
     controller.refresh_readiness()
     return controller.assay_profile_summary()
 
@@ -787,6 +790,47 @@ def _prepare_integrated3_recording_profile(service: Any, logger: Callable[[str],
         )
 
 
+def _prepare_integrated3_processing_upload_profile(
+    service: Any,
+    logger: Callable[[str], None] | None = None,
+) -> None:
+    profile = getattr(service, "profile", None)
+    if profile is None:
+        return
+    box_upload = getattr(profile, "box_upload", None)
+    if box_upload is None:
+        return
+
+    changed = False
+    mode = str(getattr(box_upload, "artifact_mode", "") or "").strip().lower()
+    applying_default_upload_profile = mode in {"", "summaries"}
+    if applying_default_upload_profile:
+        box_upload.artifact_mode = DEFAULT_ASSAY_BOX_ARTIFACT_MODE
+        changed = True
+    if applying_default_upload_profile and not bool(getattr(box_upload, "enabled", False)):
+        box_upload.enabled = True
+        changed = True
+    if applying_default_upload_profile and not bool(getattr(box_upload, "upload_after_processing", False)):
+        box_upload.upload_after_processing = True
+        changed = True
+    if str(getattr(box_upload, "folder_prefix", "") or "").strip() == "":
+        box_upload.folder_prefix = "fly_assay"
+        changed = True
+
+    if changed:
+        save_profile = getattr(service, "save_profile", None)
+        if callable(save_profile):
+            save_profile()
+
+    if logger is not None:
+        logger(
+            "Integrated3 assay processing/upload config: "
+            f"box_enabled={bool(getattr(box_upload, 'enabled', False))} "
+            f"upload_after_processing={bool(getattr(box_upload, 'upload_after_processing', False))} "
+            f"artifact_mode={getattr(box_upload, 'artifact_mode', '')}"
+        )
+
+
 def run_integrated3_assay_from_active_profile(
     *,
     logger: Callable[[str], None] | None = None,
@@ -796,6 +840,7 @@ def run_integrated3_assay_from_active_profile(
     controller = _get_remote_assay_controller()
     service = controller.assay
     _prepare_integrated3_recording_profile(service, logger=logger)
+    _prepare_integrated3_processing_upload_profile(service, logger=logger)
 
     def _preview_proxy(payload: dict[str, Any]) -> None:
         preview_path_text = str(payload.get("preview_path", "") or "").strip()
@@ -846,6 +891,7 @@ def test_assay_calibration_from_saved_settings(
 
 def process_last_assay_from_saved_settings() -> dict[str, Any]:
     service = _get_remote_assay_service()
+    _prepare_integrated3_processing_upload_profile(service)
     result = service.process_last()
     return {
         "ok": True,
@@ -857,6 +903,7 @@ def process_last_assay_from_saved_settings() -> dict[str, Any]:
 def process_selected_assay_run(run_dir: str) -> dict[str, Any]:
     modules = _load_assay_support_modules()
     service = _get_remote_assay_service()
+    _prepare_integrated3_processing_upload_profile(service)
     result = modules["process_assay_run"](run_dir, profile_override=service.profile)
     if result.get("run_dir"):
         service.profile.last_run_dir = str(result["run_dir"])
@@ -871,6 +918,7 @@ def process_selected_assay_run(run_dir: str) -> dict[str, Any]:
 def batch_process_assay_runs(folder: str) -> dict[str, Any]:
     modules = _load_assay_support_modules()
     service = _get_remote_assay_service()
+    _prepare_integrated3_processing_upload_profile(service)
     results = modules["batch_process_folder"](folder, profile_override=service.profile)
     return {
         "ok": True,
@@ -881,6 +929,12 @@ def batch_process_assay_runs(folder: str) -> dict[str, Any]:
 
 def upload_last_assay_from_saved_settings() -> dict[str, Any]:
     service = _get_remote_assay_service()
+    _prepare_integrated3_processing_upload_profile(service)
+    try:
+        resolve_latest_assay_artifact_path("annotated_video")
+        resolve_latest_assay_artifact_path("report_pdf")
+    except FileNotFoundError:
+        service.process_last()
     result = service.upload_last()
     return {
         "ok": True,

@@ -191,14 +191,14 @@ class RemoteController(BaseController):
         return self._request_json("POST", "/fin6/assay/calibration/test", json_payload=payload, timeout_s=30.0)
 
     def process_last_assay(self) -> ControllerPayload:
-        return self._request_json("POST", "/fin6/assay/process_last", timeout_s=30.0)
+        return self._request_json("POST", "/fin6/assay/process_last", timeout_s=600.0)
 
     def process_selected_assay(self, run_dir: str) -> ControllerPayload:
         return self._request_json(
             "POST",
             "/fin6/assay/process_selected",
             json_payload={"run_dir": str(run_dir or "")},
-            timeout_s=30.0,
+            timeout_s=600.0,
         )
 
     def batch_process_assay(self, folder: str) -> ControllerPayload:
@@ -206,11 +206,11 @@ class RemoteController(BaseController):
             "POST",
             "/fin6/assay/process_batch",
             json_payload={"folder": str(folder or "")},
-            timeout_s=30.0,
+            timeout_s=900.0,
         )
 
     def upload_last_assay(self) -> ControllerPayload:
-        return self._request_json("POST", "/fin6/assay/upload_last", timeout_s=30.0)
+        return self._request_json("POST", "/fin6/assay/upload_last", timeout_s=300.0)
 
     def get_latest_assay_manifest(self) -> ControllerPayload:
         return self._request_json("GET", "/artifacts/assay/run/latest/manifest")

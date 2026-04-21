@@ -92,6 +92,19 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.preview_mode_var = tk.StringVar(value="calibration")
         self.preview_info_var = tk.StringVar(value="No assay preview loaded.")
         self.results_status_var = tk.StringVar(value="No assay run loaded.")
+        self.auto_process_after_recording_var = tk.BooleanVar(value=False)
+        self.save_mask_video_var = tk.BooleanVar(value=False)
+        self.save_preview_snapshots_var = tk.BooleanVar(value=True)
+        self.snapshot_interval_var = tk.StringVar(value="1.0")
+        self.box_enabled_var = tk.BooleanVar(value=True)
+        self.box_upload_after_processing_var = tk.BooleanVar(value=True)
+        self.box_upload_after_recording_var = tk.BooleanVar(value=False)
+        self.box_upload_backgrounds_var = tk.BooleanVar(value=False)
+        self.box_artifact_mode_var = tk.StringVar(value="raw+annotated+pdf")
+        self.box_parent_folder_var = tk.StringVar(value="")
+        self.box_folder_prefix_var = tk.StringVar(value="fly_assay")
+        self.box_config_file_var = tk.StringVar(value="")
+        self.box_tokens_file_var = tk.StringVar(value="")
         self.workflow_guidance_var = tk.StringVar(
             value=(
                 "Workflow: 1) Calibration / Config: capture or import a clean background, load or edit calibration, "
@@ -252,6 +265,8 @@ class RemoteAssayWorkspace(ttk.Frame):
         row = self._build_profile_card(body, row)
         row = self._build_preview_card(body, row)
         row = self._build_recording_card(body, row)
+        row = self._build_processing_defaults_card(body, row)
+        row = self._build_box_defaults_card(body, row)
         row = self._build_processing_card(body, row)
         row = self._build_upload_card(body, row)
         row = self._build_artifact_card(body, row)
@@ -336,6 +351,74 @@ class RemoteAssayWorkspace(ttk.Frame):
         ttk.Button(actions, text="Process Last", command=self.process_last).pack(side="left")
         ttk.Button(actions, text="Process Selected", command=self.process_selected).pack(side="left", padx=(6, 0))
         ttk.Button(actions, text="Batch Process", command=self.batch_process).pack(side="left", padx=(6, 0))
+        return row + 1
+
+    def _build_processing_defaults_card(self, parent: ttk.Frame, row: int) -> int:
+        frame = self._card(parent, row, "Processing Settings", "Manual processing options used when generating annotated video, mask video, CSVs, JSON, and report PDF.")
+        ttk.Checkbutton(
+            frame,
+            text="Auto-process after recording",
+            variable=self.auto_process_after_recording_var,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=2)
+        ttk.Checkbutton(
+            frame,
+            text="Save mask video",
+            variable=self.save_mask_video_var,
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=2)
+        ttk.Checkbutton(
+            frame,
+            text="Save processed snapshots",
+            variable=self.save_preview_snapshots_var,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=2)
+        ttk.Label(frame, text="Snapshot interval s").grid(row=4, column=0, sticky="w", pady=2)
+        ttk.Entry(frame, textvariable=self.snapshot_interval_var, width=10).grid(row=4, column=1, sticky="ew", pady=2)
+        ttk.Button(frame, text="Save Processing Settings", command=self.save_debug_profile_settings).grid(
+            row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+        )
+        return row + 1
+
+    def _build_box_defaults_card(self, parent: ttk.Frame, row: int) -> int:
+        frame = self._card(
+            parent,
+            row,
+            "Box Upload Settings",
+            "Default artifact mode is raw+annotated+pdf: raw video, processed video, and report PDF.",
+        )
+        ttk.Checkbutton(frame, text="Box enabled", variable=self.box_enabled_var).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=2
+        )
+        ttk.Checkbutton(frame, text="Upload after processing", variable=self.box_upload_after_processing_var).grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=2
+        )
+        ttk.Checkbutton(frame, text="Upload after recording", variable=self.box_upload_after_recording_var).grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=2
+        )
+        ttk.Checkbutton(frame, text="Upload backgrounds", variable=self.box_upload_backgrounds_var).grid(
+            row=4, column=0, columnspan=2, sticky="w", pady=2
+        )
+        ttk.Label(frame, text="Artifact mode").grid(row=5, column=0, sticky="w", pady=2)
+        ttk.Combobox(
+            frame,
+            textvariable=self.box_artifact_mode_var,
+            values=("raw+annotated+pdf", "summaries+videos", "summaries", "full"),
+            state="readonly",
+        ).grid(row=5, column=1, sticky="ew", pady=2)
+        ttk.Label(frame, text="Parent folder").grid(row=6, column=0, sticky="w", pady=2)
+        ttk.Entry(frame, textvariable=self.box_parent_folder_var).grid(row=6, column=1, sticky="ew", pady=2)
+        ttk.Label(frame, text="Folder prefix").grid(row=7, column=0, sticky="w", pady=2)
+        ttk.Entry(frame, textvariable=self.box_folder_prefix_var).grid(row=7, column=1, sticky="ew", pady=2)
+        ttk.Label(frame, text="Config file").grid(row=8, column=0, sticky="w", pady=2)
+        ttk.Entry(frame, textvariable=self.box_config_file_var).grid(row=8, column=1, sticky="ew", pady=2)
+        ttk.Label(frame, text="Tokens file").grid(row=9, column=0, sticky="w", pady=2)
+        ttk.Entry(frame, textvariable=self.box_tokens_file_var).grid(row=9, column=1, sticky="ew", pady=2)
+        button_row = ttk.Frame(frame)
+        button_row.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Button(button_row, text="Use Raw + Processed + PDF Defaults", command=self.apply_box_upload_defaults).pack(
+            side="left"
+        )
+        ttk.Button(button_row, text="Save Upload Settings", command=self.save_debug_profile_settings).pack(
+            side="left", padx=(6, 0)
+        )
         return row + 1
 
     def _build_upload_card(self, parent: ttk.Frame, row: int) -> int:
@@ -1283,6 +1366,19 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.previous_background_var.set(str(payload.get("background_previous", "") or ""))
         self.calibration_path_var.set(str(payload.get("calibration_path", "") or ""))
         self.last_run_var.set(str(payload.get("last_run_dir", "") or ""))
+        self.auto_process_after_recording_var.set(bool(payload.get("auto_process_after_recording", False)))
+        self.save_mask_video_var.set(bool(payload.get("save_mask_video", False)))
+        self.save_preview_snapshots_var.set(bool(payload.get("save_preview_snapshots", True)))
+        self.snapshot_interval_var.set(str(payload.get("snapshot_interval_s", "1.0") or "1.0"))
+        self.box_enabled_var.set(bool(payload.get("box_enabled", True)))
+        self.box_upload_after_processing_var.set(bool(payload.get("box_auto_upload_processing", True)))
+        self.box_upload_after_recording_var.set(bool(payload.get("box_auto_upload_recording", False)))
+        self.box_upload_backgrounds_var.set(bool(payload.get("box_upload_backgrounds", False)))
+        self.box_artifact_mode_var.set(str(payload.get("box_artifact_mode", "") or "raw+annotated+pdf"))
+        self.box_parent_folder_var.set(str(payload.get("box_parent_folder_id", "") or ""))
+        self.box_folder_prefix_var.set(str(payload.get("box_folder_prefix", "") or "fly_assay"))
+        self.box_config_file_var.set(str(payload.get("box_config_file", "") or ""))
+        self.box_tokens_file_var.set(str(payload.get("box_tokens_file", "") or ""))
         if getattr(self, "results_text", None) is not None and self.results_text.winfo_exists():
             self.results_text.delete("1.0", tk.END)
             self.results_text.insert(tk.END, json.dumps(payload, indent=2, sort_keys=True))
@@ -1320,6 +1416,48 @@ class RemoteAssayWorkspace(ttk.Frame):
             f"Activating assay profile {profile_name}",
             lambda: self._require_controller().activate_assay_profile(profile_name),
             lambda _payload: self.refresh_workspace(),
+        )
+
+    def _debug_profile_fields(self) -> dict[str, Any]:
+        try:
+            snapshot_interval_s = float(self.snapshot_interval_var.get() or 1.0)
+        except (TypeError, ValueError):
+            snapshot_interval_s = 1.0
+        return {
+            "auto_process_after_recording": bool(self.auto_process_after_recording_var.get()),
+            "save_mask_video": bool(self.save_mask_video_var.get()),
+            "save_preview_snapshots": bool(self.save_preview_snapshots_var.get()),
+            "snapshot_interval_s": max(0.1, snapshot_interval_s),
+            "box_enabled": bool(self.box_enabled_var.get()),
+            "box_upload_after_processing": bool(self.box_upload_after_processing_var.get()),
+            "box_upload_after_recording": bool(self.box_upload_after_recording_var.get()),
+            "box_upload_backgrounds": bool(self.box_upload_backgrounds_var.get()),
+            "box_artifact_mode": self.box_artifact_mode_var.get().strip() or "raw+annotated+pdf",
+            "box_parent_folder_id": self.box_parent_folder_var.get().strip(),
+            "box_folder_prefix": self.box_folder_prefix_var.get().strip() or "fly_assay",
+            "box_config_file": self.box_config_file_var.get().strip(),
+            "box_tokens_file": self.box_tokens_file_var.get().strip(),
+        }
+
+    def apply_box_upload_defaults(self) -> None:
+        self.box_enabled_var.set(True)
+        self.box_upload_after_processing_var.set(True)
+        self.box_upload_after_recording_var.set(False)
+        self.box_upload_backgrounds_var.set(False)
+        self.box_artifact_mode_var.set("raw+annotated+pdf")
+        self.box_folder_prefix_var.set(self.box_folder_prefix_var.get().strip() or "fly_assay")
+        self.save_debug_profile_settings()
+
+    def save_debug_profile_settings(self) -> None:
+        fields = self._debug_profile_fields()
+        self._run_async(
+            "Saving assay debug processing/upload settings",
+            lambda: self._require_controller().patch_assay_profile_fields(**fields),
+            lambda payload: (
+                self._apply_status_payload(payload.get("status", {})),
+                self._apply_summary_payload(payload.get("summary", {})),
+                self._append_results_payload(payload),
+            ),
         )
 
     def capture_preview(self) -> None:
