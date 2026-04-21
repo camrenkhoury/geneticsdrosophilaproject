@@ -807,6 +807,7 @@ Primary GitHub Contributor/Owner: Camren J. Khoury
 - Machine Learning (Classification) Model Development + Deployment: **Avi Patel**, Dylan Britch, Ainara Garcia
 - Database Creation: **Ainara Garcia**, Dylan Britch, Avi Patel
 - Networking and Automation: **Camren J. Khoury**
+- GUI: **Camren J. Khoury**, Avi Patel
 
 **Systems Integration**
 - Integration: **Camren J. Khoury**, William McGlone
