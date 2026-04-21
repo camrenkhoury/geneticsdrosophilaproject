@@ -5,6 +5,7 @@ import os
 import subprocess
 import tempfile
 import threading
+import time
 import contextlib
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
@@ -565,7 +566,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         help_text = (
             "How to calibrate:\n"
             "1) A clean assay background loads or captures automatically.\n"
-            "2) Draw one box around each visible assay tube.\n"
+            "2) Draw one box around each visible assay tube. After the first box, later boxes reuse the first box's top/bottom and only take the width you drag.\n"
             "3) Save Calibration.\n"
             "4) Test Calibration and confirm the overlay looks right.\n"
             "5) Continue to the assay workspace.\n\n"
@@ -772,7 +773,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         point = self._canvas_to_calibration_point(event)
         if point is None:
             return
-        self._calibration_draft_region = self._region_from_points(self._calibration_drag_start, point)
+            self._calibration_draft_region = self._region_from_points(self._calibration_drag_start, point)
         self._refresh_calibration_canvas()
 
     def _on_calibration_drag_end(self, event: tk.Event) -> None:
@@ -797,13 +798,16 @@ class RemoteAssayWorkspace(ttk.Frame):
         self._refresh_calibration_canvas()
         self._update_calibration_workflow_state()
 
-    @staticmethod
-    def _region_from_points(start: tuple[int, int], end: tuple[int, int]) -> dict[str, int]:
+    def _region_from_points(self, start: tuple[int, int], end: tuple[int, int]) -> dict[str, int]:
         x1, y1 = start
         x2, y2 = end
         x = min(x1, x2)
+        w = abs(x2 - x1)
+        if self._calibration_regions:
+            first = self._calibration_regions[0]
+            return {"x": x, "y": int(first["y"]), "w": w, "h": int(first["h"])}
         y = min(y1, y2)
-        return {"x": x, "y": y, "w": abs(x2 - x1), "h": abs(y2 - y1)}
+        return {"x": x, "y": y, "w": w, "h": abs(y2 - y1)}
 
     def undo_calibration_region(self) -> None:
         if self._calibration_regions:
@@ -995,8 +999,9 @@ class RemoteAssayWorkspace(ttk.Frame):
         elif region_count == 0:
             self.calibration_step_var.set("Step 1: draw tube boxes")
             self.calibration_instruction_var.set(
-                "The background is loaded. Drag boxes directly on the image, one box around each tube. "
-                "Save/Test stay disabled until at least one box is drawn."
+                "The background is loaded. Drag the first box around a full tube. Later boxes reuse that first "
+                "box's top/bottom and only use the horizontal width you drag. Save/Test stay disabled until at "
+                "least one box is drawn."
             )
             self.calibration_ready_var.set("Blocked: draw at least one tube box on the image before saving.")
         elif not self._guided_calibration_saved:
@@ -1364,26 +1369,66 @@ class RemoteAssayWorkspace(ttk.Frame):
         )
 
     def run_assay(self) -> None:
+        def post_progress(message: str) -> None:
+            self.after(
+                0,
+                lambda text=message: (
+                    self._set_workspace_status(text),
+                    self.preview_info_var.set(text),
+                    self._append_log(text),
+                ),
+            )
+
         def worker() -> dict[str, Any]:
             controller = self._require_controller()
             accepted = controller.run_integrated3_assay()
             status = dict(accepted or {})
             if not status.get("accepted", False):
+                post_progress(f"Integrated3 assay was not accepted: {status.get('message', 'Command rejected.')}")
                 return status
+            post_progress(str(status.get("message") or "Integrated3 assay accepted. Waiting for backend progress..."))
             deadline = threading.Event()
+            started_at = time.monotonic()
+            last_report_at = 0.0
+            last_state = status
             while not deadline.wait(0.5):
                 polled = controller.get_status_fresh()
+                last_state = dict(polled or {})
                 current_task = str(polled.get("current_task") or "")
                 task_state = str(polled.get("task_state") or "")
                 latest_message = str(polled.get("latest_message") or "")
-                if current_task == "assay" or task_state == "ASSAY_RUNNING":
+                now = time.monotonic()
+                if now - last_report_at >= 2.0:
+                    last_report_at = now
+                    post_progress(
+                        "Integrated3 assay running: "
+                        f"task={current_task or '--'} state={task_state or '--'} "
+                        f"message={latest_message or '--'}"
+                    )
+                if current_task in {"assay", "integrated3_assay"} or task_state == "ASSAY_RUNNING":
+                    if now - started_at > 240.0:
+                        raise RuntimeError(
+                            "Timed out waiting for Integrated3 assay to finish. "
+                            f"Last state: task={current_task or '--'} state={task_state or '--'} "
+                            f"message={latest_message or '--'}"
+                        )
                     continue
                 if task_state == "ASSAY_ERROR":
                     raise RuntimeError(latest_message or "Integrated3 assay failed.")
                 if task_state == "ASSAY_COMPLETE" or current_task == "":
+                    post_progress(
+                        "Integrated3 assay completed: "
+                        f"state={task_state or '--'} message={latest_message or '--'}"
+                    )
                     return polled
+                if now - started_at > 240.0:
+                    raise RuntimeError(
+                        "Timed out waiting for Integrated3 assay to finish. "
+                        f"Last state: {last_state}"
+                    )
 
         def on_success(_payload: dict[str, Any]) -> None:
+            self._set_workspace_status("Integrated3 assay complete. Loading latest results.")
             self.refresh_workspace()
             self.load_manifest()
 
