@@ -852,18 +852,37 @@ class RemoteAssayWorkspace(ttk.Frame):
         self._guided_calibration_busy_message = "Testing calibration overlay..."
         self._update_calibration_workflow_state()
 
-        def on_success(_payload: dict[str, Any]) -> None:
+        def worker() -> dict[str, Any]:
+            controller = self._require_controller()
+            payload = controller.test_assay_calibration(calibration)
+            mode = str(payload.get("mode", "") or "calibration").strip().lower()
+            image_bytes = controller.get_assay_preview_image(mode)
+            if not image_bytes and mode != "calibration":
+                mode = "calibration"
+                image_bytes = controller.get_assay_preview_image(mode)
+            if not image_bytes:
+                raise RuntimeError("Calibration test finished, but no tested preview image was returned by the Pi.")
+            return {"payload": payload, "mode": mode, "image_bytes": image_bytes}
+
+        def on_success(result: dict[str, Any]) -> None:
             self._guided_calibration_tested = True
             self._guided_calibration_busy = False
             self._guided_calibration_busy_message = ""
-            self.preview_mode_var.set("calibration")
-            self.load_preview_image("calibration")
-            self.calibration_ready_var.set("Calibration tested. Continue to Assay is now enabled.")
+            mode = str(result.get("mode", "") or "calibration")
+            image_bytes = result.get("image_bytes")
+            if not isinstance(image_bytes, (bytes, bytearray)):
+                raise RuntimeError("Calibration test did not return displayable preview bytes.")
+            self.preview_mode_var.set(mode)
+            self._set_calibration_image_from_bytes(bytes(image_bytes))
+            self.preview_info_var.set(f"Showing tested assay calibration preview ({mode}).")
+            self.calibration_ready_var.set(
+                "Calibration test passed. The tested overlay is shown here. Continue to Assay is now enabled."
+            )
             self._update_calibration_workflow_state()
 
         self._run_async(
             "Testing assay calibration",
-            lambda: self._require_controller().test_assay_calibration(calibration),
+            worker,
             on_success,
         )
 
