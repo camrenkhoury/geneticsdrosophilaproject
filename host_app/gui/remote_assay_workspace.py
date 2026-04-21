@@ -1336,21 +1336,37 @@ class RemoteAssayWorkspace(ttk.Frame):
     def load_preview_image(self, mode: str) -> None:
         mode_key = str(mode or "calibration").strip().lower()
 
-        def worker() -> tuple[str, bytes | None]:
-            controller = self._require_controller()
-            if mode_key == "background":
-                return mode_key, controller.get_assay_background_image("current")
-            return mode_key, controller.get_assay_preview_image(mode_key)
+        self._run_async(
+            f"Loading assay {mode_key} image",
+            lambda: self._fetch_preview_image(mode_key),
+            self._apply_preview_image_result,
+        )
 
-        def on_success(result: tuple[str, bytes | None]) -> None:
-            loaded_mode, image_bytes = result
-            if not image_bytes:
-                self.preview_info_var.set(f"No preview image is available for mode '{loaded_mode}'.")
+    def load_preview_image_silent(self, mode: str) -> None:
+        mode_key = str(mode or "calibration").strip().lower()
+
+        def task() -> None:
+            try:
+                result = self._fetch_preview_image(mode_key)
+            except Exception:
                 return
-            self.preview_info_var.set(f"Showing {loaded_mode} preview.")
-            self._set_preview_from_bytes(image_bytes)
+            self.after(0, lambda: self._apply_preview_image_result(result))
 
-        self._run_async(f"Loading assay {mode_key} image", worker, on_success)
+        threading.Thread(target=task, daemon=True).start()
+
+    def _fetch_preview_image(self, mode_key: str) -> tuple[str, bytes | None]:
+        controller = self._require_controller()
+        if mode_key == "background":
+            return mode_key, controller.get_assay_background_image("current")
+        return mode_key, controller.get_assay_preview_image(mode_key)
+
+    def _apply_preview_image_result(self, result: tuple[str, bytes | None]) -> None:
+        loaded_mode, image_bytes = result
+        if not image_bytes:
+            self.preview_info_var.set(f"No preview image is available for mode '{loaded_mode}'.")
+            return
+        self.preview_info_var.set(f"Showing {loaded_mode} preview.")
+        self._set_preview_from_bytes(image_bytes)
 
     def capture_background(self) -> None:
         self._run_async(
@@ -1456,6 +1472,7 @@ class RemoteAssayWorkspace(ttk.Frame):
 
         def worker() -> dict[str, Any]:
             controller = self._require_controller()
+            post_progress("Sending Integrated3 assay recording request to the Pi...")
             accepted = controller.run_integrated3_assay()
             status = dict(accepted or {})
             if not status.get("accepted", False):
@@ -1480,6 +1497,7 @@ class RemoteAssayWorkspace(ttk.Frame):
                         f"task={current_task or '--'} state={task_state or '--'} "
                         f"message={latest_message or '--'}"
                     )
+                    self.after(0, lambda: self.load_preview_image_silent("raw"))
                 if current_task in {"assay", "integrated3_assay"} or task_state == "ASSAY_RUNNING":
                     if now - started_at > 240.0:
                         raise RuntimeError(

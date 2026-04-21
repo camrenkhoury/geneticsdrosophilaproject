@@ -740,9 +740,42 @@ def capture_assay_preview_from_saved_settings(
     return _render_assay_preview(mode=mode, calibration_override=calibration_override)
 
 
-def run_integrated3_assay_from_active_profile() -> dict[str, Any]:
-    service = _get_remote_assay_service()
-    result = service.run_assay()
+def run_integrated3_assay_from_active_profile(
+    *,
+    logger: Callable[[str], None] | None = None,
+    preview_callback: Callable[[dict[str, Any]], None] | None = None,
+    stop_event=None,
+) -> dict[str, Any]:
+    controller = _get_remote_assay_controller()
+    service = controller.assay
+
+    def _preview_proxy(payload: dict[str, Any]) -> None:
+        preview_path_text = str(payload.get("preview_path", "") or "").strip()
+        if preview_path_text:
+            try:
+                live_preview_path = _copy_file_if_needed(Path(preview_path_text), _assay_preview_path("raw"))
+                payload = dict(payload)
+                payload["preview_path"] = str(live_preview_path)
+            except Exception:
+                pass
+        if preview_callback is not None:
+            preview_callback(payload)
+
+    result = service.run_assay(
+        logger=logger,
+        preview_callback=_preview_proxy,
+        stop_event=stop_event,
+    )
+    run_dir = str(result.get("run_dir", "") or "")
+    raw_path = str(result.get("raw_video_path", "") or "")
+    state_payload: dict[str, Any] = {}
+    if run_dir:
+        state_payload["run_dir"] = run_dir
+    if raw_path:
+        state_payload["preview_path"] = raw_path
+    if state_payload:
+        controller._set_assay_state(state_payload)
+    controller.refresh_readiness()
     return {
         "ok": True,
         "message": "Integrated3 assay recording completed.",

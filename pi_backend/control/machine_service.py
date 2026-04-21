@@ -727,8 +727,43 @@ class MachineService:
         self.runtime_state.set_orchestrator_state(OrchestratorState.TASK_STARTING, "Starting Integrated3 assay task.")
         self.runtime_state.set_vibration_on(True)
         self.logger.info("Integrated3 assay started.")
+        last_preview_log_at = 0.0
+
+        def progress_logger(message: str) -> None:
+            text = str(message or "").strip()
+            if not text:
+                return
+            self.runtime_state.append_log("INFO", text)
+            self.logger.info(text)
+
+        def preview_progress(payload: dict[str, Any]) -> None:
+            nonlocal last_preview_log_at
+            import time
+
+            now = time.monotonic()
+            if now - last_preview_log_at < 1.0:
+                return
+            last_preview_log_at = now
+            elapsed = payload.get("time_s")
+            frame_index = payload.get("frame_index")
+            run_dir = payload.get("run_dir")
+            pieces = ["Recording Integrated3 assay"]
+            if elapsed is not None:
+                try:
+                    pieces.append(f"t={float(elapsed):0.1f}s")
+                except (TypeError, ValueError):
+                    pass
+            if frame_index is not None:
+                pieces.append(f"frame={frame_index}")
+            if run_dir:
+                pieces.append(f"run={run_dir}")
+            self.runtime_state.append_log("INFO", " ".join(pieces))
+
         try:
-            result = fin6_bridge.run_integrated3_assay_from_active_profile()
+            result = fin6_bridge.run_integrated3_assay_from_active_profile(
+                logger=progress_logger,
+                preview_callback=preview_progress,
+            )
         except Exception:
             self.runtime_state.set_vibration_on(False)
             self.runtime_state.fail_task(TaskState.ASSAY_ERROR, "Integrated3 assay failed.")
