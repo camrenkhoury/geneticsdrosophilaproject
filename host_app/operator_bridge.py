@@ -371,6 +371,13 @@ def _write_preview_image(mode: str, image_bgr) -> Path:
     return preview_path.resolve()
 
 
+def _preview_image_or_fallback(preview_images: dict[str, Any], key: str, fallback=None):
+    image = preview_images.get(key)
+    if image is None:
+        return fallback
+    return image
+
+
 def _load_assay_support_modules() -> dict[str, Any]:
     _ensure_stitch_operator_import_paths()
     import cv2
@@ -686,17 +693,18 @@ def _render_assay_preview(
         show_positions=bool(service.profile.analysis.show_positions),
     )
     overlay_bgr = modules["render_assay_calibration_overlay"](background_bgr, calibration)
-    calibration_preview = preview_images.get("calibration")
-    if calibration_preview is None:
-        calibration_preview = overlay_bgr
+    calibration_preview = _preview_image_or_fallback(preview_images, "calibration", overlay_bgr)
     _write_preview_image("background", background_bgr)
     _write_preview_image("calibration", calibration_preview)
-    if preview_images.get("aligned") is not None:
-        _write_preview_image("aligned", preview_images["aligned"])
-    if preview_images.get("annotated") is not None:
-        _write_preview_image("annotated", preview_images["annotated"])
-    if preview_images.get("mask") is not None:
-        _write_preview_image("mask", preview_images["mask"])
+    aligned_preview = _preview_image_or_fallback(preview_images, "aligned")
+    if aligned_preview is not None:
+        _write_preview_image("aligned", aligned_preview)
+    annotated_preview = _preview_image_or_fallback(preview_images, "annotated")
+    if annotated_preview is not None:
+        _write_preview_image("annotated", annotated_preview)
+    mask_preview = _preview_image_or_fallback(preview_images, "mask")
+    if mask_preview is not None:
+        _write_preview_image("mask", mask_preview)
 
     preview_map = {
         "calibration": _assay_preview_path("calibration"),
