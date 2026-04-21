@@ -52,6 +52,23 @@ class RemoteAssayWorkspace(ttk.Frame):
         self._setup_prompt_shown = False
         self.profile_combo = None
         self.calibration_text = None
+        self.workflow_buttons: dict[str, ttk.Button] = {}
+        self.calibration_buttons: dict[str, ttk.Button] = {}
+        self.calibration_canvas: tk.Canvas | None = None
+        self.calibration_step_var = tk.StringVar(value="Step 1: preparing assay background.")
+        self.calibration_instruction_var = tk.StringVar(
+            value="Open Calibration / Config to load or capture a clean assay background."
+        )
+        self.calibration_region_summary_var = tk.StringVar(value="No tube regions defined yet.")
+        self.calibration_ready_var = tk.StringVar(value="Calibration not ready.")
+        self._calibration_image = None
+        self._calibration_photo = None
+        self._calibration_display_box: tuple[int, int, int, int, float] | None = None
+        self._calibration_regions: list[dict[str, int]] = []
+        self._calibration_draft_region: dict[str, int] | None = None
+        self._calibration_drag_start: tuple[int, int] | None = None
+        self._guided_calibration_saved = False
+        self._guided_calibration_tested = False
         self._video_capture = None
         self._video_after_id: str | None = None
         self._video_paused = False
@@ -150,11 +167,11 @@ class RemoteAssayWorkspace(ttk.Frame):
             action_bar.columnconfigure(column, weight=1)
 
         workflow_actions = (
-            ("1) Calibration / Config", self.open_calibration_window),
-            ("2) Run Assay Recording", self.run_assay),
-            ("3) Process Assay", self.process_last),
-            ("4) Export to Box", self.upload_last),
-            ("Capture Image", self.capture_preview),
+            ("calibration", "1) Calibration / Config", self.open_calibration_window),
+            ("run", "2) Run Assay Recording", self.run_assay),
+            ("process", "3) Process Assay", self.process_last),
+            ("export", "4) Export to Box", self.upload_last),
+            ("capture", "Capture Image", self.capture_preview),
         )
         optional_actions = (
             ("Play Raw", lambda: self.play_video_artifact("raw_video")),
@@ -164,16 +181,19 @@ class RemoteAssayWorkspace(ttk.Frame):
             ("Stop", self.stop_playback),
             ("Report / CSV", self.toggle_results),
         )
-        for index, (label, command) in enumerate(workflow_actions):
+        self.workflow_buttons = {}
+        for index, (key, label, command) in enumerate(workflow_actions):
             column_count = len(workflow_actions)
             padx = (0, 4) if index == 0 else ((4, 0) if index == column_count - 1 else 4)
-            ttk.Button(action_bar, text=label, command=command, style="AssayAction.TButton").grid(
+            button = ttk.Button(action_bar, text=label, command=command, style="AssayAction.TButton")
+            button.grid(
                 row=0,
                 column=index,
                 sticky="ew",
                 padx=padx,
                 pady=(0, 4),
             )
+            self.workflow_buttons[key] = button
         for index, (label, command) in enumerate(optional_actions):
             column_count = len(optional_actions)
             column = index
@@ -185,6 +205,7 @@ class RemoteAssayWorkspace(ttk.Frame):
                 padx=padx,
                 pady=(4, 0),
             )
+        self._update_workflow_button_states()
 
     def _build_scrollable_controls(self, parent: ttk.Frame) -> None:
         canvas = tk.Canvas(parent, highlightthickness=0, bd=0, background="#f3f4f6")
@@ -207,6 +228,7 @@ class RemoteAssayWorkspace(ttk.Frame):
 
         row = 0
         row = self._build_profile_card(body, row)
+        row = self._build_preview_card(body, row)
         row = self._build_recording_card(body, row)
         row = self._build_processing_card(body, row)
         row = self._build_upload_card(body, row)
@@ -235,6 +257,8 @@ class RemoteAssayWorkspace(ttk.Frame):
         button_row.grid(row=4, column=0, columnspan=2, sticky="ew")
         ttk.Button(button_row, text="Refresh", command=self.refresh_workspace).pack(side="left")
         ttk.Button(button_row, text="Activate", command=self.activate_selected_profile).pack(side="left", padx=(6, 0))
+        if self.open_setup_callback is not None:
+            ttk.Button(button_row, text="Open Pi Setup", command=self.open_pi_setup).pack(side="left", padx=(6, 0))
         return row + 1
 
     def _build_preview_card(self, parent: ttk.Frame, row: int) -> int:
@@ -416,20 +440,16 @@ class RemoteAssayWorkspace(ttk.Frame):
 
         self.calibration_window = tk.Toplevel(self.winfo_toplevel())
         self.calibration_window.title("Assay Calibration / Config")
-        self.calibration_window.geometry("760x780")
-        self.calibration_window.minsize(620, 560)
+        self.calibration_window.geometry("1180x760")
+        self.calibration_window.minsize(900, 620)
         self.calibration_window.columnconfigure(0, weight=1)
         self.calibration_window.rowconfigure(1, weight=1)
         self.calibration_window.protocol("WM_DELETE_WINDOW", self._close_calibration_window)
 
         guidance = ttk.Label(
             self.calibration_window,
-            text=(
-                "Assay setup workflow: 1) capture or import a clean assay background, "
-                "2) load/edit or create calibration regions, 3) save calibration, "
-                "4) test calibration before running the assay."
-            ),
-            wraplength=720,
+            textvariable=self.calibration_instruction_var,
+            wraplength=1120,
             justify="left",
             foreground="#374151",
             padding=(10, 8),
@@ -443,45 +463,424 @@ class RemoteAssayWorkspace(ttk.Frame):
         self._build_calibration_window_controls(shell)
         self._focus_toplevel(self.calibration_window)
         self.refresh_workspace()
+        self.after(300, self._enter_guided_calibration_flow)
 
     def _build_calibration_window_controls(self, parent: ttk.Frame) -> None:
-        canvas = tk.Canvas(parent, highlightthickness=0, bd=0, background="#f3f4f6")
-        canvas.grid(row=0, column=0, sticky="nsew")
-        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        canvas.configure(yscrollcommand=scrollbar.set)
+        parent.columnconfigure(0, weight=1)
+        parent.columnconfigure(1, weight=0, minsize=320)
+        parent.rowconfigure(0, weight=1)
 
-        body = ttk.Frame(canvas, padding=2)
-        window_id = canvas.create_window((0, 0), window=body, anchor="nw")
-        body.bind("<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window_id, width=event.width))
+        image_frame = ttk.LabelFrame(parent, text="Assay background and tube regions", padding=6)
+        image_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        image_frame.columnconfigure(0, weight=1)
+        image_frame.rowconfigure(0, weight=1)
 
-        row = 0
-        setup_frame = self._card(
-            body,
-            row,
-            "Setup Entry",
-            "Open the current Pi-side setup GUI when first-time calibration needs the full Integrated3 tools.",
+        self.calibration_canvas = tk.Canvas(
+            image_frame,
+            background="#111827",
+            highlightthickness=0,
+            cursor="crosshair",
         )
-        if self.open_setup_callback is not None:
-            ttk.Button(setup_frame, text="Open Pi Setup", command=self.open_pi_setup).grid(
-                row=1, column=0, columnspan=2, sticky="ew"
-            )
-        else:
-            ttk.Label(setup_frame, text="Pi setup launch is unavailable in this mode.").grid(
-                row=1, column=0, columnspan=2, sticky="w"
-            )
-        row += 1
-        row = self._build_background_card(body, row)
-        row = self._build_preview_card(body, row)
-        row = self._build_calibration_card(body, row)
-        body.rowconfigure(row, weight=1)
+        self.calibration_canvas.grid(row=0, column=0, sticky="nsew")
+        self.calibration_canvas.bind("<Configure>", self._refresh_calibration_canvas)
+        self.calibration_canvas.bind("<ButtonPress-1>", self._on_calibration_drag_start)
+        self.calibration_canvas.bind("<B1-Motion>", self._on_calibration_drag_motion)
+        self.calibration_canvas.bind("<ButtonRelease-1>", self._on_calibration_drag_end)
+
+        step_panel = ttk.LabelFrame(parent, text="Guided setup", padding=10)
+        step_panel.grid(row=0, column=1, sticky="nsew")
+        step_panel.columnconfigure(0, weight=1)
+
+        ttk.Label(step_panel, textvariable=self.calibration_step_var, font=("Arial", 11, "bold")).grid(
+            row=0, column=0, sticky="ew", pady=(0, 8)
+        )
+        ttk.Label(
+            step_panel,
+            textvariable=self.calibration_region_summary_var,
+            foreground="#374151",
+            wraplength=290,
+            justify="left",
+        ).grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        ttk.Label(
+            step_panel,
+            textvariable=self.calibration_ready_var,
+            foreground="#4b5563",
+            wraplength=290,
+            justify="left",
+        ).grid(row=2, column=0, sticky="ew", pady=(0, 12))
+
+        self.calibration_buttons = {}
+        actions = (
+            ("retake", "Retake clean background", self.capture_guided_background),
+            ("load", "Load existing calibration", self.load_calibration),
+            ("undo", "Undo last box", self.undo_calibration_region),
+            ("clear", "Clear boxes", self.clear_calibration_regions),
+            ("save_test", "Save + Test Calibration", self.save_and_test_guided_calibration),
+            ("continue", "Continue to Assay", self.continue_from_calibration),
+        )
+        for row, (key, label, command) in enumerate(actions, start=3):
+            button = ttk.Button(step_panel, text=label, command=command)
+            button.grid(row=row, column=0, sticky="ew", pady=3)
+            self.calibration_buttons[key] = button
+
+        help_text = (
+            "How to calibrate:\n"
+            "1) The clean assay background is loaded or captured automatically.\n"
+            "2) Drag one box around each visible assay tube in the image.\n"
+            "3) Use Save + Test Calibration.\n"
+            "4) Continue once the overlay/test image looks correct.\n\n"
+            "Debug-only controls like preview modes and Pi setup launch are in the Debug window."
+        )
+        ttk.Label(step_panel, text=help_text, foreground="#374151", wraplength=290, justify="left").grid(
+            row=9, column=0, sticky="ew", pady=(14, 0)
+        )
+        step_panel.rowconfigure(10, weight=1)
+        self._update_calibration_workflow_state()
 
     def _close_calibration_window(self) -> None:
         if self.calibration_window is not None and self.calibration_window.winfo_exists():
             self.calibration_window.destroy()
         self.calibration_window = None
         self.calibration_text = None
+        self.calibration_canvas = None
+
+    def _assay_setup_ready(self) -> bool:
+        return bool(self.background_var.get().strip()) and bool(self.calibration_path_var.get().strip())
+
+    def _update_workflow_button_states(self) -> None:
+        if not self.workflow_buttons:
+            return
+        setup_ready = self._assay_setup_ready()
+        has_run = bool(self.last_run_var.get().strip())
+        state_by_key = {
+            "calibration": tk.NORMAL,
+            "capture": tk.NORMAL if self.connected else tk.DISABLED,
+            "run": tk.NORMAL if self.connected and setup_ready else tk.DISABLED,
+            "process": tk.NORMAL if self.connected and has_run else tk.DISABLED,
+            "export": tk.NORMAL if self.connected and has_run else tk.DISABLED,
+        }
+        for key, button in self.workflow_buttons.items():
+            if button.winfo_exists():
+                button.configure(state=state_by_key.get(key, tk.NORMAL))
+
+    def _enter_guided_calibration_flow(self) -> None:
+        if self.calibration_window is None or not self.calibration_window.winfo_exists():
+            return
+        if self.background_var.get().strip():
+            self.load_guided_background()
+            return
+        self.capture_guided_background(auto=True)
+
+    def capture_guided_background(self, *, auto: bool = False) -> None:
+        label = "Auto-capturing assay background" if auto else "Retaking assay background"
+
+        def on_success(_payload: dict[str, Any]) -> None:
+            self._guided_calibration_saved = False
+            self._guided_calibration_tested = False
+            self.refresh_workspace()
+            self.load_guided_background()
+
+        self._run_async(label, lambda: self._require_controller().capture_assay_background(), on_success)
+
+    def load_guided_background(self) -> None:
+        def on_success(image_bytes: bytes | None) -> None:
+            if not image_bytes:
+                self.calibration_instruction_var.set(
+                    "No assay background image is available. Use Retake clean background."
+                )
+                self._update_calibration_workflow_state()
+                return
+            self._set_calibration_image_from_bytes(image_bytes)
+            self.preview_info_var.set("Showing assay background for calibration.")
+            self._update_calibration_workflow_state()
+
+        self._run_async(
+            "Loading assay background for calibration",
+            lambda: self._require_controller().get_assay_background_image("current"),
+            on_success,
+        )
+
+    def _set_calibration_image_from_bytes(self, image_bytes: bytes) -> None:
+        try:
+            from PIL import Image
+        except ImportError as exc:
+            raise RuntimeError("Pillow is required to display assay calibration images.") from exc
+        import io
+
+        self._calibration_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        self._set_preview_from_bytes(image_bytes)
+        self._refresh_calibration_canvas()
+
+    def _refresh_calibration_canvas(self, _event=None) -> None:
+        canvas = self.calibration_canvas
+        if canvas is None or not canvas.winfo_exists():
+            return
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 640)
+        height = max(canvas.winfo_height(), 420)
+        if self._calibration_image is None:
+            canvas.create_text(
+                width // 2,
+                height // 2,
+                text="Assay background will appear here.\nA clean background is captured automatically when setup starts.",
+                fill="white",
+                justify="center",
+                font=("Arial", 12, "bold"),
+            )
+            self._calibration_display_box = None
+            return
+        try:
+            from PIL import ImageTk
+        except ImportError:
+            return
+
+        source_w, source_h = self._calibration_image.size
+        scale = min(max(1, width - 20) / source_w, max(1, height - 20) / source_h)
+        draw_w = max(1, int(source_w * scale))
+        draw_h = max(1, int(source_h * scale))
+        offset_x = (width - draw_w) // 2
+        offset_y = (height - draw_h) // 2
+        display = self._calibration_image.resize((draw_w, draw_h))
+        self._calibration_photo = ImageTk.PhotoImage(display)
+        canvas.create_image(offset_x, offset_y, image=self._calibration_photo, anchor="nw")
+        self._calibration_display_box = (offset_x, offset_y, draw_w, draw_h, scale)
+
+        for index, region in enumerate(self._calibration_regions, start=1):
+            self._draw_calibration_region(canvas, region, index, "#22c55e")
+        if self._calibration_draft_region is not None:
+            self._draw_calibration_region(canvas, self._calibration_draft_region, None, "#f59e0b")
+
+    def _draw_calibration_region(
+        self,
+        canvas: tk.Canvas,
+        region: dict[str, int],
+        index: int | None,
+        color: str,
+    ) -> None:
+        if self._calibration_display_box is None:
+            return
+        offset_x, offset_y, _draw_w, _draw_h, scale = self._calibration_display_box
+        x1 = offset_x + int(region["x"] * scale)
+        y1 = offset_y + int(region["y"] * scale)
+        x2 = offset_x + int((region["x"] + region["w"]) * scale)
+        y2 = offset_y + int((region["y"] + region["h"]) * scale)
+        canvas.create_rectangle(x1, y1, x2, y2, outline=color, width=3)
+        canvas.create_line((x1 + x2) // 2, y1, (x1 + x2) // 2, y2, fill=color, width=1, dash=(4, 3))
+        if index is not None:
+            canvas.create_text(
+                x1 + 8,
+                y1 + 8,
+                text=str(index),
+                fill="white",
+                anchor="nw",
+                font=("Arial", 11, "bold"),
+            )
+
+    def _canvas_to_calibration_point(self, event: tk.Event) -> tuple[int, int] | None:
+        if self._calibration_image is None or self._calibration_display_box is None:
+            return None
+        offset_x, offset_y, draw_w, draw_h, scale = self._calibration_display_box
+        x = int(getattr(event, "x", 0))
+        y = int(getattr(event, "y", 0))
+        if x < offset_x or y < offset_y or x > offset_x + draw_w or y > offset_y + draw_h:
+            return None
+        source_w, source_h = self._calibration_image.size
+        image_x = min(source_w - 1, max(0, int((x - offset_x) / scale)))
+        image_y = min(source_h - 1, max(0, int((y - offset_y) / scale)))
+        return image_x, image_y
+
+    def _on_calibration_drag_start(self, event: tk.Event) -> None:
+        point = self._canvas_to_calibration_point(event)
+        if point is None:
+            return
+        self._calibration_drag_start = point
+        self._calibration_draft_region = None
+
+    def _on_calibration_drag_motion(self, event: tk.Event) -> None:
+        if self._calibration_drag_start is None:
+            return
+        point = self._canvas_to_calibration_point(event)
+        if point is None:
+            return
+        self._calibration_draft_region = self._region_from_points(self._calibration_drag_start, point)
+        self._refresh_calibration_canvas()
+
+    def _on_calibration_drag_end(self, event: tk.Event) -> None:
+        if self._calibration_drag_start is None:
+            return
+        point = self._canvas_to_calibration_point(event)
+        start = self._calibration_drag_start
+        self._calibration_drag_start = None
+        self._calibration_draft_region = None
+        if point is None:
+            self._refresh_calibration_canvas()
+            return
+        region = self._region_from_points(start, point)
+        if region["w"] < 10 or region["h"] < 10:
+            self._refresh_calibration_canvas()
+            return
+        self._calibration_regions.append(region)
+        self._calibration_regions.sort(key=lambda item: (item["x"], item["y"]))
+        self._guided_calibration_saved = False
+        self._guided_calibration_tested = False
+        self._refresh_calibration_canvas()
+        self._update_calibration_workflow_state()
+
+    @staticmethod
+    def _region_from_points(start: tuple[int, int], end: tuple[int, int]) -> dict[str, int]:
+        x1, y1 = start
+        x2, y2 = end
+        x = min(x1, x2)
+        y = min(y1, y2)
+        return {"x": x, "y": y, "w": abs(x2 - x1), "h": abs(y2 - y1)}
+
+    def undo_calibration_region(self) -> None:
+        if self._calibration_regions:
+            self._calibration_regions.pop()
+            self._guided_calibration_saved = False
+            self._guided_calibration_tested = False
+            self._refresh_calibration_canvas()
+            self._update_calibration_workflow_state()
+
+    def clear_calibration_regions(self) -> None:
+        self._calibration_regions.clear()
+        self._guided_calibration_saved = False
+        self._guided_calibration_tested = False
+        self._refresh_calibration_canvas()
+        self._update_calibration_workflow_state()
+
+    def _build_guided_calibration_payload(self) -> dict[str, Any]:
+        if self._calibration_image is None:
+            raise ValueError("Load or capture an assay background before saving calibration.")
+        if not self._calibration_regions:
+            raise ValueError("Draw at least one tube box before saving calibration.")
+        width, height = self._calibration_image.size
+        vials: list[dict[str, Any]] = []
+        for index, region in enumerate(sorted(self._calibration_regions, key=lambda item: (item["x"], item["y"])), start=1):
+            center_x = int(region["x"] + region["w"] // 2)
+            vials.append(
+                {
+                    "physical_index": index,
+                    "assay_index": index,
+                    "enabled": True,
+                    "roi_xywh": [int(region["x"]), int(region["y"]), int(region["w"]), int(region["h"])],
+                    "top_point_px": [center_x, int(region["y"])],
+                    "baseline_point_px": [center_x, int(region["y"] + region["h"] - 1)],
+                    "quad_points_px": None,
+                    "tube_height_mm": None,
+                    "tube_width_mm": None,
+                    "label": f"Vial {index}",
+                    "group_id": None,
+                }
+            )
+        return {
+            "schema_version": 4,
+            "background_path": self.background_var.get().strip() or None,
+            "image_shape_hw": [int(height), int(width)],
+            "ignored_physical_indices": [],
+            "editor_mode": "host_remote_rectangles",
+            "editor_meta": {"source": "remote_assay_workspace", "tool": "guided_rectangles"},
+            "vials": vials,
+        }
+
+    def save_and_test_guided_calibration(self) -> None:
+        calibration = self._build_guided_calibration_payload()
+
+        def worker() -> dict[str, Any]:
+            controller = self._require_controller()
+            saved = controller.save_assay_calibration(calibration)
+            tested = controller.test_assay_calibration(calibration)
+            return {"saved": saved, "tested": tested}
+
+        def on_success(payload: dict[str, Any]) -> None:
+            saved = payload.get("saved", {}) or {}
+            self.calibration_path_var.set(str(saved.get("calibration_path", "") or self.calibration_path_var.get()))
+            self._guided_calibration_saved = True
+            self._guided_calibration_tested = True
+            self.preview_mode_var.set("calibration")
+            self.load_preview_image("calibration")
+            self.refresh_workspace()
+            self._update_calibration_workflow_state()
+
+        self._run_async("Saving and testing assay calibration", worker, on_success)
+
+    def continue_from_calibration(self) -> None:
+        if not self._guided_calibration_tested:
+            messagebox.showwarning(
+                "Calibration Not Ready",
+                "Save + Test Calibration before continuing to the assay workspace.",
+                parent=self.calibration_window or self.winfo_toplevel(),
+            )
+            return
+        self._close_calibration_window()
+        self._set_workspace_status("Assay calibration complete. Run assay recording is now available.")
+        self._update_workflow_button_states()
+
+    def _load_regions_from_calibration_payload(self, calibration: dict[str, Any]) -> None:
+        regions: list[dict[str, int]] = []
+        for vial in calibration.get("vials", []) or []:
+            roi = vial.get("roi_xywh")
+            if isinstance(roi, list) and len(roi) >= 4:
+                try:
+                    x, y, w, h = (int(round(float(value))) for value in roi[:4])
+                except (TypeError, ValueError):
+                    continue
+                if w > 0 and h > 0:
+                    regions.append({"x": x, "y": y, "w": w, "h": h})
+        self._calibration_regions = sorted(regions, key=lambda item: (item["x"], item["y"]))
+        self._guided_calibration_saved = bool(regions)
+        self._guided_calibration_tested = False
+        self._refresh_calibration_canvas()
+        self._update_calibration_workflow_state()
+
+    def _update_calibration_workflow_state(self) -> None:
+        has_image = self._calibration_image is not None
+        region_count = len(self._calibration_regions)
+        setup_ready = self._assay_setup_ready() or self._guided_calibration_tested
+        self.calibration_region_summary_var.set(
+            f"{region_count} tube region{'s' if region_count != 1 else ''} defined."
+            if region_count
+            else "No tube regions defined yet."
+        )
+        if not has_image:
+            self.calibration_step_var.set("Step 1: capture clean assay background")
+            self.calibration_instruction_var.set(
+                "Assay setup starts by loading or capturing a clean background image. "
+                "If none exists, it is captured automatically."
+            )
+            self.calibration_ready_var.set("Waiting for assay background.")
+        elif region_count == 0:
+            self.calibration_step_var.set("Step 2: draw tube boxes")
+            self.calibration_instruction_var.set(
+                "Drag boxes directly on the assay background, one box around each tube region. "
+                "Use Retake only if the background image is wrong."
+            )
+            self.calibration_ready_var.set("Draw at least one tube box to enable save/test.")
+        elif not self._guided_calibration_tested:
+            self.calibration_step_var.set("Step 3: save and test calibration")
+            self.calibration_instruction_var.set(
+                "Review the green tube boxes. Use Undo/Clear if needed, then Save + Test Calibration."
+            )
+            self.calibration_ready_var.set("Calibration regions are defined but not tested yet.")
+        else:
+            self.calibration_step_var.set("Step 4: continue")
+            self.calibration_instruction_var.set(
+                "Calibration was saved and tested. Continue to the main assay workflow."
+            )
+            self.calibration_ready_var.set("Calibration ready.")
+
+        state_by_key = {
+            "retake": tk.NORMAL if self.connected else tk.DISABLED,
+            "load": tk.NORMAL if self.connected and has_image else tk.DISABLED,
+            "undo": tk.NORMAL if region_count else tk.DISABLED,
+            "clear": tk.NORMAL if region_count else tk.DISABLED,
+            "save_test": tk.NORMAL if self.connected and has_image and region_count else tk.DISABLED,
+            "continue": tk.NORMAL if setup_ready else tk.DISABLED,
+        }
+        for key, button in self.calibration_buttons.items():
+            if button.winfo_exists():
+                button.configure(state=state_by_key.get(key, tk.NORMAL))
+        self._update_workflow_button_states()
 
     def open_pi_setup(self) -> None:
         self._append_log("Started: Opening Pi setup GUI.")
@@ -548,6 +947,8 @@ class RemoteAssayWorkspace(ttk.Frame):
             state_text = f"{state_text} | assay unavailable"
         self.connection_var.set(state_text)
         self.connection_label.configure(bg=color)
+        self._update_workflow_button_states()
+        self._update_calibration_workflow_state()
 
     def _append_log(self, message: str) -> None:
         if getattr(self, "workspace_log", None) is not None and self.workspace_log.winfo_exists():
@@ -638,6 +1039,8 @@ class RemoteAssayWorkspace(ttk.Frame):
         if getattr(self, "results_text", None) is not None and self.results_text.winfo_exists():
             self.results_text.delete("1.0", tk.END)
             self.results_text.insert(tk.END, json.dumps(payload, indent=2, sort_keys=True))
+        self._update_workflow_button_states()
+        self._update_calibration_workflow_state()
 
     def _apply_summary_payload(self, payload: dict[str, Any]) -> None:
         if payload:
@@ -660,6 +1063,7 @@ class RemoteAssayWorkspace(ttk.Frame):
             self.results_text.delete("1.0", tk.END)
             self.results_text.insert(tk.END, json.dumps(manifest, indent=2, sort_keys=True))
         self.results_status_var.set(f"Latest assay run: {Path(run_dir).name}" if run_dir else "No assay run loaded.")
+        self._update_workflow_button_states()
 
     def activate_selected_profile(self) -> None:
         profile_name = self.profile_combo_var.get().strip()
@@ -746,12 +1150,13 @@ class RemoteAssayWorkspace(ttk.Frame):
 
     def load_calibration(self) -> None:
         def on_success(payload: dict[str, Any]) -> None:
-            if self.calibration_text is None or not self.calibration_text.winfo_exists():
-                self.open_calibration_window()
             calibration = payload.get("calibration", {})
-            self.calibration_text.delete("1.0", tk.END)
-            self.calibration_text.insert(tk.END, json.dumps(calibration, indent=2, sort_keys=True))
+            if self.calibration_text is not None and self.calibration_text.winfo_exists():
+                self.calibration_text.delete("1.0", tk.END)
+                self.calibration_text.insert(tk.END, json.dumps(calibration, indent=2, sort_keys=True))
             self.calibration_path_var.set(str(payload.get("calibration_path", "") or ""))
+            if isinstance(calibration, dict):
+                self._load_regions_from_calibration_payload(calibration)
             self.preview_mode_var.set("calibration")
             self.load_preview_image("background")
 

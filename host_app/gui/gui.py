@@ -1103,7 +1103,24 @@ class DrosophilaGUI:
             )
         if not payload.get("ok", True):
             raise RuntimeError(str(payload.get("message", "Channel calibration save failed.")))
+        self._capture_assay_background_after_channel_calibration()
         return payload
+
+    def _capture_assay_background_after_channel_calibration(self) -> None:
+        if not self.is_remote_mode() or not self.remote_connected or self.remote_controller is None:
+            return
+        try:
+            self.log_message("Capturing assay background after Channel Detection Setup save.")
+            payload = self.remote_controller.capture_assay_background()
+            if not payload.get("ok", True):
+                self.log_message(
+                    "Assay background auto-capture after Channel Detection Setup did not complete: "
+                    f"{payload.get('message', 'unknown error')}"
+                )
+                return
+            self.log_message("Assay background auto-captured after Channel Detection Setup save.")
+        except Exception as exc:
+            self.log_message(f"Assay background auto-capture after Channel Detection Setup failed: {exc}")
 
     def _get_channel_setup_preview_bytes(self) -> bytes | None:
         if self.is_remote_mode():
