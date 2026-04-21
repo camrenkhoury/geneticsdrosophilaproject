@@ -449,8 +449,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         ttk.Button(second_row, text="Per-Fly CSV", command=lambda: self.fetch_artifact("per_fly_summary_csv")).pack(side="left", padx=(6, 0))
         third_row = ttk.Frame(frame)
         third_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        ttk.Button(third_row, text="Report PDF", command=lambda: self.fetch_artifact("report_pdf")).pack(side="left")
-        ttk.Button(third_row, text="Graphs PDF", command=lambda: self.fetch_artifact("graphs_report_pdf")).pack(side="left", padx=(6, 0))
+        ttk.Button(third_row, text="Report Viewer", command=self.open_report_viewer).pack(side="left")
         ttk.Button(third_row, text="Processing JSON", command=lambda: self.fetch_artifact("processing_json")).pack(side="left", padx=(6, 0))
         fourth_row = ttk.Frame(frame)
         fourth_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0))
@@ -1733,6 +1732,23 @@ class RemoteAssayWorkspace(ttk.Frame):
     def load_manifest(self) -> None:
         self._run_async("Loading latest assay manifest", lambda: self._require_controller().get_latest_assay_manifest(), self._apply_manifest_payload)
 
+    def open_report_viewer(self) -> None:
+        def worker() -> dict[str, Path | str]:
+            result: dict[str, Path | str] = {}
+            for key in ("graphs_report_pdf", "report_pdf"):
+                try:
+                    path, _artifact_kind = self._download_artifact(key)
+                    result[key] = path
+                except Exception as exc:
+                    result[f"{key}_error"] = str(exc)
+            if "graphs_report_pdf" not in result and "report_pdf" not in result:
+                raise RuntimeError(
+                    "No assay report PDFs are available yet. Process the assay first so report.pdf and graphs_report.pdf are generated."
+                )
+            return result
+
+        self._run_async("Opening assay report viewer", worker, self._show_report_viewer_window)
+
     def fetch_artifact(self, kind: str) -> None:
         kind_key = str(kind).strip().lower()
 
@@ -1752,11 +1768,162 @@ class RemoteAssayWorkspace(ttk.Frame):
                 self._set_preview_from_bytes(path.read_bytes())
                 self.preview_info_var.set(f"Showing assay graph: {path.name}.")
                 self.results_status_var.set(f"Loaded {path.name} into preview.")
+            elif artifact_kind in {"report_pdf", "graphs_report_pdf"}:
+                self._show_report_viewer_window({artifact_kind: path})
+                self.results_status_var.set(f"Opened {path.name} in report viewer.")
             else:
                 self._open_file(path)
                 self.results_status_var.set(f"Opened {path.name}.")
 
         self._run_async(f"Fetching assay artifact {kind_key}", worker, on_success)
+
+    def _show_report_viewer_window(self, payload: dict[str, Path | str]) -> None:
+        window = tk.Toplevel(self.winfo_toplevel())
+        window.title("Assay Report Viewer")
+        window.geometry("1100x820")
+        window.minsize(760, 520)
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(1, weight=1)
+
+        header = ttk.Frame(window, padding=(8, 6, 8, 4))
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="Assay Report Viewer", font=("Arial", 13, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            header,
+            text="Graphs open first. Use the Raw Data / Full Report tab for the complete PDF tables and summaries.",
+            foreground="#4b5563",
+        ).grid(row=1, column=0, sticky="w")
+        ttk.Button(header, text="Close", command=window.destroy).grid(row=0, column=1, rowspan=2, sticky="e")
+
+        notebook = ttk.Notebook(window)
+        notebook.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+
+        graphs_frame = ttk.Frame(notebook)
+        report_frame = ttk.Frame(notebook)
+        notebook.add(graphs_frame, text="Graphs")
+        notebook.add(report_frame, text="Raw Data / Full Report")
+
+        graphs_path = payload.get("graphs_report_pdf")
+        report_path = payload.get("report_pdf")
+        graphs_error = str(payload.get("graphs_report_pdf_error", "") or "")
+        report_error = str(payload.get("report_pdf_error", "") or "")
+
+        self._build_pdf_view_tab(
+            graphs_frame,
+            Path(graphs_path) if isinstance(graphs_path, Path) else None,
+            missing_message=graphs_error or "No graph report PDF is available yet.",
+        )
+        self._build_pdf_view_tab(
+            report_frame,
+            Path(report_path) if isinstance(report_path, Path) else None,
+            missing_message=report_error or "No full assay report PDF is available yet.",
+        )
+        notebook.select(graphs_frame)
+        window.update_idletasks()
+        window.lift()
+        window.focus_force()
+
+    def _build_pdf_view_tab(self, parent: ttk.Frame, path: Path | None, *, missing_message: str) -> None:
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(1, weight=1)
+
+        toolbar = ttk.Frame(parent, padding=(4, 4, 4, 2))
+        toolbar.grid(row=0, column=0, sticky="ew")
+        toolbar.columnconfigure(0, weight=1)
+        status_var = tk.StringVar(value="")
+        ttk.Label(toolbar, textvariable=status_var, foreground="#4b5563").grid(row=0, column=0, sticky="w")
+        if path is not None:
+            ttk.Button(toolbar, text="Open Externally", command=lambda p=path: self._open_file(p)).grid(
+                row=0,
+                column=1,
+                sticky="e",
+                padx=(8, 0),
+            )
+
+        canvas = tk.Canvas(parent, bg="#f3f4f6", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        content = ttk.Frame(canvas)
+        content.columnconfigure(0, weight=1)
+        content_window = canvas.create_window((0, 0), window=content, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=1, column=0, sticky="nsew")
+        scrollbar.grid(row=1, column=1, sticky="ns")
+
+        def update_scroll_region(_event=None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def fit_content_width(event) -> None:
+            canvas.itemconfigure(content_window, width=event.width)
+
+        def on_mousewheel(event) -> None:
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind("<Configure>", fit_content_width)
+        content.bind("<Configure>", update_scroll_region)
+        canvas.bind("<Enter>", lambda _event: canvas.bind_all("<MouseWheel>", on_mousewheel))
+        canvas.bind("<Leave>", lambda _event: canvas.unbind_all("<MouseWheel>"))
+
+        if path is None or not path.exists():
+            status_var.set(missing_message)
+            ttk.Label(content, text=missing_message, foreground="#b91c1c", wraplength=760, justify="left").grid(
+                row=0,
+                column=0,
+                sticky="nw",
+                padx=24,
+                pady=24,
+            )
+            return
+
+        try:
+            import fitz
+            from PIL import Image, ImageTk
+        except ImportError:
+            status_var.set("PyMuPDF is required for in-app PDF scrolling.")
+            message = (
+                "This report was downloaded, but the host environment cannot render PDF pages inside Tk yet.\n\n"
+                "Install the updated requirements, including PyMuPDF, then reopen this viewer.\n\n"
+                f"Downloaded file: {path}"
+            )
+            ttk.Label(content, text=message, foreground="#b91c1c", wraplength=820, justify="left").grid(
+                row=0,
+                column=0,
+                sticky="nw",
+                padx=24,
+                pady=24,
+            )
+            return
+
+        photos: list[Any] = []
+        setattr(content, "_pdf_page_photos", photos)
+        try:
+            doc = fitz.open(str(path))
+            page_count = len(doc)
+            status_var.set(f"Showing {path.name} ({page_count} pages). Scroll to move through pages.")
+            for page_index, page in enumerate(doc, start=1):
+                page_label = ttk.Label(content, text=f"Page {page_index} of {page_count}", font=("Arial", 10, "bold"))
+                page_label.grid(row=(page_index - 1) * 2, column=0, sticky="w", padx=18, pady=(14, 4))
+
+                target_width_px = 980.0
+                zoom = max(0.75, min(1.75, target_width_px / max(1.0, float(page.rect.width))))
+                matrix = fitz.Matrix(zoom, zoom)
+                pix = page.get_pixmap(matrix=matrix, alpha=False)
+                image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                photo = ImageTk.PhotoImage(image)
+                photos.append(photo)
+
+                image_label = ttk.Label(content, image=photo)
+                image_label.grid(row=(page_index - 1) * 2 + 1, column=0, sticky="n", padx=18, pady=(0, 12))
+            doc.close()
+        except Exception as exc:
+            status_var.set(f"Failed to render {path.name}.")
+            ttk.Label(
+                content,
+                text=f"Failed to render PDF in the assay workspace:\n{exc}\n\nDownloaded file: {path}",
+                foreground="#b91c1c",
+                wraplength=820,
+                justify="left",
+            ).grid(row=0, column=0, sticky="nw", padx=24, pady=24)
 
     def _download_artifact(self, kind_key: str) -> tuple[Path, str]:
         controller = self._require_controller()
