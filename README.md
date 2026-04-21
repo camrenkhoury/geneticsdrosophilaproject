@@ -641,33 +641,369 @@ Current backend endpoint groups include:
 - **`GET /artifacts/assay/run/latest/velocity_plot`**
   - Mean height/velocity-style graph PNG
 
-## **Dependencies**
+## **Installation Steps**
 
-Tracked requirement entry points:
+This section is for installing the software dependencies needed to launch the host GUI and run the Raspberry Pi backend. It does not cover the user operation workflow.
+
+The repository uses separate requirement entry points because the host computer and Raspberry Pi do different jobs:
 
 - **Host GUI:** `requirements/host_requirements.txt`
 - **Pi backend/runtime:** `requirements/pi_requirements.txt`
 - **fin6 vision/analysis stack:** `vision/fin6/requirements.txt`
 - **Compatibility wrapper:** `fin6/requirements.txt` points at `vision/fin6/requirements.txt`
 
-Install examples:
+Recommended Python version: **Python 3.10+**.
 
-```bash
-python -m pip install -r requirements/host_requirements.txt
-python -m pip install -r requirements/pi_requirements.txt
-python -m pip install -r vision/fin6/requirements.txt
+### **Quick Setup Overview**
+
+1. Install Python and Git on the host computer.
+2. Clone or pull this repository.
+3. Create a virtual environment in the repository root.
+4. Install `requirements/host_requirements.txt` on the host computer.
+5. Install Raspberry Pi OS packages on the Pi.
+6. Create a Pi virtual environment in the repository root on the Pi.
+7. Install `requirements/pi_requirements.txt` and `vision/fin6/requirements.txt` on the Pi.
+8. Configure the Pi backend API key.
+9. Start the Pi backend.
+10. Launch the host GUI and connect to the Pi backend URL.
+
+### **Host Computer Setup: Windows**
+
+Use these steps on the computer that opens the desktop GUI.
+
+1. Install **Python 3.10+** from `python.org`.
+2. During installation, enable **Add Python to PATH**.
+3. Install **Git for Windows** if it is not already installed.
+4. Open **PowerShell**.
+5. Go to the folder where you want the project.
+
+```powershell
+cd $HOME\Desktop
 ```
 
-On modern Raspberry Pi OS, system Python may be externally managed. Prefer a project virtual environment or OS packages for GPIO/camera pieces:
+6. Clone the repository, or skip this if the folder already exists.
+
+```powershell
+git clone https://github.com/camrenkhoury/geneticsdrosophilaproject.git
+cd geneticsdrosophilaproject
+```
+
+7. If the repository already exists, update it instead.
+
+```powershell
+cd $HOME\Desktop\geneticsdrosophilaproject
+git pull
+```
+
+8. Create and activate a virtual environment.
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+9. If PowerShell blocks activation scripts, allow scripts only for the current PowerShell session and activate again.
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+```
+
+10. Upgrade `pip` and install host dependencies.
+
+```powershell
+python -m pip install --upgrade pip
+python -m pip install -r requirements\host_requirements.txt
+```
+
+11. Launch the GUI.
+
+```powershell
+python CodeDirectory\gui.py
+```
+
+You can also use the Windows launcher after dependencies are installed:
+
+```powershell
+.\host_app\launchers\windows\launch_gui.bat
+```
+
+### **Host Computer Setup: macOS**
+
+Use these steps on a Mac that opens the desktop GUI.
+
+1. Install **Python 3.10+**. The Python installer from `python.org` is the most direct option for Tkinter GUI support.
+2. Install Git if needed.
+
+```bash
+xcode-select --install
+```
+
+3. Go to the folder where you want the project.
+
+```bash
+cd ~/Desktop
+```
+
+4. Clone the repository, or skip this if the folder already exists.
+
+```bash
+git clone https://github.com/camrenkhoury/geneticsdrosophilaproject.git
+cd geneticsdrosophilaproject
+```
+
+5. If the repository already exists, update it instead.
+
+```bash
+cd ~/Desktop/geneticsdrosophilaproject
+git pull
+```
+
+6. Create and activate a virtual environment.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+7. Upgrade `pip` and install host dependencies.
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements/host_requirements.txt
+```
+
+8. Launch the GUI.
+
+```bash
+python CodeDirectory/gui.py
+```
+
+You can also use the macOS launcher after dependencies are installed:
+
+```bash
+sh host_app/launchers/macos/launch_gui_macos.sh
+```
+
+If the GUI fails with a Tkinter import error on macOS, install Python from `python.org` and recreate the virtual environment with that Python.
+
+### **Host Computer Setup: Linux**
+
+Use these steps on a Linux computer that opens the desktop GUI.
+
+1. Install Python, Git, virtual-environment support, and Tkinter.
+
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-pip python3-venv python3-tk
+```
+
+2. Install common OpenCV runtime libraries if the GUI cannot import `cv2`.
+
+```bash
+sudo apt install -y libgl1 libglib2.0-0
+```
+
+3. Go to the folder where you want the project.
+
+```bash
+cd ~/Desktop
+```
+
+4. Clone the repository, or skip this if the folder already exists.
+
+```bash
+git clone https://github.com/camrenkhoury/geneticsdrosophilaproject.git
+cd geneticsdrosophilaproject
+```
+
+5. If the repository already exists, update it instead.
+
+```bash
+cd ~/Desktop/geneticsdrosophilaproject
+git pull
+```
+
+6. Create and activate a virtual environment.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+7. Upgrade `pip` and install host dependencies.
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements/host_requirements.txt
+```
+
+8. Launch the GUI.
+
+```bash
+python CodeDirectory/gui.py
+```
+
+You can also use the Linux launcher after dependencies are installed:
+
+```bash
+sh host_app/launchers/linux/launch_gui.sh
+```
+
+### **Raspberry Pi Backend Setup**
+
+Use these steps on the Raspberry Pi that owns hardware control, camera capture, channel detection, classification, assay recording, processing, and artifact generation.
+
+1. Open a terminal on the Pi or SSH into it.
+
+```bash
+ssh team8@raspberrypi
+```
+
+2. Install OS-level packages used by Python, GPIO, camera, Tkinter setup windows, and OpenCV.
+
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-pip python3-venv python3-tk
+sudo apt install -y python3-gpiozero python3-lgpio
+sudo apt install -y libgl1 libglib2.0-0
+```
+
+3. If Pi camera modules are used on that machine, install the Raspberry Pi camera package.
+
+```bash
+sudo apt install -y python3-picamera2
+```
+
+4. Go to the folder where the project should live.
+
+```bash
+cd ~
+```
+
+5. Clone the repository, or skip this if the folder already exists.
+
+```bash
+git clone https://github.com/camrenkhoury/geneticsdrosophilaproject.git
+cd geneticsdrosophilaproject
+```
+
+6. If the repository already exists, update it instead.
 
 ```bash
 cd ~/geneticsdrosophilaproject
+git pull
+```
+
+7. Create and activate a project virtual environment.
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
+```
+
+Modern Raspberry Pi OS protects the system Python environment. Do not use `sudo pip install` for this project. Use the `.venv` virtual environment above.
+
+8. Upgrade `pip`.
+
+```bash
+python -m pip install --upgrade pip
+```
+
+9. Install the Pi backend/runtime dependencies.
+
+```bash
 python -m pip install -r requirements/pi_requirements.txt
 ```
 
-### **Core Backend**
+10. Install the fin6 vision/analysis stack used by channel, assay processing, graphs, and reports.
+
+```bash
+python -m pip install -r vision/fin6/requirements.txt
+```
+
+11. Create the Pi backend configuration file.
+
+```bash
+cp pi_app/deployment/config/backend.env.example pi_app/deployment/config/backend.env
+```
+
+12. Edit the backend API key. Replace `change-me` with the key the host GUI should use.
+
+```bash
+nano pi_app/deployment/config/backend.env
+```
+
+The important values are:
+
+```bash
+DROSOPHILA_VENV_PATH=.venv
+DROSOPHILA_API_KEY=change-me
+GPIOZERO_PIN_FACTORY=lgpio
+DROSOPHILA_BACKEND_HOST=0.0.0.0
+DROSOPHILA_BACKEND_PORT=8000
+```
+
+13. Start the backend.
+
+```bash
+./start_backend.sh
+```
+
+14. In a second Pi terminal, verify the backend responds locally. Use the same API key from `backend.env`.
+
+```bash
+curl -H "X-API-Key: change-me" http://127.0.0.1:8000/health
+```
+
+15. Find the Pi network address for the host GUI.
+
+```bash
+hostname -I
+```
+
+The host GUI remote URL should use the Pi address and port, for example:
+
+```text
+http://100.87.197.18:8000
+```
+
+### **Connecting the Host GUI to the Pi**
+
+The host GUI reads and writes machine-local connection settings in `.drosophila_remote_gui.json`. The tracked example is `.drosophila_remote_gui.example.json`.
+
+1. On the host computer, copy the example if a local config does not exist yet.
+
+Windows PowerShell:
+
+```powershell
+Copy-Item .drosophila_remote_gui.example.json .drosophila_remote_gui.json
+```
+
+macOS/Linux:
+
+```bash
+cp .drosophila_remote_gui.example.json .drosophila_remote_gui.json
+```
+
+2. Edit `.drosophila_remote_gui.json`.
+
+Example:
+
+```json
+{
+  "base_url": "http://100.87.197.18:8000",
+  "api_key": "change-me",
+  "poll_interval_s": 2.5,
+  "request_timeout_s": 5.0
+}
+```
+
+3. Launch the GUI and press reconnect if needed.
+
+### **Dependency Groups**
+
+Core backend dependencies:
 
 - **Python 3.10+**
 - **fastapi**
@@ -675,13 +1011,13 @@ python -m pip install -r requirements/pi_requirements.txt
 - **pydantic**
 - **requests**
 
-### **Hardware / Raspberry Pi**
+Hardware / Raspberry Pi dependencies:
 
 - **gpiozero**
 - **lgpio**
 - **picamera2** when using Pi camera modules through OS packages
 
-### **Computer Vision / ML**
+Computer vision / ML dependencies:
 
 - **opencv-python**
 - **numpy**
@@ -693,7 +1029,7 @@ python -m pip install -r requirements/pi_requirements.txt
 - **scikit-image**
 - **scikit-learn**
 
-### **GUI / Client**
+GUI / client dependencies:
 
 - **tkinter**
 - **requests**
@@ -701,19 +1037,22 @@ python -m pip install -r requirements/pi_requirements.txt
 - **opencv-python** for in-GUI assay video playback
 - **PyMuPDF** for the scrollable in-GUI PDF report viewer
 
-### **Assay / Reporting / Export**
+Assay / reporting / export dependencies:
 
 - **box-sdk-gen** for Box upload
 - **matplotlib.backends.backend_pdf** through matplotlib for PDF generation
 - **PyMuPDF** on whichever machine renders PDF pages inside the Tk GUI
 
-### **Notes**
+### **Installation Notes**
 
 - The **Pi backend** requires hardware-facing dependencies.
 - The **host remote GUI** should not require Pi GPIO libraries, but it does need OpenCV for local playback of downloaded videos and PyMuPDF for the built-in report viewer.
 - The **Pi** generates assay PDFs and artifacts through the Integrated3 processing stack.
 - The **host** renders report PDFs in a separate scrollable window after downloading them from the Pi.
 - **Local mode / simulation** can use a broader dependency stack than pure remote host mode.
+- If the Pi logs `ModuleNotFoundError: No module named 'skimage'`, install `scikit-image` in the same virtual environment used by `./start_backend.sh`.
+- If the Pi logs `ModuleNotFoundError: No module named 'sklearn'`, install `scikit-learn` in the same virtual environment used by `./start_backend.sh`.
+- If `python -m pip install ...` reports `externally-managed-environment` on Raspberry Pi OS, activate `.venv` first and run the command again without `sudo`.
 
 ## **Safety Notes**
 
