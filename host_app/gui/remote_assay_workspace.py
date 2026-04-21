@@ -87,11 +87,8 @@ class RemoteAssayWorkspace(ttk.Frame):
 
         ttk.Button(topbar, text="Exit Assay", command=self._request_exit).grid(row=0, column=0, sticky="w")
         ttk.Label(topbar, text="Assay Workspace", font=("Arial", 11, "bold")).grid(row=0, column=1, sticky="w", padx=(10, 0))
-        ttk.Button(topbar, text="Calibration / Config", command=self.open_calibration_window).grid(
-            row=0, column=2, sticky="e", padx=(0, 6)
-        )
-        ttk.Button(topbar, text="Debug", command=self.open_debug_menu).grid(row=0, column=3, sticky="e", padx=(0, 6))
-        ttk.Button(topbar, text="Results", command=self.toggle_results).grid(row=0, column=4, sticky="e", padx=(0, 6))
+        ttk.Button(topbar, text="Debug", command=self.open_debug_menu).grid(row=0, column=2, sticky="e", padx=(0, 6))
+        ttk.Button(topbar, text="Results", command=self.toggle_results).grid(row=0, column=3, sticky="e", padx=(0, 6))
 
         self.connection_label = tk.Label(
             topbar,
@@ -103,7 +100,7 @@ class RemoteAssayWorkspace(ttk.Frame):
             relief="ridge",
             anchor="center",
         )
-        self.connection_label.grid(row=0, column=5, sticky="e")
+        self.connection_label.grid(row=0, column=4, sticky="e")
 
         self.status_label = tk.Label(
             self,
@@ -130,7 +127,8 @@ class RemoteAssayWorkspace(ttk.Frame):
         center_panel = ttk.Frame(self.body)
         center_panel.grid(row=0, column=0, sticky="nsew")
         center_panel.columnconfigure(0, weight=1)
-        center_panel.rowconfigure(1, weight=1)
+        center_panel.rowconfigure(1, weight=5)
+        center_panel.rowconfigure(2, weight=1)
 
         self.right_panel = ttk.Frame(self.body, width=300)
         self.right_panel.grid(row=0, column=1, sticky="nse", padx=(6, 0))
@@ -346,6 +344,13 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.preview_label.grid(row=0, column=0, sticky="nsew")
         self.preview_label.bind("<Configure>", self._refresh_preview_image)
 
+        log_frame = ttk.LabelFrame(parent, text="Action Log / Debug", padding=4)
+        log_frame.grid(row=2, column=0, sticky="nsew", pady=(6, 0))
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+        self.workspace_log = scrolledtext.ScrolledText(log_frame, height=7, wrap=tk.WORD, font=("Consolas", 8))
+        self.workspace_log.grid(row=0, column=0, sticky="nsew")
+
     def _build_results_panel(self, parent: ttk.Frame) -> None:
         ttk.Label(parent, text="Results / Status", font=("Arial", 11, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 4))
         ttk.Label(parent, textvariable=self.results_status_var, foreground="#4b5563", wraplength=340, justify="left").grid(
@@ -355,10 +360,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.results_text = scrolledtext.ScrolledText(parent, height=18, wrap=tk.WORD, font=("Consolas", 8))
         self.results_text.grid(row=2, column=0, sticky="nsew")
 
-        self.workspace_log = scrolledtext.ScrolledText(parent, height=6, wrap=tk.WORD, font=("Consolas", 8))
-        self.workspace_log.grid(row=3, column=0, sticky="nsew", pady=(8, 0))
-        parent.rowconfigure(2, weight=3)
-        parent.rowconfigure(3, weight=1)
+        parent.rowconfigure(2, weight=1)
 
     def enter_workspace(self, *, setup_required: bool = False) -> None:
         self.preview_mode_var.set("raw")
@@ -462,7 +464,7 @@ class RemoteAssayWorkspace(ttk.Frame):
             "Open the current Pi-side setup GUI when first-time calibration needs the full Integrated3 tools.",
         )
         if self.open_setup_callback is not None:
-            ttk.Button(setup_frame, text="Open Pi Setup", command=self.open_setup_callback).grid(
+            ttk.Button(setup_frame, text="Open Pi Setup", command=self.open_pi_setup).grid(
                 row=1, column=0, columnspan=2, sticky="ew"
             )
         else:
@@ -480,6 +482,19 @@ class RemoteAssayWorkspace(ttk.Frame):
             self.calibration_window.destroy()
         self.calibration_window = None
         self.calibration_text = None
+
+    def open_pi_setup(self) -> None:
+        self._append_log("Started: Opening Pi setup GUI.")
+        if self.open_setup_callback is None:
+            self._append_log("Opening Pi setup GUI failed: setup callback is unavailable.")
+            return
+        try:
+            result = self.open_setup_callback()
+        except Exception as exc:
+            self._append_log(f"Opening Pi setup GUI failed: {exc}")
+            messagebox.showerror("Assay Setup Error", str(exc), parent=self.winfo_toplevel())
+            return
+        self._append_log(f"Opening Pi setup GUI requested: {result}")
 
     def open_debug_menu(self) -> None:
         if self.debug_window is not None and self.debug_window.winfo_exists():
@@ -553,6 +568,7 @@ class RemoteAssayWorkspace(ttk.Frame):
     def _run_async(self, label: str, worker: Callable[[], Any], on_success: Callable[[Any], None] | None = None) -> None:
         self._worker_count += 1
         self._set_workspace_status(label)
+        self._append_log(f"Started: {label}")
         self.status_callback("assaying", label)
 
         def _task() -> None:
