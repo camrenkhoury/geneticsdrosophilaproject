@@ -5931,6 +5931,11 @@ class DrosophilaGUI:
                 messagebox.showerror("Assay Workspace Error", message)
             return False
 
+        fin6_status = self._get_fin6_setup_status(action_label, show_errors=show_error_dialog)
+        if fin6_status is None:
+            return False
+        setup_required = not self._assay_setup_ready(fin6_status)
+
         self.entry_frame.grid_remove()
         self.main_frame.grid_remove()
         self.assay_page_frame.grid()
@@ -5940,8 +5945,11 @@ class DrosophilaGUI:
             remote_busy=self.remote_backend_busy,
             assay_available=self.remote_assay_available,
         )
-        self.remote_assay_workspace.enter_workspace()
-        message = f"{action_label}: opened the full-page remote assay workspace."
+        self.remote_assay_workspace.enter_workspace(setup_required=setup_required)
+        if setup_required:
+            message = f"{action_label}: opened assay setup mode because saved assay setup is incomplete."
+        else:
+            message = f"{action_label}: opened the full-page remote assay workspace."
         self.log_message(message)
         self.set_status("assaying", message)
         return True

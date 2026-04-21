@@ -188,6 +188,7 @@ def detect_flies(
     score_thresh: int = 20,
     min_area: int = 20,
     max_area: int = 1200,
+    small_area_percentile: float = 10.0,
     merge_distance_px: int = 18,
 ):
     roi, axis_unit, axis_length_px = build_channel_roi(frame_gray.shape, left_pt, right_pt, band_half_width)
@@ -205,11 +206,21 @@ def detect_flies(
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k5)
 
     count, _, stats, centroids = cv2.connectedComponentsWithStats(mask, 8)
+    candidate_areas: List[int] = []
+    for i in range(1, count):
+        area = int(stats[i, cv2.CC_STAT_AREA])
+        if min_area <= area <= max_area:
+            candidate_areas.append(area)
+
+    effective_min_area = int(min_area)
+    if len(candidate_areas) >= 2 and small_area_percentile > 0:
+        percentile_floor = int(np.ceil(np.percentile(candidate_areas, small_area_percentile)))
+        effective_min_area = max(effective_min_area, percentile_floor)
 
     detections: List[Dict[str, Any]] = []
     for i in range(1, count):
         x, y, w, h, area = stats[i]
-        if not (min_area <= area <= max_area):
+        if not (effective_min_area <= area <= max_area):
             continue
         aspect = max(w, h) / max(1, min(w, h))
         if aspect > 8:

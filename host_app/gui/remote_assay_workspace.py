@@ -48,6 +48,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         self._last_manifest_payload: dict[str, Any] | None = None
         self.results_visible = False
         self.debug_window: tk.Toplevel | None = None
+        self._setup_prompt_shown = False
         self.profile_combo = None
         self.calibration_text = None
         self._video_capture = None
@@ -71,10 +72,10 @@ class RemoteAssayWorkspace(ttk.Frame):
 
     def _build_layout(self) -> None:
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(3, weight=1)
+        self.rowconfigure(2, weight=1)
 
         topbar = ttk.Frame(self)
-        topbar.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        topbar.grid(row=0, column=0, sticky="ew", pady=(0, 2))
         topbar.columnconfigure(1, weight=1)
 
         ttk.Button(topbar, text="Exit Assay", command=self._request_exit).grid(row=0, column=0, sticky="w")
@@ -102,18 +103,16 @@ class RemoteAssayWorkspace(ttk.Frame):
             anchor="w",
             justify="left",
             padx=6,
-            pady=3,
+            pady=2,
         )
-        self.status_label.grid(row=1, column=0, sticky="ew", pady=(0, 4))
+        self.status_label.grid(row=1, column=0, sticky="ew", pady=(0, 2))
         self.status_label.bind(
             "<Configure>",
             lambda event: self.status_label.configure(wraplength=max(300, event.width - 12)),
         )
 
-        self._build_action_bar(self)
-
         self.body = ttk.Frame(self)
-        self.body.grid(row=3, column=0, sticky="nsew")
+        self.body.grid(row=2, column=0, sticky="nsew")
         self.body.columnconfigure(0, weight=1)
         self.body.columnconfigure(1, weight=0, minsize=300)
         self.body.rowconfigure(0, weight=1)
@@ -132,23 +131,38 @@ class RemoteAssayWorkspace(ttk.Frame):
         self._build_preview_panel(center_panel)
         self._build_results_panel(self.right_panel)
         self._apply_panel_visibility()
+        self._build_action_bar(self)
 
     def _build_action_bar(self, parent: ttk.Frame) -> None:
         action_bar = ttk.Frame(parent)
-        action_bar.grid(row=2, column=0, sticky="ew", pady=(0, 4))
-        for column in range(10):
+        action_bar.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+        style = ttk.Style(self)
+        style.configure("AssayAction.TButton", padding=(8, 7))
+        for column in range(5):
             action_bar.columnconfigure(column, weight=1)
 
-        ttk.Button(action_bar, text="Capture Image", command=self.capture_preview).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ttk.Button(action_bar, text="Run Assay Recording", command=self.run_assay).grid(row=0, column=1, sticky="ew", padx=4)
-        ttk.Button(action_bar, text="Process Assay", command=self.process_last).grid(row=0, column=2, sticky="ew", padx=4)
-        ttk.Button(action_bar, text="Export to Box", command=self.upload_last).grid(row=0, column=3, sticky="ew", padx=4)
-        ttk.Button(action_bar, text="Play Raw", command=lambda: self.play_video_artifact("raw_video")).grid(row=0, column=4, sticky="ew", padx=4)
-        ttk.Button(action_bar, text="Play Processed", command=lambda: self.play_video_artifact("annotated_video")).grid(row=0, column=5, sticky="ew", padx=4)
-        ttk.Button(action_bar, text="Play Mask", command=lambda: self.play_video_artifact("mask_video")).grid(row=0, column=6, sticky="ew", padx=4)
-        ttk.Button(action_bar, text="Pause", command=self.pause_playback).grid(row=0, column=7, sticky="ew", padx=4)
-        ttk.Button(action_bar, text="Stop", command=self.stop_playback).grid(row=0, column=8, sticky="ew", padx=4)
-        ttk.Button(action_bar, text="Report / CSV", command=self.toggle_results).grid(row=0, column=9, sticky="ew", padx=(4, 0))
+        actions = (
+            ("Capture Image", self.capture_preview),
+            ("Run Assay Recording", self.run_assay),
+            ("Process Assay", self.process_last),
+            ("Export to Box", self.upload_last),
+            ("Report / CSV", self.toggle_results),
+            ("Play Raw", lambda: self.play_video_artifact("raw_video")),
+            ("Play Processed", lambda: self.play_video_artifact("annotated_video")),
+            ("Play Mask", lambda: self.play_video_artifact("mask_video")),
+            ("Pause", self.pause_playback),
+            ("Stop", self.stop_playback),
+        )
+        for index, (label, command) in enumerate(actions):
+            row, column = divmod(index, 5)
+            padx = (0, 4) if column == 0 else ((4, 0) if column == 4 else 4)
+            ttk.Button(action_bar, text=label, command=command, style="AssayAction.TButton").grid(
+                row=row,
+                column=column,
+                sticky="ew",
+                padx=padx,
+                pady=(0, 4) if row == 0 else (4, 0),
+            )
 
     def _build_scrollable_controls(self, parent: ttk.Frame) -> None:
         canvas = tk.Canvas(parent, highlightthickness=0, bd=0, background="#f3f4f6")
@@ -324,12 +338,30 @@ class RemoteAssayWorkspace(ttk.Frame):
         parent.rowconfigure(2, weight=3)
         parent.rowconfigure(3, weight=1)
 
-    def enter_workspace(self) -> None:
+    def enter_workspace(self, *, setup_required: bool = False) -> None:
         self.preview_mode_var.set("raw")
         self.preview_info_var.set("Opening Pi-side assay camera preview...")
+        if not setup_required:
+            self._setup_prompt_shown = False
         self.refresh_workspace()
+        if setup_required:
+            self.after(250, self.enter_setup_flow)
         if self.connected:
             self.after(500, self.capture_preview)
+
+    def enter_setup_flow(self) -> None:
+        self.preview_mode_var.set("calibration")
+        self.preview_info_var.set("Assay setup required before running assays.")
+        self._set_workspace_status("Assay Setup is not complete. Opening setup controls.")
+        self.open_debug_menu()
+        if not self._setup_prompt_shown:
+            self._setup_prompt_shown = True
+            messagebox.showinfo(
+                "Assay Setup Required",
+                "No saved assay setup was found. The setup controls are open now.\n\n"
+                "Complete the assay background and calibration before running the assay.",
+                parent=self.winfo_toplevel(),
+            )
 
     def _request_exit(self) -> None:
         if self.can_exit_callback is not None and not self.can_exit_callback():

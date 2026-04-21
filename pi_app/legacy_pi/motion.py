@@ -216,6 +216,13 @@ def home_to_zero(max_steps=None):
         full_travel_steps = _steps_for_distance(get_operational_max_mm())
         max_steps = max(1, int(round(full_travel_steps * 1.2)))
     backoff_steps = _steps_for_distance(float(getattr(config, "HOME_BACKOFF_MM", 2.0)))
+    fine_confirm_mm = float(getattr(config, "HOME_FINE_CONFIRM_MM", 1.0) or 1.0)
+    fine_confirm_steps = _steps_for_distance(fine_confirm_mm)
+    fine_confirm_samples = max(1, int(getattr(config, "HOME_FINE_CONFIRM_SAMPLES", 3) or 3))
+    fine_confirm_sample_delay_s = max(
+        0.0,
+        float(getattr(config, "HOME_FINE_CONFIRM_SAMPLE_DELAY_S", 0.01) or 0.01),
+    )
     steps_taken = 0
     phase_started_at = monotonic()
 
@@ -226,6 +233,10 @@ def home_to_zero(max_steps=None):
         max_steps=max_steps,
         max_seconds=max_seconds,
         backoff_steps=backoff_steps,
+        fine_confirm_mm=fine_confirm_mm,
+        fine_confirm_steps=fine_confirm_steps,
+        fine_confirm_samples=fine_confirm_samples,
+        fine_confirm_sample_delay_s=fine_confirm_sample_delay_s,
         limit_min_initial=bool(limit_min_device.value),
     )
 
@@ -295,6 +306,8 @@ def home_to_zero(max_steps=None):
 
         set_direction(False)
         fine_steps_taken = 0
+        fine_confirm_steps_taken = 0
+        stable_limit_reads = 0
         phase_started_at = monotonic()
         while not limit_min_device.value:
             step_once(fine_step_delay)
@@ -322,15 +335,63 @@ def home_to_zero(max_steps=None):
                 )
                 raise RuntimeError(message)
 
-        if limit_min_device.value:
+        while stable_limit_reads < fine_confirm_samples:
+            if limit_min_device.value:
+                stable_limit_reads += 1
+                if stable_limit_reads < fine_confirm_samples and fine_confirm_sample_delay_s > 0.0:
+                    sleep(fine_confirm_sample_delay_s)
+                continue
+
+            stable_limit_reads = 0
+            if fine_confirm_steps_taken >= fine_confirm_steps:
+                break
+
+            step_once(fine_step_delay)
+            fine_steps_taken += 1
+            fine_confirm_steps_taken += 1
+
+            if fine_steps_taken >= max_steps:
+                message = f"Homing failed: exceeded {max_steps} steps on fine approach without reaching home switch."
+                _trace_motion(
+                    "home_fine_fail_max_steps",
+                    fine_steps_taken=fine_steps_taken,
+                    fine_confirm_steps_taken=fine_confirm_steps_taken,
+                    stable_limit_reads=stable_limit_reads,
+                    limit_min=bool(limit_min_device.value),
+                )
+                raise RuntimeError(message)
+            if monotonic() - phase_started_at >= max_seconds:
+                message = f"Homing failed: exceeded {max_seconds:.1f}s on fine approach without reaching home switch."
+                _trace_motion(
+                    "home_fine_fail_timeout",
+                    fine_steps_taken=fine_steps_taken,
+                    fine_confirm_steps_taken=fine_confirm_steps_taken,
+                    stable_limit_reads=stable_limit_reads,
+                    limit_min=bool(limit_min_device.value),
+                )
+                raise RuntimeError(message)
+
+        if stable_limit_reads >= fine_confirm_samples:
             current_position_mm = 0.0
             print("Homed. Usable position set to 0.0 mm.")
-            _trace_motion("home_to_zero_exit", fine_steps_taken=fine_steps_taken, limit_min=bool(limit_min_device.value))
+            _trace_motion(
+                "home_to_zero_exit",
+                fine_steps_taken=fine_steps_taken,
+                fine_confirm_steps_taken=fine_confirm_steps_taken,
+                stable_limit_reads=stable_limit_reads,
+                limit_min=bool(limit_min_device.value),
+            )
         else:
-            message = "Homing failed: home switch not reached on fine approach."
+            message = (
+                "Homing failed: home switch not reached on fine approach "
+                f"after {fine_confirm_mm:.2f} mm confirmation travel."
+            )
             _trace_motion(
                 "home_fine_fail_unreached",
                 fine_steps_taken=fine_steps_taken,
+                fine_confirm_steps_taken=fine_confirm_steps_taken,
+                fine_confirm_steps=fine_confirm_steps,
+                stable_limit_reads=stable_limit_reads,
                 limit_min=bool(limit_min_device.value),
             )
             raise RuntimeError(message)
