@@ -740,6 +740,53 @@ def capture_assay_preview_from_saved_settings(
     return _render_assay_preview(mode=mode, calibration_override=calibration_override)
 
 
+def _prepare_integrated3_recording_profile(service: Any, logger: Callable[[str], None] | None = None) -> None:
+    profile = getattr(service, "profile", None)
+    motor = getattr(profile, "motor", None)
+    if profile is None or motor is None:
+        return
+
+    changed = False
+    motor_enabled = bool(getattr(motor, "enabled", False))
+    motor_backend = str(getattr(motor, "backend", "") or "").strip().lower()
+    motor_module = str(getattr(motor, "module_name", "") or "").strip()
+    pulse_ms = int(getattr(motor, "pulse_ms", 0) or 0)
+    settle_delay_ms = int(getattr(motor, "settle_delay_ms", 0) or 0)
+
+    if not motor_enabled:
+        motor.enabled = True
+        changed = True
+        if logger is not None:
+            logger("Remote assay profile had vibration disabled; enabling it for Integrated3 recording.")
+    if motor_backend != "module":
+        motor.backend = "module"
+        changed = True
+    if motor_module != "vibration":
+        motor.module_name = "vibration"
+        changed = True
+    if pulse_ms <= 0 or pulse_ms == 250:
+        motor.pulse_ms = 400
+        changed = True
+    if settle_delay_ms <= 0 or settle_delay_ms == 500:
+        motor.settle_delay_ms = 150
+        changed = True
+
+    if changed:
+        save_profile = getattr(service, "save_profile", None)
+        if callable(save_profile):
+            save_profile()
+
+    if logger is not None:
+        logger(
+            "Integrated3 assay motor config: "
+            f"enabled={bool(getattr(motor, 'enabled', False))} "
+            f"backend={getattr(motor, 'backend', '')} "
+            f"module={getattr(motor, 'module_name', '')} "
+            f"pulse_ms={getattr(motor, 'pulse_ms', '')} "
+            f"settle_ms={getattr(motor, 'settle_delay_ms', '')}"
+        )
+
+
 def run_integrated3_assay_from_active_profile(
     *,
     logger: Callable[[str], None] | None = None,
@@ -748,6 +795,7 @@ def run_integrated3_assay_from_active_profile(
 ) -> dict[str, Any]:
     controller = _get_remote_assay_controller()
     service = controller.assay
+    _prepare_integrated3_recording_profile(service, logger=logger)
 
     def _preview_proxy(payload: dict[str, Any]) -> None:
         preview_path_text = str(payload.get("preview_path", "") or "").strip()
@@ -761,11 +809,15 @@ def run_integrated3_assay_from_active_profile(
         if preview_callback is not None:
             preview_callback(payload)
 
+    if logger is not None:
+        logger("Starting Integrated3 record_assay_run through stitch_operator service.")
     result = service.run_assay(
         logger=logger,
         preview_callback=_preview_proxy,
         stop_event=stop_event,
     )
+    if logger is not None:
+        logger("Integrated3 record_assay_run returned to remote bridge.")
     run_dir = str(result.get("run_dir", "") or "")
     raw_path = str(result.get("raw_video_path", "") or "")
     state_payload: dict[str, Any] = {}
