@@ -206,23 +206,6 @@ The system provides the following functions in the codebase:
 
 **Important current motion policy:** physical homing is allowed for startup/setup/manual reference recovery, but normal automated operation should use known absolute positions and explicit commanded moves. If the absolute reference is lost during operation, the run should fail cleanly to a restartable safe idle state rather than repeatedly homing inside the active loop.
 
-### **Integrated3 Assay Path**
-
-The assay side is now wired around **`CodeDirectory/Integrated3`**. Its `fin6/fly_tracking_gui.py`, `fin6/assay_*` modules, and `stitch_operator` services are treated as the reference implementation for assay behavior.
-
-Current remote assay architecture:
-
-`Host Assay Workspace -> RemoteController -> FastAPI /fin6/assay/* routes -> MachineService -> operator_bridge -> Integrated3 fin6 / stitch_operator code`
-
-The host GUI provides a dedicated full-page assay workspace rather than forcing assay controls into the narrow channel-preview layout. It includes:
-
-- Guided assay calibration/configuration with background capture, tube-region drawing, save, and test
-- Pi-side assay preview modes: calibration, background, transform, annotated, mask, and raw
-- Run assay recording, process latest/selected/batch, and upload/export actions
-- Graph PDF and full report PDF generation
-- A separate scrollable report viewer window with a **Graphs** tab first and a **Raw Data / Full Report** tab second
-- Debug-only controls for processing/upload settings and developer inspection
-
 ## **Installation Steps**
 
 This section is for installing the software dependencies needed to launch the host GUI and run the Raspberry Pi backend. It does not cover the user operation workflow.
@@ -822,6 +805,10 @@ The current host GUI also includes:
 - Assay calibration/config window with tube-region drawing
 - Assay debug/settings window
 - Assay report viewer window for scrollable PDFs
+
+Remote assay calls flow through:
+
+`Host Assay Workspace -> RemoteController -> FastAPI /fin6/assay/* routes -> MachineService -> operator_bridge -> Integrated3 fin6 / stitch_operator code`
 
 **Important files:**
 
