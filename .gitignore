@@ -47,3 +47,6 @@ pi_app/deployment/config/backend.env
 !.drosophila_remote_gui.example.json
 !deployment/pi/config/backend.env.example
 !pi_app/deployment/config/backend.env.example
+
+CodeDirectory/Integrated3/fin6/profiles/.last_profile.json
+CodeDirectory/Integrated3/fin6/profiles/stitch_operator.json
