@@ -127,7 +127,8 @@ class RemoteAssayWorkspace(ttk.Frame):
             row=0, column=0, rowspan=2, sticky="nw", pady=(0, 0)
         )
         ttk.Button(topbar, text="Debug", command=self.open_debug_menu).grid(row=0, column=1, sticky="e", padx=(0, 6))
-        ttk.Button(topbar, text="Results", command=self.toggle_results).grid(row=0, column=2, sticky="e", padx=(0, 6))
+        ttk.Button(topbar, text="Report Viewer", command=self.open_report_viewer).grid(row=0, column=2, sticky="e", padx=(0, 6))
+        ttk.Button(topbar, text="Results Debug", command=self.toggle_results).grid(row=0, column=3, sticky="e", padx=(0, 6))
 
         self.connection_label = tk.Label(
             topbar,
@@ -139,7 +140,7 @@ class RemoteAssayWorkspace(ttk.Frame):
             relief="ridge",
             anchor="center",
         )
-        self.connection_label.grid(row=0, column=3, sticky="e")
+        self.connection_label.grid(row=0, column=4, sticky="e")
 
         self.exit_assay_button = tk.Button(
             topbar,
@@ -153,7 +154,7 @@ class RemoteAssayWorkspace(ttk.Frame):
             padx=10,
             pady=2,
         )
-        self.exit_assay_button.grid(row=1, column=3, sticky="e", pady=(3, 0))
+        self.exit_assay_button.grid(row=1, column=4, sticky="e", pady=(3, 0))
 
         self.status_label = tk.Label(
             self,
@@ -215,7 +216,6 @@ class RemoteAssayWorkspace(ttk.Frame):
             ("Play Mask", lambda: self.play_video_artifact("mask_video")),
             ("Pause", self.pause_playback),
             ("Stop", self.stop_playback),
-            ("Report / CSV", self.toggle_results),
         )
         self.workflow_buttons = {}
         for index, (key, label, command) in enumerate(workflow_actions):
@@ -449,8 +449,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         ttk.Button(second_row, text="Per-Fly CSV", command=lambda: self.fetch_artifact("per_fly_summary_csv")).pack(side="left", padx=(6, 0))
         third_row = ttk.Frame(frame)
         third_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        ttk.Button(third_row, text="Report Viewer", command=self.open_report_viewer).pack(side="left")
-        ttk.Button(third_row, text="Processing JSON", command=lambda: self.fetch_artifact("processing_json")).pack(side="left", padx=(6, 0))
+        ttk.Button(third_row, text="Processing JSON", command=lambda: self.fetch_artifact("processing_json")).pack(side="left")
         fourth_row = ttk.Frame(frame)
         fourth_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         ttk.Button(fourth_row, text="Tube Overlay", command=lambda: self.fetch_artifact("tube_overlay_graph_png")).pack(side="left")
@@ -1743,7 +1742,9 @@ class RemoteAssayWorkspace(ttk.Frame):
                     result[f"{key}_error"] = str(exc)
             if "graphs_report_pdf" not in result and "report_pdf" not in result:
                 raise RuntimeError(
-                    "No assay report PDFs are available yet. Process the assay first so report.pdf and graphs_report.pdf are generated."
+                    "No assay report PDFs are available yet.\n\n"
+                    "Run an assay recording, process the assay, then press Report Viewer again. "
+                    "After processing, this button will show the newest generated Graphs PDF and Raw Data / Full Report PDF."
                 )
             return result
 
