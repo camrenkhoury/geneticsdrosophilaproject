@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from typing import Any
+import base64
 
 import requests
 
@@ -18,6 +19,33 @@ class RemoteController(BaseController):
     _FEATURE_ROUTE_HINTS: dict[str, str] = {
         "/fin6/setup_status": "Pi-side fin6 setup status",
         "/fin6/launch_setup": "Pi-side fin6 setup launch",
+        "/fin6/assay/status": "Pi-side assay status",
+        "/fin6/assay/profile_summary": "Pi-side assay profile summary",
+        "/fin6/assay/profiles": "Pi-side assay profiles",
+        "/fin6/assay/profile/activate": "Pi-side assay profile activation",
+        "/fin6/assay/profile/patch": "Pi-side assay profile update",
+        "/fin6/assay/run": "Pi-side Integrated3 assay run",
+        "/fin6/assay/background/capture": "Pi-side assay background capture",
+        "/fin6/assay/background/import": "Pi-side assay background import",
+        "/fin6/assay/background/restore": "Pi-side assay background restore",
+        "/fin6/assay/background/rebuild": "Pi-side assay background rebuild",
+        "/fin6/assay/preview/capture": "Pi-side assay preview capture",
+        "/fin6/assay/calibration": "Pi-side assay calibration load/save",
+        "/fin6/assay/calibration/test": "Pi-side assay calibration test",
+        "/fin6/assay/process_last": "Pi-side assay process last",
+        "/fin6/assay/process_selected": "Pi-side assay process selected",
+        "/fin6/assay/process_batch": "Pi-side assay process batch",
+        "/fin6/assay/upload_last": "Pi-side assay upload last",
+        "/fin6/assay/box_templates": "Pi-side assay Box template write",
+        "/artifacts/assay/preview/calibration": "Pi-side assay preview image",
+        "/artifacts/assay/background/current": "Pi-side assay background image",
+        "/artifacts/assay/run/latest/raw_video": "Pi-side assay raw video",
+        "/artifacts/assay/run/latest/annotated_video": "Pi-side assay annotated video",
+        "/artifacts/assay/run/latest/mask_video": "Pi-side assay mask video",
+        "/artifacts/assay/run/latest/per_vial_summary_csv": "Pi-side assay per-vial summary CSV",
+        "/artifacts/assay/run/latest/per_fly_summary_csv": "Pi-side assay per-fly summary CSV",
+        "/artifacts/assay/run/latest/report_pdf": "Pi-side assay report PDF",
+        "/artifacts/assay/run/latest/processing_json": "Pi-side assay processing JSON",
         "/detect_channel": "Pi-side channel detection",
         "/channel_setup/cameras": "Pi-side channel camera discovery",
         "/channel_setup/select_camera": "Pi-side channel camera selection",
@@ -72,6 +100,9 @@ class RemoteController(BaseController):
     def run_assay(self) -> ControllerPayload:
         return self._command_request("POST", "/run_assay")
 
+    def run_integrated3_assay(self) -> ControllerPayload:
+        return self._command_request("POST", "/fin6/assay/run")
+
     def detect_channel(self) -> ControllerPayload:
         return self._command_request("POST", "/detect_channel", timeout_s=20.0)
 
@@ -85,6 +116,104 @@ class RemoteController(BaseController):
 
     def launch_fin6_setup(self) -> ControllerPayload:
         return self._request_json("POST", "/fin6/launch_setup")
+
+    def get_assay_status(self) -> ControllerPayload:
+        return self._request_json("GET", "/fin6/assay/status")
+
+    def get_assay_profile_summary(self) -> ControllerPayload:
+        return self._request_json("GET", "/fin6/assay/profile_summary")
+
+    def get_assay_profiles(self) -> ControllerPayload:
+        return self._request_json("GET", "/fin6/assay/profiles")
+
+    def activate_assay_profile(self, profile_name: str) -> ControllerPayload:
+        return self._request_json(
+            "POST",
+            "/fin6/assay/profile/activate",
+            json_payload={"profile_name": str(profile_name or "")},
+        )
+
+    def patch_assay_profile_fields(self, **fields: Any) -> ControllerPayload:
+        return self._request_json("POST", "/fin6/assay/profile/patch", json_payload=dict(fields))
+
+    def seed_assay_box_templates(self, *, overwrite: bool = True) -> ControllerPayload:
+        return self._request_json(
+            "POST",
+            "/fin6/assay/box_templates",
+            json_payload={"overwrite": bool(overwrite)},
+        )
+
+    def capture_assay_background(self) -> ControllerPayload:
+        return self._request_json("POST", "/fin6/assay/background/capture", timeout_s=30.0)
+
+    def import_assay_background(
+        self,
+        *,
+        source_path: str | None = None,
+        image_bytes: bytes | None = None,
+        filename: str | None = None,
+    ) -> ControllerPayload:
+        payload: dict[str, Any] = {}
+        if source_path:
+            payload["source_path"] = str(source_path)
+        if image_bytes is not None:
+            payload["image_base64"] = base64.b64encode(image_bytes).decode("ascii")
+            payload["filename"] = str(filename or "assay_background.png")
+        return self._request_json("POST", "/fin6/assay/background/import", json_payload=payload, timeout_s=30.0)
+
+    def restore_previous_assay_background(self) -> ControllerPayload:
+        return self._request_json("POST", "/fin6/assay/background/restore")
+
+    def rebuild_assay_background(self) -> ControllerPayload:
+        return self._request_json("POST", "/fin6/assay/background/rebuild")
+
+    def capture_assay_preview(
+        self,
+        *,
+        mode: str = "calibration",
+        calibration: dict[str, Any] | None = None,
+    ) -> ControllerPayload:
+        payload: dict[str, Any] = {"mode": str(mode or "calibration")}
+        if calibration is not None:
+            payload["calibration"] = calibration
+        return self._request_json("POST", "/fin6/assay/preview/capture", json_payload=payload, timeout_s=30.0)
+
+    def get_assay_calibration(self) -> ControllerPayload:
+        return self._request_json("GET", "/fin6/assay/calibration")
+
+    def save_assay_calibration(self, calibration: dict[str, Any]) -> ControllerPayload:
+        return self._request_json("POST", "/fin6/assay/calibration", json_payload=calibration, timeout_s=30.0)
+
+    def test_assay_calibration(self, calibration: dict[str, Any] | None = None) -> ControllerPayload:
+        payload: dict[str, Any] = {}
+        if calibration is not None:
+            payload["calibration"] = calibration
+        return self._request_json("POST", "/fin6/assay/calibration/test", json_payload=payload, timeout_s=30.0)
+
+    def process_last_assay(self) -> ControllerPayload:
+        return self._request_json("POST", "/fin6/assay/process_last", timeout_s=30.0)
+
+    def process_selected_assay(self, run_dir: str) -> ControllerPayload:
+        return self._request_json(
+            "POST",
+            "/fin6/assay/process_selected",
+            json_payload={"run_dir": str(run_dir or "")},
+            timeout_s=30.0,
+        )
+
+    def batch_process_assay(self, folder: str) -> ControllerPayload:
+        return self._request_json(
+            "POST",
+            "/fin6/assay/process_batch",
+            json_payload={"folder": str(folder or "")},
+            timeout_s=30.0,
+        )
+
+    def upload_last_assay(self) -> ControllerPayload:
+        return self._request_json("POST", "/fin6/assay/upload_last", timeout_s=30.0)
+
+    def get_latest_assay_manifest(self) -> ControllerPayload:
+        return self._request_json("GET", "/artifacts/assay/run/latest/manifest")
 
     def get_channel_setup_cameras(self) -> ControllerPayload:
         return self._request_json("GET", "/channel_setup/cameras")
@@ -188,6 +317,33 @@ class RemoteController(BaseController):
 
     def get_classification_preview_image(self) -> bytes | None:
         return self._request_bytes("GET", "/artifacts/classification/latest", timeout_s=15.0)
+
+    def get_assay_preview_image(self, mode: str) -> bytes | None:
+        return self._request_bytes("GET", f"/artifacts/assay/preview/{str(mode or 'calibration').strip().lower()}", timeout_s=20.0)
+
+    def get_assay_background_image(self, which: str = "current") -> bytes | None:
+        return self._request_bytes("GET", f"/artifacts/assay/background/{str(which or 'current').strip().lower()}", timeout_s=20.0)
+
+    def get_latest_assay_raw_video(self) -> bytes | None:
+        return self._request_bytes("GET", "/artifacts/assay/run/latest/raw_video", timeout_s=60.0)
+
+    def get_latest_assay_annotated_video(self) -> bytes | None:
+        return self._request_bytes("GET", "/artifacts/assay/run/latest/annotated_video", timeout_s=60.0)
+
+    def get_latest_assay_mask_video(self) -> bytes | None:
+        return self._request_bytes("GET", "/artifacts/assay/run/latest/mask_video", timeout_s=60.0)
+
+    def get_latest_assay_per_vial_summary_csv(self) -> bytes | None:
+        return self._request_bytes("GET", "/artifacts/assay/run/latest/per_vial_summary_csv", timeout_s=20.0)
+
+    def get_latest_assay_per_fly_summary_csv(self) -> bytes | None:
+        return self._request_bytes("GET", "/artifacts/assay/run/latest/per_fly_summary_csv", timeout_s=20.0)
+
+    def get_latest_assay_report_pdf(self) -> bytes | None:
+        return self._request_bytes("GET", "/artifacts/assay/run/latest/report_pdf", timeout_s=30.0)
+
+    def get_latest_assay_processing_json(self) -> bytes | None:
+        return self._request_bytes("GET", "/artifacts/assay/run/latest/processing_json", timeout_s=20.0)
 
     def _command_request(
         self,

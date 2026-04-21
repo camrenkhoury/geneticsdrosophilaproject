@@ -377,6 +377,142 @@ class MachineService:
             "pid": pid,
         }
 
+    def get_assay_status(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        return fin6_bridge.get_assay_status()
+
+    def get_assay_profile_summary(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        return fin6_bridge.get_assay_profile_summary()
+
+    def list_assay_profiles(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        return fin6_bridge.list_assay_profiles()
+
+    def activate_assay_profile(self, profile_name: str) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.activate_assay_profile(profile_name)
+        self.runtime_state.append_log("INFO", f"Activated assay profile {profile_name}.")
+        return payload
+
+    def patch_assay_profile_fields(self, **fields: Any) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.patch_assay_profile_fields(**fields)
+        self.runtime_state.append_log("INFO", "Updated assay profile settings.")
+        return payload
+
+    def seed_assay_box_templates(self, *, overwrite: bool = True) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.seed_assay_box_templates(overwrite=overwrite)
+        self.runtime_state.append_log("INFO", "Prepared assay Box templates.")
+        return payload
+
+    def capture_assay_background(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.capture_assay_background_from_saved_settings()
+        self.runtime_state.append_log("INFO", "Captured assay background.")
+        return payload
+
+    def import_assay_background(
+        self,
+        *,
+        source_path: str | None = None,
+        image_base64: str | None = None,
+        filename: str | None = None,
+    ) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.import_assay_background_from_saved_settings(
+            source_path=source_path,
+            image_base64=image_base64,
+            filename=filename,
+        )
+        self.runtime_state.append_log("INFO", "Imported assay background.")
+        return payload
+
+    def restore_previous_assay_background(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.restore_previous_assay_background_from_saved_settings()
+        self.runtime_state.append_log("INFO", "Restored previous assay background.")
+        return payload
+
+    def rebuild_assay_background_transform(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.rebuild_assay_background_transform_from_saved_settings()
+        self.runtime_state.append_log("INFO", "Rebuilt assay background with current transform.")
+        return payload
+
+    def capture_assay_preview(
+        self,
+        *,
+        mode: str = "calibration",
+        calibration_override: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.capture_assay_preview_from_saved_settings(
+            mode=mode,
+            calibration_override=calibration_override,
+        )
+        self.runtime_state.append_log("INFO", f"Captured assay preview ({mode}).")
+        return payload
+
+    def load_assay_calibration(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        return fin6_bridge.load_assay_calibration_data()
+
+    def save_assay_calibration(self, payload: dict[str, Any]) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        result = fin6_bridge.save_assay_calibration_data(payload)
+        self.runtime_state.append_log("INFO", "Saved assay calibration.")
+        return result
+
+    def test_assay_calibration(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        result = fin6_bridge.test_assay_calibration_from_saved_settings(
+            calibration_override=payload,
+        )
+        self.runtime_state.append_log("INFO", "Tested assay calibration preview.")
+        return result
+
+    def process_last_assay(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.process_last_assay_from_saved_settings()
+        self.runtime_state.append_log("INFO", "Processed latest assay run.")
+        return payload
+
+    def process_selected_assay_run(self, run_dir: str) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.process_selected_assay_run(run_dir)
+        self.runtime_state.append_log("INFO", f"Processed selected assay run: {run_dir}")
+        return payload
+
+    def batch_process_assay_runs(self, folder: str) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.batch_process_assay_runs(folder)
+        self.runtime_state.append_log("INFO", f"Batch processed assay runs in {folder}")
+        return payload
+
+    def upload_last_assay(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        payload = fin6_bridge.upload_last_assay_from_saved_settings()
+        self.runtime_state.append_log("INFO", "Uploaded latest assay run.")
+        return payload
+
+    def get_latest_assay_run_manifest(self) -> dict[str, Any]:
+        fin6_bridge = self._load_fin6_bridge()
+        return fin6_bridge.get_latest_assay_run_manifest()
+
+    def get_assay_preview_artifact_path(self, mode: str) -> Path:
+        fin6_bridge = self._load_fin6_bridge()
+        return Path(fin6_bridge.resolve_assay_preview_artifact_path(mode))
+
+    def get_assay_background_artifact_path(self, which: str) -> Path:
+        fin6_bridge = self._load_fin6_bridge()
+        return Path(fin6_bridge.resolve_assay_background_artifact_path(which))
+
+    def get_latest_assay_artifact_path(self, kind: str) -> Path:
+        fin6_bridge = self._load_fin6_bridge()
+        return Path(fin6_bridge.resolve_latest_assay_artifact_path(kind))
+
     def validate_detect_channel_command(self) -> str | None:
         try:
             fin6_bridge = self._load_fin6_bridge()
@@ -545,6 +681,30 @@ class MachineService:
     def run_assay(self) -> None:
         self._ensure_assay_ready()
         self.assay_service.run()
+
+    def run_integrated3_assay(self) -> dict[str, Any]:
+        self._ensure_assay_ready()
+        fin6_bridge = self._load_fin6_bridge()
+        self._trace("integrated3_assay_enter")
+        self.runtime_state.begin_task("assay", TaskState.ASSAY_RUNNING, "Running Integrated3 assay workflow.")
+        self.runtime_state.set_orchestrator_state(OrchestratorState.TASK_STARTING, "Starting Integrated3 assay task.")
+        self.runtime_state.set_vibration_on(True)
+        self.logger.info("Integrated3 assay started.")
+        try:
+            result = fin6_bridge.run_integrated3_assay_from_active_profile()
+        except Exception:
+            self.runtime_state.set_vibration_on(False)
+            self.runtime_state.fail_task(TaskState.ASSAY_ERROR, "Integrated3 assay failed.")
+            self.logger.exception("Integrated3 assay failed.")
+            self._trace("integrated3_assay_exception")
+            raise
+
+        self.runtime_state.set_vibration_on(False)
+        self.runtime_state.complete_task(TaskState.ASSAY_COMPLETE, "Integrated3 assay completed.")
+        self.runtime_state.set_orchestrator_state(OrchestratorState.SYSTEM_IDLE, "Machine idle.")
+        self.logger.info("Integrated3 assay completed.")
+        self._trace("integrated3_assay_exit")
+        return result
 
     def classify_fly(self) -> dict[str, object]:
         return self.classify_service.run()

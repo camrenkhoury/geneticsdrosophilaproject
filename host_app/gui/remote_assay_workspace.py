@@ -1,0 +1,683 @@
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import tempfile
+import threading
+from pathlib import Path
+from tkinter import filedialog, messagebox, scrolledtext, ttk
+import tkinter as tk
+from typing import Any, Callable
+
+
+class RemoteAssayWorkspace(ttk.Frame):
+    PREVIEW_MODES = ("calibration", "background", "transform", "annotated", "mask", "raw")
+
+    def __init__(
+        self,
+        master: tk.Misc,
+        *,
+        get_controller: Callable[[], Any | None],
+        on_back: Callable[[], None],
+        status_callback: Callable[[str, str], None],
+        log_callback: Callable[[str], None],
+        open_setup_callback: Callable[[], None] | None = None,
+    ) -> None:
+        super().__init__(master, padding=10)
+        self.get_controller = get_controller
+        self.on_back = on_back
+        self.status_callback = status_callback
+        self.log_callback = log_callback
+        self.open_setup_callback = open_setup_callback
+
+        self.cache_dir = Path(tempfile.gettempdir()) / "drosophila_remote_assay_cache"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+        self.connected = False
+        self.remote_busy = False
+        self.assay_available = False
+        self.backend_status_text = "Disconnected"
+        self._preview_source_image = None
+        self._preview_photo = None
+        self._worker_count = 0
+        self._last_status_payload: dict[str, Any] | None = None
+        self._last_manifest_payload: dict[str, Any] | None = None
+
+        self.connection_var = tk.StringVar(value="Disconnected")
+        self.workspace_status_var = tk.StringVar(value="Open the assay workspace to begin.")
+        self.active_profile_var = tk.StringVar(value="")
+        self.profile_combo_var = tk.StringVar(value="")
+        self.profile_path_var = tk.StringVar(value="")
+        self.background_var = tk.StringVar(value="")
+        self.previous_background_var = tk.StringVar(value="")
+        self.calibration_path_var = tk.StringVar(value="")
+        self.last_run_var = tk.StringVar(value="")
+        self.preview_mode_var = tk.StringVar(value="calibration")
+        self.preview_info_var = tk.StringVar(value="No assay preview loaded.")
+        self.results_status_var = tk.StringVar(value="No assay run loaded.")
+
+        self._build_layout()
+
+    def _build_layout(self) -> None:
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
+
+        topbar = ttk.Frame(self)
+        topbar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        topbar.columnconfigure(1, weight=1)
+
+        ttk.Button(topbar, text="Back", command=self.on_back).grid(row=0, column=0, sticky="w")
+        ttk.Label(topbar, text="Assay Workspace", font=("Arial", 14, "bold")).grid(row=0, column=1, sticky="w", padx=(10, 0))
+
+        self.connection_label = tk.Label(
+            topbar,
+            textvariable=self.connection_var,
+            bg="#607D8B",
+            fg="white",
+            padx=10,
+            pady=4,
+            relief="ridge",
+            anchor="center",
+        )
+        self.connection_label.grid(row=0, column=2, sticky="e")
+
+        paned = ttk.Panedwindow(self, orient=tk.HORIZONTAL)
+        paned.grid(row=1, column=0, sticky="nsew")
+
+        left_panel = ttk.Frame(paned)
+        left_panel.columnconfigure(0, weight=1)
+        left_panel.rowconfigure(0, weight=1)
+        paned.add(left_panel, weight=2)
+
+        center_panel = ttk.Frame(paned)
+        center_panel.columnconfigure(0, weight=1)
+        center_panel.rowconfigure(1, weight=1)
+        paned.add(center_panel, weight=5)
+
+        right_panel = ttk.Frame(paned)
+        right_panel.columnconfigure(0, weight=1)
+        right_panel.rowconfigure(1, weight=1)
+        paned.add(right_panel, weight=3)
+
+        self._build_scrollable_controls(left_panel)
+        self._build_preview_panel(center_panel)
+        self._build_results_panel(right_panel)
+
+    def _build_scrollable_controls(self, parent: ttk.Frame) -> None:
+        canvas = tk.Canvas(parent, highlightthickness=0, bd=0, background="#f3f4f6")
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        body = ttk.Frame(canvas, padding=2)
+        window_id = canvas.create_window((0, 0), window=body, anchor="nw")
+
+        def _sync_region(_event=None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _sync_width(_event=None) -> None:
+            canvas.itemconfigure(window_id, width=canvas.winfo_width())
+
+        body.bind("<Configure>", _sync_region)
+        canvas.bind("<Configure>", _sync_width)
+
+        row = 0
+        row = self._build_profile_card(body, row)
+        row = self._build_preview_card(body, row)
+        row = self._build_background_card(body, row)
+        row = self._build_calibration_card(body, row)
+        row = self._build_recording_card(body, row)
+        row = self._build_processing_card(body, row)
+        row = self._build_upload_card(body, row)
+        row = self._build_artifact_card(body, row)
+        body.rowconfigure(row, weight=1)
+
+    def _card(self, parent: ttk.Frame, row: int, title: str, subtitle: str) -> ttk.LabelFrame:
+        frame = ttk.LabelFrame(parent, text=title, padding=10)
+        frame.grid(row=row, column=0, sticky="ew", pady=(0, 8))
+        frame.columnconfigure(1, weight=1)
+        ttk.Label(frame, text=subtitle, foreground="#4b5563", wraplength=300, justify="left").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8)
+        )
+        return frame
+
+    def _build_profile_card(self, parent: ttk.Frame, row: int) -> int:
+        frame = self._card(parent, row, "Profile", "Active Integrated3 assay profile on the Pi.")
+        ttk.Label(frame, text="Active").grid(row=1, column=0, sticky="w", pady=2)
+        ttk.Label(frame, textvariable=self.active_profile_var).grid(row=1, column=1, sticky="w", pady=2)
+        ttk.Label(frame, text="Profile path").grid(row=2, column=0, sticky="nw", pady=2)
+        ttk.Label(frame, textvariable=self.profile_path_var, wraplength=220, justify="left").grid(row=2, column=1, sticky="w", pady=2)
+
+        self.profile_combo = ttk.Combobox(frame, textvariable=self.profile_combo_var, state="readonly")
+        self.profile_combo.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 4))
+        button_row = ttk.Frame(frame)
+        button_row.grid(row=4, column=0, columnspan=2, sticky="ew")
+        ttk.Button(button_row, text="Refresh", command=self.refresh_workspace).pack(side="left")
+        ttk.Button(button_row, text="Activate", command=self.activate_selected_profile).pack(side="left", padx=(6, 0))
+        if self.open_setup_callback is not None:
+            ttk.Button(button_row, text="Open Pi Setup", command=self.open_setup_callback).pack(side="left", padx=(6, 0))
+        return row + 1
+
+    def _build_preview_card(self, parent: ttk.Frame, row: int) -> int:
+        frame = self._card(parent, row, "Preview", "Remote assay preview modes from the Pi.")
+        ttk.Label(frame, text="Mode").grid(row=1, column=0, sticky="w", pady=2)
+        preview_combo = ttk.Combobox(frame, textvariable=self.preview_mode_var, values=self.PREVIEW_MODES, state="readonly")
+        preview_combo.grid(row=1, column=1, sticky="ew", pady=2)
+        actions = ttk.Frame(frame)
+        actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Button(actions, text="Capture Preview", command=self.capture_preview).pack(side="left")
+        ttk.Button(actions, text="Show Image", command=self.load_preview_image_for_current_mode).pack(side="left", padx=(6, 0))
+        return row + 1
+
+    def _build_background_card(self, parent: ttk.Frame, row: int) -> int:
+        frame = self._card(parent, row, "Background", "Capture, import, restore, and rebuild assay background.")
+        ttk.Label(frame, text="Current").grid(row=1, column=0, sticky="nw", pady=2)
+        ttk.Label(frame, textvariable=self.background_var, wraplength=220, justify="left").grid(row=1, column=1, sticky="w", pady=2)
+        ttk.Label(frame, text="Previous").grid(row=2, column=0, sticky="nw", pady=2)
+        ttk.Label(frame, textvariable=self.previous_background_var, wraplength=220, justify="left").grid(row=2, column=1, sticky="w", pady=2)
+        actions = ttk.Frame(frame)
+        actions.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Button(actions, text="Capture", command=self.capture_background).pack(side="left")
+        ttk.Button(actions, text="Import", command=self.import_background).pack(side="left", padx=(6, 0))
+        ttk.Button(actions, text="Restore", command=self.restore_background).pack(side="left", padx=(6, 0))
+        ttk.Button(actions, text="Rebuild", command=self.rebuild_background).pack(side="left", padx=(6, 0))
+        return row + 1
+
+    def _build_calibration_card(self, parent: ttk.Frame, row: int) -> int:
+        frame = self._card(parent, row, "Calibration", "Load, edit, save, and test assay calibration JSON.")
+        ttk.Label(frame, text="Calibration").grid(row=1, column=0, sticky="nw", pady=2)
+        ttk.Label(frame, textvariable=self.calibration_path_var, wraplength=220, justify="left").grid(row=1, column=1, sticky="w", pady=2)
+        actions = ttk.Frame(frame)
+        actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 4))
+        ttk.Button(actions, text="Load", command=self.load_calibration).pack(side="left")
+        ttk.Button(actions, text="Save", command=self.save_calibration).pack(side="left", padx=(6, 0))
+        ttk.Button(actions, text="Test", command=self.test_calibration).pack(side="left", padx=(6, 0))
+
+        self.calibration_text = scrolledtext.ScrolledText(frame, height=14, wrap=tk.WORD, font=("Consolas", 8))
+        self.calibration_text.grid(row=3, column=0, columnspan=2, sticky="nsew")
+        frame.rowconfigure(3, weight=1)
+        return row + 1
+
+    def _build_recording_card(self, parent: ttk.Frame, row: int) -> int:
+        frame = self._card(parent, row, "Run", "Run the Integrated3 assay workflow remotely.")
+        ttk.Button(frame, text="Run Assay", command=self.run_assay).grid(row=1, column=0, columnspan=2, sticky="ew")
+        ttk.Label(frame, textvariable=self.last_run_var, wraplength=300, justify="left").grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        return row + 1
+
+    def _build_processing_card(self, parent: ttk.Frame, row: int) -> int:
+        frame = self._card(parent, row, "Processing", "Process the latest run, a selected run, or a folder.")
+        actions = ttk.Frame(frame)
+        actions.grid(row=1, column=0, columnspan=2, sticky="ew")
+        ttk.Button(actions, text="Process Last", command=self.process_last).pack(side="left")
+        ttk.Button(actions, text="Process Selected", command=self.process_selected).pack(side="left", padx=(6, 0))
+        ttk.Button(actions, text="Batch Process", command=self.batch_process).pack(side="left", padx=(6, 0))
+        return row + 1
+
+    def _build_upload_card(self, parent: ttk.Frame, row: int) -> int:
+        frame = self._card(parent, row, "Upload / Export", "Upload the latest run and seed Box template files.")
+        actions = ttk.Frame(frame)
+        actions.grid(row=1, column=0, columnspan=2, sticky="ew")
+        ttk.Button(actions, text="Upload Last", command=self.upload_last).pack(side="left")
+        ttk.Button(actions, text="Write Box Templates", command=self.write_box_templates).pack(side="left", padx=(6, 0))
+        return row + 1
+
+    def _build_artifact_card(self, parent: ttk.Frame, row: int) -> int:
+        frame = self._card(parent, row, "Artifacts", "Fetch the latest manifest, videos, CSVs, PDF, and processing JSON.")
+        actions = ttk.Frame(frame)
+        actions.grid(row=1, column=0, columnspan=2, sticky="ew")
+        ttk.Button(actions, text="Manifest", command=self.load_manifest).pack(side="left")
+        ttk.Button(actions, text="Annotated Video", command=lambda: self.fetch_artifact("annotated_video")).pack(side="left", padx=(6, 0))
+        ttk.Button(actions, text="Raw Video", command=lambda: self.fetch_artifact("raw_video")).pack(side="left", padx=(6, 0))
+        second_row = ttk.Frame(frame)
+        second_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Button(second_row, text="Mask Video", command=lambda: self.fetch_artifact("mask_video")).pack(side="left")
+        ttk.Button(second_row, text="Per-Vial CSV", command=lambda: self.fetch_artifact("per_vial_summary_csv")).pack(side="left", padx=(6, 0))
+        ttk.Button(second_row, text="Per-Fly CSV", command=lambda: self.fetch_artifact("per_fly_summary_csv")).pack(side="left", padx=(6, 0))
+        third_row = ttk.Frame(frame)
+        third_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Button(third_row, text="Report PDF", command=lambda: self.fetch_artifact("report_pdf")).pack(side="left")
+        ttk.Button(third_row, text="Processing JSON", command=lambda: self.fetch_artifact("processing_json")).pack(side="left", padx=(6, 0))
+        return row + 1
+
+    def _build_preview_panel(self, parent: ttk.Frame) -> None:
+        header = ttk.Frame(parent)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="Preview / Work Area", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(header, textvariable=self.preview_info_var, foreground="#4b5563").grid(row=1, column=0, sticky="w")
+
+        preview_frame = ttk.Frame(parent, relief="sunken")
+        preview_frame.grid(row=1, column=0, sticky="nsew")
+        preview_frame.columnconfigure(0, weight=1)
+        preview_frame.rowconfigure(0, weight=1)
+
+        self.preview_label = tk.Label(
+            preview_frame,
+            text="No assay preview loaded.",
+            bg="#111827",
+            fg="white",
+            anchor="center",
+            justify="center",
+        )
+        self.preview_label.grid(row=0, column=0, sticky="nsew")
+        self.preview_label.bind("<Configure>", self._refresh_preview_image)
+
+    def _build_results_panel(self, parent: ttk.Frame) -> None:
+        ttk.Label(parent, text="Results / Status", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(parent, textvariable=self.results_status_var, foreground="#4b5563", wraplength=340, justify="left").grid(
+            row=1, column=0, sticky="ew", pady=(0, 6)
+        )
+
+        self.results_text = scrolledtext.ScrolledText(parent, height=20, wrap=tk.WORD, font=("Consolas", 8))
+        self.results_text.grid(row=2, column=0, sticky="nsew")
+
+        self.workspace_log = scrolledtext.ScrolledText(parent, height=8, wrap=tk.WORD, font=("Consolas", 8))
+        self.workspace_log.grid(row=3, column=0, sticky="nsew", pady=(8, 0))
+        parent.rowconfigure(2, weight=3)
+        parent.rowconfigure(3, weight=1)
+
+    def enter_workspace(self) -> None:
+        self.refresh_workspace()
+
+    def update_connection_state(self, *, connected: bool, message: str, remote_busy: bool, assay_available: bool) -> None:
+        self.connected = bool(connected)
+        self.remote_busy = bool(remote_busy)
+        self.assay_available = bool(assay_available)
+        state_text = str(message or "Disconnected")
+        if self.connected and self.remote_busy:
+            state_text = f"{state_text} | busy"
+        elif self.connected:
+            state_text = f"{state_text} | connected"
+        color = "#4CAF50" if self.connected else "#FF9800"
+        if self.connected and not self.assay_available:
+            color = "#F44336"
+            state_text = f"{state_text} | assay unavailable"
+        self.connection_var.set(state_text)
+        self.connection_label.configure(bg=color)
+
+    def _append_log(self, message: str) -> None:
+        self.workspace_log.insert(tk.END, message + "\n")
+        self.workspace_log.see(tk.END)
+        self.log_callback(message)
+
+    def _set_workspace_status(self, text: str) -> None:
+        self.workspace_status_var.set(text)
+        self.results_status_var.set(text)
+
+    def _require_controller(self):
+        controller = self.get_controller()
+        if controller is None or not self.connected:
+            raise RuntimeError("Connect to the Pi backend before using the assay workspace.")
+        return controller
+
+    def _run_async(self, label: str, worker: Callable[[], Any], on_success: Callable[[Any], None] | None = None) -> None:
+        self._worker_count += 1
+        self._set_workspace_status(label)
+        self.status_callback("assaying", label)
+
+        def _task() -> None:
+            try:
+                result = worker()
+            except Exception as exc:
+                self.after(0, lambda: self._handle_error(label, exc))
+                return
+            self.after(0, lambda: self._handle_success(label, result, on_success))
+
+        threading.Thread(target=_task, daemon=True).start()
+
+    def _handle_error(self, label: str, exc: Exception) -> None:
+        self._worker_count = max(0, self._worker_count - 1)
+        message = f"{label} failed: {exc}"
+        self._append_log(message)
+        self.status_callback("error", message)
+        self._set_workspace_status(message)
+        messagebox.showerror("Assay Workspace Error", str(exc), parent=self.winfo_toplevel())
+
+    def _handle_success(self, label: str, result: Any, on_success: Callable[[Any], None] | None) -> None:
+        try:
+            self._append_log(f"{label} completed.")
+            if on_success is not None:
+                on_success(result)
+        except Exception as exc:
+            self._handle_error(label, exc)
+            return
+        self._worker_count = max(0, self._worker_count - 1)
+        self.status_callback("running", f"{label} completed.")
+
+    def refresh_workspace(self) -> None:
+        def worker() -> dict[str, Any]:
+            controller = self._require_controller()
+            manifest: dict[str, Any] = {}
+            try:
+                manifest = controller.get_latest_assay_manifest()
+            except Exception:
+                manifest = {}
+            return {
+                "status": controller.get_assay_status(),
+                "summary": controller.get_assay_profile_summary(),
+                "profiles": controller.get_assay_profiles(),
+                "manifest": manifest,
+            }
+
+        def on_success(payload: dict[str, Any]) -> None:
+            self._apply_status_payload(payload.get("status", {}))
+            self._apply_profiles_payload(payload.get("profiles", {}))
+            manifest = payload.get("manifest", {})
+            if manifest.get("ok", True):
+                self._apply_manifest_payload(manifest)
+            self._apply_summary_payload(payload.get("summary", {}))
+            if self.background_var.get():
+                self.load_preview_image("background")
+
+        self._run_async("Refreshing assay workspace", worker, on_success)
+
+    def _apply_status_payload(self, payload: dict[str, Any]) -> None:
+        self._last_status_payload = dict(payload or {})
+        self.active_profile_var.set(str(payload.get("profile", "") or ""))
+        self.profile_path_var.set(str(payload.get("profile_path", "") or ""))
+        self.background_var.set(str(payload.get("background_preview", "") or ""))
+        self.previous_background_var.set(str(payload.get("background_previous", "") or ""))
+        self.calibration_path_var.set(str(payload.get("calibration_path", "") or ""))
+        self.last_run_var.set(str(payload.get("last_run_dir", "") or ""))
+        self.results_text.delete("1.0", tk.END)
+        self.results_text.insert(tk.END, json.dumps(payload, indent=2, sort_keys=True))
+
+    def _apply_summary_payload(self, payload: dict[str, Any]) -> None:
+        if payload:
+            self._append_log(f"Profile summary loaded for {payload.get('name', '')}.")
+
+    def _apply_profiles_payload(self, payload: dict[str, Any]) -> None:
+        profiles = list(payload.get("profiles", []) or [])
+        self.profile_combo.configure(values=profiles)
+        active = str(payload.get("active_profile", "") or "")
+        self.profile_combo_var.set(active or (profiles[0] if profiles else ""))
+
+    def _apply_manifest_payload(self, payload: dict[str, Any]) -> None:
+        self._last_manifest_payload = dict(payload or {})
+        run_dir = str(payload.get("run_dir", "") or "")
+        if run_dir:
+            self.last_run_var.set(run_dir)
+        manifest = payload.get("manifest", {}) or {}
+        self.results_text.delete("1.0", tk.END)
+        self.results_text.insert(tk.END, json.dumps(manifest, indent=2, sort_keys=True))
+        self.results_status_var.set(f"Latest assay run: {Path(run_dir).name}" if run_dir else "No assay run loaded.")
+
+    def activate_selected_profile(self) -> None:
+        profile_name = self.profile_combo_var.get().strip()
+        if not profile_name:
+            return
+        self._run_async(
+            f"Activating assay profile {profile_name}",
+            lambda: self._require_controller().activate_assay_profile(profile_name),
+            lambda _payload: self.refresh_workspace(),
+        )
+
+    def capture_preview(self) -> None:
+        mode = self.preview_mode_var.get().strip() or "calibration"
+        self._run_async(
+            f"Capturing assay preview ({mode})",
+            lambda: self._require_controller().capture_assay_preview(mode=mode),
+            lambda _payload: self.load_preview_image(mode),
+        )
+
+    def load_preview_image_for_current_mode(self) -> None:
+        self.load_preview_image(self.preview_mode_var.get().strip() or "calibration")
+
+    def load_preview_image(self, mode: str) -> None:
+        mode_key = str(mode or "calibration").strip().lower()
+
+        def worker() -> tuple[str, bytes | None]:
+            controller = self._require_controller()
+            if mode_key == "background":
+                return mode_key, controller.get_assay_background_image("current")
+            return mode_key, controller.get_assay_preview_image(mode_key)
+
+        def on_success(result: tuple[str, bytes | None]) -> None:
+            loaded_mode, image_bytes = result
+            if not image_bytes:
+                self.preview_info_var.set(f"No preview image is available for mode '{loaded_mode}'.")
+                return
+            self.preview_info_var.set(f"Showing {loaded_mode} preview.")
+            self._set_preview_from_bytes(image_bytes)
+
+        self._run_async(f"Loading assay {mode_key} image", worker, on_success)
+
+    def capture_background(self) -> None:
+        self._run_async(
+            "Capturing assay background",
+            lambda: self._require_controller().capture_assay_background(),
+            lambda _payload: self._post_background_update("background"),
+        )
+
+    def import_background(self) -> None:
+        source_path = filedialog.askopenfilename(
+            parent=self.winfo_toplevel(),
+            filetypes=[("Images", "*.png *.jpg *.jpeg *.bmp"), ("All files", "*.*")],
+        )
+        if not source_path:
+            return
+        source = Path(source_path)
+        image_bytes = source.read_bytes()
+        self._run_async(
+            f"Importing assay background from {source.name}",
+            lambda: self._require_controller().import_assay_background(
+                image_bytes=image_bytes,
+                filename=source.name,
+            ),
+            lambda _payload: self._post_background_update("background"),
+        )
+
+    def restore_background(self) -> None:
+        self._run_async(
+            "Restoring previous assay background",
+            lambda: self._require_controller().restore_previous_assay_background(),
+            lambda _payload: self._post_background_update("background"),
+        )
+
+    def rebuild_background(self) -> None:
+        self._run_async(
+            "Rebuilding assay background transform",
+            lambda: self._require_controller().rebuild_assay_background(),
+            lambda _payload: self._post_background_update("background"),
+        )
+
+    def _post_background_update(self, preview_mode: str) -> None:
+        self.refresh_workspace()
+        self.preview_mode_var.set(preview_mode)
+
+    def load_calibration(self) -> None:
+        def on_success(payload: dict[str, Any]) -> None:
+            calibration = payload.get("calibration", {})
+            self.calibration_text.delete("1.0", tk.END)
+            self.calibration_text.insert(tk.END, json.dumps(calibration, indent=2, sort_keys=True))
+            self.calibration_path_var.set(str(payload.get("calibration_path", "") or ""))
+            self.preview_mode_var.set("calibration")
+            self.load_preview_image("background")
+
+        self._run_async("Loading assay calibration", lambda: self._require_controller().get_assay_calibration(), on_success)
+
+    def _current_calibration_payload(self) -> dict[str, Any]:
+        raw_text = self.calibration_text.get("1.0", tk.END).strip()
+        if not raw_text:
+            raise ValueError("Calibration editor is empty.")
+        payload = json.loads(raw_text)
+        if not isinstance(payload, dict):
+            raise ValueError("Calibration JSON must be an object.")
+        return payload
+
+    def save_calibration(self) -> None:
+        calibration = self._current_calibration_payload()
+
+        def on_success(payload: dict[str, Any]) -> None:
+            self.calibration_path_var.set(str(payload.get("calibration_path", "") or ""))
+            self.preview_mode_var.set("calibration")
+            self.load_preview_image("calibration")
+            self.refresh_workspace()
+
+        self._run_async(
+            "Saving assay calibration",
+            lambda: self._require_controller().save_assay_calibration(calibration),
+            on_success,
+        )
+
+    def test_calibration(self) -> None:
+        calibration = self._current_calibration_payload()
+        self._run_async(
+            "Testing assay calibration",
+            lambda: self._require_controller().test_assay_calibration(calibration),
+            lambda _payload: self.load_preview_image("annotated"),
+        )
+
+    def run_assay(self) -> None:
+        def worker() -> dict[str, Any]:
+            controller = self._require_controller()
+            accepted = controller.run_integrated3_assay()
+            status = dict(accepted or {})
+            if not status.get("accepted", False):
+                return status
+            deadline = threading.Event()
+            while not deadline.wait(0.5):
+                polled = controller.get_status_fresh()
+                current_task = str(polled.get("current_task") or "")
+                task_state = str(polled.get("task_state") or "")
+                latest_message = str(polled.get("latest_message") or "")
+                if current_task == "assay" or task_state == "ASSAY_RUNNING":
+                    continue
+                if task_state == "ASSAY_ERROR":
+                    raise RuntimeError(latest_message or "Integrated3 assay failed.")
+                if task_state == "ASSAY_COMPLETE" or current_task == "":
+                    return polled
+
+        def on_success(_payload: dict[str, Any]) -> None:
+            self.refresh_workspace()
+            self.load_manifest()
+
+        self._run_async("Running Integrated3 assay", worker, on_success)
+
+    def process_last(self) -> None:
+        self._run_async("Processing latest assay run", lambda: self._require_controller().process_last_assay(), self._on_processing_complete)
+
+    def process_selected(self) -> None:
+        run_dir = filedialog.askdirectory(parent=self.winfo_toplevel())
+        if not run_dir:
+            return
+        self._run_async(
+            f"Processing selected assay run {Path(run_dir).name}",
+            lambda: self._require_controller().process_selected_assay(run_dir),
+            self._on_processing_complete,
+        )
+
+    def batch_process(self) -> None:
+        folder = filedialog.askdirectory(parent=self.winfo_toplevel())
+        if not folder:
+            return
+        self._run_async(
+            f"Batch processing assay folder {Path(folder).name}",
+            lambda: self._require_controller().batch_process_assay(folder),
+            lambda payload: self.results_text.insert(tk.END, "\n\n" + json.dumps(payload, indent=2, sort_keys=True)),
+        )
+
+    def _on_processing_complete(self, payload: dict[str, Any]) -> None:
+        self.results_text.delete("1.0", tk.END)
+        self.results_text.insert(tk.END, json.dumps(payload, indent=2, sort_keys=True))
+        self.results_status_var.set("Assay processing complete.")
+        self.load_manifest()
+
+    def upload_last(self) -> None:
+        self._run_async(
+            "Uploading latest assay run",
+            lambda: self._require_controller().upload_last_assay(),
+            lambda payload: self.results_text.insert(tk.END, "\n\n" + json.dumps(payload, indent=2, sort_keys=True)),
+        )
+
+    def write_box_templates(self) -> None:
+        self._run_async(
+            "Writing assay Box templates",
+            lambda: self._require_controller().seed_assay_box_templates(overwrite=True),
+            lambda payload: self.results_text.insert(tk.END, "\n\n" + json.dumps(payload, indent=2, sort_keys=True)),
+        )
+
+    def load_manifest(self) -> None:
+        self._run_async("Loading latest assay manifest", lambda: self._require_controller().get_latest_assay_manifest(), self._apply_manifest_payload)
+
+    def fetch_artifact(self, kind: str) -> None:
+        kind_key = str(kind).strip().lower()
+
+        def worker() -> tuple[Path, str]:
+            controller = self._require_controller()
+            if kind_key == "annotated_video":
+                data = controller.get_latest_assay_annotated_video()
+                suffix = ".mp4"
+            elif kind_key == "raw_video":
+                data = controller.get_latest_assay_raw_video()
+                suffix = ".mp4"
+            elif kind_key == "mask_video":
+                data = controller.get_latest_assay_mask_video()
+                suffix = ".mp4"
+            elif kind_key == "per_vial_summary_csv":
+                data = controller.get_latest_assay_per_vial_summary_csv()
+                suffix = ".csv"
+            elif kind_key == "per_fly_summary_csv":
+                data = controller.get_latest_assay_per_fly_summary_csv()
+                suffix = ".csv"
+            elif kind_key == "report_pdf":
+                data = controller.get_latest_assay_report_pdf()
+                suffix = ".pdf"
+            elif kind_key == "processing_json":
+                data = controller.get_latest_assay_processing_json()
+                suffix = ".json"
+            else:
+                raise ValueError(f"Unsupported artifact kind: {kind}")
+            if not data:
+                raise RuntimeError(f"No assay artifact is available for {kind_key}.")
+            target = self.cache_dir / f"latest_{kind_key}{suffix}"
+            target.write_bytes(data)
+            return target, kind_key
+
+        def on_success(result: tuple[Path, str]) -> None:
+            path, artifact_kind = result
+            if artifact_kind.endswith("json") or artifact_kind.endswith("csv"):
+                self.results_text.delete("1.0", tk.END)
+                self.results_text.insert(tk.END, path.read_text(encoding="utf-8", errors="replace"))
+                self.results_status_var.set(f"Loaded {path.name} into results panel.")
+            else:
+                self._open_file(path)
+                self.results_status_var.set(f"Opened {path.name}.")
+
+        self._run_async(f"Fetching assay artifact {kind_key}", worker, on_success)
+
+    def _set_preview_from_bytes(self, image_bytes: bytes) -> None:
+        try:
+            from PIL import Image
+        except ImportError as exc:
+            raise RuntimeError("Pillow is required to display assay preview images.") from exc
+        import io
+
+        self._preview_source_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        self._refresh_preview_image()
+
+    def _refresh_preview_image(self, _event=None) -> None:
+        if self._preview_source_image is None:
+            return
+        try:
+            from PIL import ImageTk
+        except ImportError:
+            return
+        width = max(self.preview_label.winfo_width(), 640)
+        height = max(self.preview_label.winfo_height(), 480)
+        image = self._preview_source_image.copy()
+        image.thumbnail((width - 20, height - 20))
+        self._preview_photo = ImageTk.PhotoImage(image)
+        self.preview_label.configure(image=self._preview_photo, text="")
+
+    @staticmethod
+    def _open_file(path: Path) -> None:
+        if os.name == "nt":
+            os.startfile(str(path))  # type: ignore[attr-defined]
+            return
+        if os.name == "posix":
+            subprocess.Popen(["xdg-open", str(path)])
+            return
+        raise RuntimeError(f"Do not know how to open files on this platform: {os.name}")

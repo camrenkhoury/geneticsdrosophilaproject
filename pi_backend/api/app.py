@@ -44,7 +44,7 @@ class BackendApiContext:
             return TaskState.DETECT_CHANNEL_ERROR
         if normalized == "classify":
             return TaskState.CLASSIFY_ERROR
-        if normalized == "run_assay":
+        if normalized in {"run_assay", "integrated3_assay"}:
             return TaskState.ASSAY_ERROR
         return TaskState.AUTOMATED_ERROR
 

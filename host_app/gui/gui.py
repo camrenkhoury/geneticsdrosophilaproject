@@ -44,6 +44,7 @@ from host_app.controllers.base_controller import (
 from host_app.controllers.remote_controller import RemoteController
 from host_app.gui.camera_role_panel import CameraRoleActions, CameraRolePanel
 from host_app.gui.channel_setup_panel import ChannelSetupActions, ChannelSetupPanel
+from host_app.gui.remote_assay_workspace import RemoteAssayWorkspace
 from host_app.sync.connection_state import ConnectionState
 from host_app.sync.remote_sync import RemoteSyncManager
 from shared.config.network_config import (
@@ -620,6 +621,8 @@ class DrosophilaGUI:
         self._embedded_assay_controller = None
         self._embedded_assay_ui = None
         self._embedded_assay_attached = False
+        self.assay_page_frame = None
+        self.remote_assay_workspace = None
         self.status_frame = None
         self.main_content_frame = None
         self.motion_control_frame = None
@@ -897,9 +900,8 @@ class DrosophilaGUI:
             "This tab shows the latest classification, confidence, routing destination, and live tube counts."
         )
         self.assay_workspace_summary_var.set(
-            f"The real assay workspace is embedded in this Assay tab on {location}. "
-            "Use Start Assay here, or use the Start Assay prompt after automated sorting finishes. "
-            "The embedded assay workspace includes configuration, calibration, recording, processing, Box upload, and results."
+            f"Start Assay opens the full-page assay workspace for {location}. "
+            "That workspace includes background workflow, preview modes, calibration JSON load/save/test, assay run, processing, upload, and artifact access."
         )
 
     def _ensure_remote_connection_for_action(self, action_label: str) -> bool:
@@ -974,7 +976,7 @@ class DrosophilaGUI:
 
     def open_assay_setup(self):
         if self.is_remote_mode():
-            self._open_remote_fin6_setup()
+            self._open_assay_workspace(action_label="Open Assay Setup", show_error_dialog=True)
             return
         self._open_embedded_assay_workspace(action_label="Start Assay", show_error_dialog=True)
 
@@ -1629,6 +1631,20 @@ class DrosophilaGUI:
         self.create_main_content(self.main_frame)
         self.create_system_controls(self.main_frame)
         self.create_log_section(self.main_frame)
+
+        self.assay_page_frame = ttk.Frame(self.page_container, padding="10")
+        self.assay_page_frame.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        self.assay_page_frame.columnconfigure(0, weight=1)
+        self.assay_page_frame.rowconfigure(0, weight=1)
+        self.remote_assay_workspace = RemoteAssayWorkspace(
+            self.assay_page_frame,
+            get_controller=lambda: self.remote_controller,
+            on_back=self.show_control_panel,
+            status_callback=self.set_status,
+            log_callback=self.log_message,
+            open_setup_callback=self._open_remote_fin6_setup,
+        )
+        self.remote_assay_workspace.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
         self.show_entry_page()
 
     def create_entry_page(self, parent):
@@ -1922,11 +1938,15 @@ class DrosophilaGUI:
         metadata_label.grid(row=0, column=0)
 
     def show_entry_page(self):
+        if self.assay_page_frame is not None:
+            self.assay_page_frame.grid_remove()
         self.main_frame.grid_remove()
         self.entry_frame.grid()
         self._display_entry_photo()
 
     def show_control_panel(self):
+        if self.assay_page_frame is not None:
+            self.assay_page_frame.grid_remove()
         self.entry_frame.grid_remove()
         self.main_frame.grid()
 
@@ -2080,6 +2100,13 @@ class DrosophilaGUI:
         self.mode_label.config(bg=label_color)
         if getattr(self, "connection_label", None) is not None:
             self.connection_label.config(bg=connection_color)
+        if self.remote_assay_workspace is not None:
+            self.remote_assay_workspace.update_connection_state(
+                connected=self.remote_connected,
+                message=message,
+                remote_busy=self.remote_backend_busy,
+                assay_available=self.remote_assay_available,
+            )
         self._refresh_workspace_copy()
         self._update_control_interactivity()
 
@@ -2147,6 +2174,13 @@ class DrosophilaGUI:
         self.position_var.set(f"{float(status.get('current_position_mm', 0.0)):.2f} mm")
         self.mode_var.set("Remote Mode (Degraded)" if self.remote_backend_degraded else "Remote Mode")
         self.mode_label.config(bg="#FF9800" if self.remote_backend_degraded else "#4CAF50")
+        if self.remote_assay_workspace is not None:
+            self.remote_assay_workspace.update_connection_state(
+                connected=self.remote_connected,
+                message=self.connection_var.get(),
+                remote_busy=self.remote_backend_busy,
+                assay_available=self.remote_assay_available,
+            )
         detection_summary = status.get("detection_summary", {}) or {}
         source_mtime_raw = detection_summary.get("source_mtime")
         source_mtime = float(source_mtime_raw) if source_mtime_raw is not None else None
@@ -3912,11 +3946,6 @@ class DrosophilaGUI:
         self.assay_button.grid(row=0, column=0, sticky=tk.W)
         self.local_vision_widgets.append(self.assay_button)
 
-        self.assay_focus_button = self.make_button(button_row, "Expand Assay", "#455A64", self.toggle_assay_focus_mode)
-        self.assay_focus_button.grid(row=0, column=1, sticky=tk.W, padx=(8, 0))
-        self.local_vision_widgets.append(self.assay_focus_button)
-        self._update_assay_focus_button()
-
         workspace_shell = ttk.Frame(assay_card)
         workspace_shell.grid(row=2, column=0, sticky=(tk.N, tk.S, tk.W, tk.E), pady=(12, 0))
         workspace_shell.columnconfigure(0, weight=1)
@@ -4494,7 +4523,7 @@ class DrosophilaGUI:
                 elif kind == "open_assay_workspace":
                     self._trace_runtime("queue", "open_assay_workspace", echo_to_log=False)
                     payload = item[1] if len(item) > 1 else {}
-                    self._open_embedded_assay_workspace(
+                    self._open_assay_workspace(
                         action_label=str(payload.get("action_label", "Start Assay")),
                         show_error_dialog=True,
                     )
@@ -5661,7 +5690,7 @@ class DrosophilaGUI:
         self.ui_queue.put(("clear_stop",))
 
     def _launch_assay_gui_from_worker(self):
-        self.worker_log("Opening embedded assay workspace.")
+        self.worker_log("Opening full-page assay workspace.")
         self.ui_queue.put(("open_assay_workspace", {"action_label": "Start Assay"}))
         return None
 
@@ -5885,14 +5914,7 @@ class DrosophilaGUI:
         if not self._ensure_remote_connection_for_action("Start Assay"):
             return
         if self.is_remote_mode():
-            if not self._ensure_assay_setup_ready_or_prompt("Start Assay"):
-                return
-            self._start_remote_command(
-                "assay",
-                "assaying",
-                "Running Pi-side fin6 assay from saved settings.",
-                self.remote_controller.run_assay,
-            )
+            self._open_assay_workspace(action_label="Start Assay", show_error_dialog=True)
             return
         if not self._ensure_assay_setup_ready_or_prompt("Start Assay"):
             return
@@ -5911,6 +5933,36 @@ class DrosophilaGUI:
             and getattr(readiness, "assay_background_ready", False)
             and getattr(readiness, "assay_calibration_ready", False)
         )
+
+    def _open_remote_assay_workspace(self, *, action_label: str, show_error_dialog: bool) -> bool:
+        if not self._ensure_remote_connection_for_action(action_label):
+            return False
+        if self.assay_page_frame is None or self.remote_assay_workspace is None:
+            message = "The remote assay workspace is not initialized."
+            self.set_status("error", message)
+            if show_error_dialog:
+                messagebox.showerror("Assay Workspace Error", message)
+            return False
+
+        self.entry_frame.grid_remove()
+        self.main_frame.grid_remove()
+        self.assay_page_frame.grid()
+        self.remote_assay_workspace.update_connection_state(
+            connected=self.remote_connected,
+            message=self.connection_var.get(),
+            remote_busy=self.remote_backend_busy,
+            assay_available=self.remote_assay_available,
+        )
+        self.remote_assay_workspace.enter_workspace()
+        message = f"{action_label}: opened the full-page remote assay workspace."
+        self.log_message(message)
+        self.set_status("assaying", message)
+        return True
+
+    def _open_assay_workspace(self, *, action_label: str, show_error_dialog: bool) -> bool:
+        if self.is_remote_mode():
+            return self._open_remote_assay_workspace(action_label=action_label, show_error_dialog=show_error_dialog)
+        return self._open_embedded_assay_workspace(action_label=action_label, show_error_dialog=show_error_dialog)
 
     def _ensure_embedded_assay_workspace(self):
         if self._embedded_assay_attached and self._embedded_assay_ui is not None:

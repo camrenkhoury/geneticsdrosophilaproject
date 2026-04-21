@@ -63,6 +63,7 @@ _LEGACY_DEVICE_DEFAULTS: dict[str, set[str]] = {
 }
 
 _STITCH_OPERATOR_ASSAY_COMPONENTS: dict[str, Any] | None = None
+_REMOTE_ASSAY_CONTROLLER: "EmbeddedAssayWorkspaceController | None" = None
 _STITCH_OPERATOR_LABEL = "Integrated3"
 _STITCH_OPERATOR_IMPLEMENTATION_ROOT = (REPO_ROOT / "CodeDirectory" / "Integrated3").resolve()
 _STITCH_OPERATOR_PACKAGE_NAME = "_avi_integrated3_stitch_operator"
@@ -302,6 +303,601 @@ def get_embedded_assay_ui_class():
 
 def create_embedded_assay_controller() -> EmbeddedAssayWorkspaceController:
     return EmbeddedAssayWorkspaceController()
+
+
+def _get_remote_assay_controller() -> EmbeddedAssayWorkspaceController:
+    global _REMOTE_ASSAY_CONTROLLER
+    if _REMOTE_ASSAY_CONTROLLER is None:
+        _REMOTE_ASSAY_CONTROLLER = EmbeddedAssayWorkspaceController()
+    return _REMOTE_ASSAY_CONTROLLER
+
+
+def _get_remote_assay_service():
+    return _get_remote_assay_controller().assay
+
+
+def _assay_runtime_dir() -> Path:
+    runtime_dir = Path(_get_remote_assay_service().runtime_dir).resolve()
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    return runtime_dir
+
+
+def _assay_preview_path(mode: str) -> Path:
+    safe_mode = str(mode or "preview").strip().lower().replace("/", "_")
+    return _assay_runtime_dir() / f"assay_preview_{safe_mode}.png"
+
+
+def _copy_file_if_needed(source: Path, destination: Path) -> Path:
+    import shutil
+
+    source_resolved = source.resolve()
+    destination_resolved = destination.resolve()
+    if source_resolved != destination_resolved:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_resolved, destination_resolved)
+    return destination_resolved
+
+
+def _write_preview_image(mode: str, image_bgr) -> Path:
+    import cv2
+
+    preview_path = _assay_preview_path(mode)
+    preview_path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(preview_path), image_bgr):
+        raise IOError(f"Could not save assay preview image: {preview_path}")
+    return preview_path.resolve()
+
+
+def _load_assay_support_modules() -> dict[str, Any]:
+    _ensure_stitch_operator_import_paths()
+    import cv2
+    from assay_processing import batch_process_folder, process_assay_run
+    from assay_tracking import (
+        AssayCalibration,
+        VialCalibration,
+        build_assay_calibration,
+        load_assay_calibration,
+        preview_assay_frame,
+        render_assay_calibration_overlay,
+        save_assay_calibration,
+    )
+    from background_manager import (
+        BackgroundError,
+        current_background_preview_path,
+        get_background_store,
+        import_profile_background,
+    )
+    from shared_utils import load_json
+    from transform_utils import apply_image_transform
+
+    return {
+        "cv2": cv2,
+        "AssayCalibration": AssayCalibration,
+        "VialCalibration": VialCalibration,
+        "BackgroundError": BackgroundError,
+        "build_assay_calibration": build_assay_calibration,
+        "load_assay_calibration": load_assay_calibration,
+        "preview_assay_frame": preview_assay_frame,
+        "render_assay_calibration_overlay": render_assay_calibration_overlay,
+        "save_assay_calibration": save_assay_calibration,
+        "current_background_preview_path": current_background_preview_path,
+        "get_background_store": get_background_store,
+        "import_profile_background": import_profile_background,
+        "process_assay_run": process_assay_run,
+        "batch_process_folder": batch_process_folder,
+        "load_json": load_json,
+        "apply_image_transform": apply_image_transform,
+    }
+
+
+def _normalize_assay_calibration_payload(payload: dict[str, Any]):
+    modules = _load_assay_support_modules()
+    calibration_cls = modules["AssayCalibration"]
+    if not isinstance(payload, dict):
+        raise ValueError("Calibration payload must be a JSON object.")
+    return calibration_cls.from_dict(dict(payload))
+
+
+def _current_assay_background_path() -> Path:
+    modules = _load_assay_support_modules()
+    service = _get_remote_assay_service()
+    preview_path = modules["current_background_preview_path"](service.profile, service.project_root)
+    if preview_path is None or not Path(preview_path).exists():
+        raise FileNotFoundError("Assay background is not available yet.")
+    return Path(preview_path).resolve()
+
+
+def _assay_background_paths() -> dict[str, str]:
+    modules = _load_assay_support_modules()
+    service = _get_remote_assay_service()
+    store = modules["get_background_store"](service.profile, service.project_root)
+    return {
+        "current_raw_path": str(Path(store.current_raw_path).resolve()) if Path(store.current_raw_path).exists() else "",
+        "current_transformed_path": str(Path(store.current_transformed_path).resolve()) if Path(store.current_transformed_path).exists() else "",
+        "current_meta_path": str(Path(store.current_meta_path).resolve()) if Path(store.current_meta_path).exists() else "",
+        "previous_raw_path": str(Path(store.previous_raw_path).resolve()) if Path(store.previous_raw_path).exists() else "",
+        "previous_transformed_path": str(Path(store.previous_transformed_path).resolve()) if Path(store.previous_transformed_path).exists() else "",
+        "previous_meta_path": str(Path(store.previous_meta_path).resolve()) if Path(store.previous_meta_path).exists() else "",
+    }
+
+
+def list_assay_profiles() -> dict[str, Any]:
+    controller = _get_remote_assay_controller()
+    controller.refresh_readiness()
+    return {
+        "ok": True,
+        "profiles": controller.assay.list_profiles(),
+        "active_profile": controller.assay.profile.name,
+    }
+
+
+def get_assay_status() -> dict[str, Any]:
+    controller = _get_remote_assay_controller()
+    controller.refresh_readiness()
+    payload = dict(controller.assay.status())
+    payload.update(_assay_background_paths())
+    return payload
+
+
+def get_assay_profile_summary() -> dict[str, Any]:
+    controller = _get_remote_assay_controller()
+    controller.refresh_readiness()
+    return controller.assay_profile_summary()
+
+
+def patch_assay_profile_fields(**fields: Any) -> dict[str, Any]:
+    controller = _get_remote_assay_controller()
+    controller.patch_assay_profile_fields(**fields)
+    return {
+        "ok": True,
+        "message": "Assay profile updated.",
+        "profile": controller.assay.profile.name,
+        "status": get_assay_status(),
+        "summary": get_assay_profile_summary(),
+    }
+
+
+def activate_assay_profile(profile_name: str) -> dict[str, Any]:
+    controller = _get_remote_assay_controller()
+    controller.set_active_profile(profile_name)
+    return {
+        "ok": True,
+        "message": f"Activated assay profile {controller.assay.profile.name}.",
+        "profile": controller.assay.profile.name,
+        "status": get_assay_status(),
+        "summary": get_assay_profile_summary(),
+    }
+
+
+def seed_assay_box_templates(*, overwrite: bool = True) -> dict[str, Any]:
+    service = _get_remote_assay_service()
+    result = service.seed_box_templates(overwrite=overwrite)
+    return {
+        "ok": True,
+        "message": "Box template files are ready.",
+        **result,
+    }
+
+
+def capture_assay_background_from_saved_settings() -> dict[str, Any]:
+    service = _get_remote_assay_service()
+    record = service.capture_background()
+    payload = {
+        "ok": True,
+        "message": "Assay background captured.",
+        **record,
+        **_assay_background_paths(),
+    }
+    return payload
+
+
+def import_assay_background_from_saved_settings(
+    *,
+    source_path: str | None = None,
+    image_base64: str | None = None,
+    filename: str | None = None,
+) -> dict[str, Any]:
+    import base64
+
+    modules = _load_assay_support_modules()
+    service = _get_remote_assay_service()
+    import_path: Path
+    temp_path: Path | None = None
+    if image_base64:
+        raw_bytes = base64.b64decode(image_base64.encode("ascii"))
+        suffix = Path(str(filename or "uploaded_background.png")).suffix or ".png"
+        temp_path = _assay_runtime_dir() / f"uploaded_assay_background{suffix}"
+        temp_path.write_bytes(raw_bytes)
+        import_path = temp_path
+    else:
+        import_path = Path(str(source_path or "")).expanduser().resolve()
+    if not import_path.exists():
+        raise FileNotFoundError(f"Assay background import source was not found: {import_path}")
+    try:
+        record = modules["import_profile_background"](
+            service.profile,
+            service.project_root,
+            import_path,
+        )
+        service.profile.current_background_path = str(record.transformed_path)
+        service.profile.background_meta_path = str(modules["get_background_store"](service.profile, service.project_root).current_meta_path.resolve())
+        service.save_profile()
+        return {
+            "ok": True,
+            "message": "Assay background imported.",
+            **record.to_dict(),
+            **_assay_background_paths(),
+        }
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def restore_previous_assay_background_from_saved_settings() -> dict[str, Any]:
+    service = _get_remote_assay_service()
+    record = service.restore_previous_background()
+    return {
+        "ok": True,
+        "message": "Previous assay background restored.",
+        **record,
+        **_assay_background_paths(),
+    }
+
+
+def rebuild_assay_background_transform_from_saved_settings() -> dict[str, Any]:
+    modules = _load_assay_support_modules()
+    service = _get_remote_assay_service()
+    store = modules["get_background_store"](service.profile, service.project_root)
+    record = store.rebuild_current_transform(service.profile.transform)
+    if record is None:
+        raise modules["BackgroundError"]("No current assay background is available to rebuild.")
+    service.profile.current_background_path = str(record.transformed_path)
+    service.profile.background_meta_path = str(store.current_meta_path.resolve())
+    service.save_profile()
+    return {
+        "ok": True,
+        "message": "Assay background rebuilt with current transform.",
+        **record.to_dict(),
+        **_assay_background_paths(),
+    }
+
+
+def load_assay_calibration_data() -> dict[str, Any]:
+    modules = _load_assay_support_modules()
+    service = _get_remote_assay_service()
+    calibration_path = Path(service.calibration_path).resolve()
+    if not calibration_path.exists():
+        raise FileNotFoundError(f"Assay calibration does not exist yet: {calibration_path}")
+    calibration = modules["load_assay_calibration"](calibration_path)
+    return {
+        "ok": True,
+        "message": "Assay calibration loaded.",
+        "calibration_path": str(calibration_path),
+        "calibration": calibration.to_dict(),
+    }
+
+
+def save_assay_calibration_data(payload: dict[str, Any]) -> dict[str, Any]:
+    modules = _load_assay_support_modules()
+    service = _get_remote_assay_service()
+    calibration = _normalize_assay_calibration_payload(payload)
+    calibration.background_path = str(_current_assay_background_path())
+    calibration_path = Path(service.calibration_path).resolve()
+    calibration_path.parent.mkdir(parents=True, exist_ok=True)
+    modules["save_assay_calibration"](calibration_path, calibration)
+    service.profile.calibration_path = str(calibration_path)
+    service.save_profile()
+    overlay = modules["render_assay_calibration_overlay"](modules["cv2"].imread(str(_current_assay_background_path()), modules["cv2"].IMREAD_COLOR), calibration)
+    preview_path = _write_preview_image("calibration", overlay)
+    return {
+        "ok": True,
+        "message": "Assay calibration saved.",
+        "calibration_path": str(calibration_path),
+        "preview_path": str(preview_path),
+        "calibration": calibration.to_dict(),
+    }
+
+
+def _render_assay_preview(
+    *,
+    mode: str,
+    calibration_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    modules = _load_assay_support_modules()
+    service = _get_remote_assay_service()
+    normalized_mode = str(mode or "calibration").strip().lower()
+    cv2 = modules["cv2"]
+    apply_image_transform = modules["apply_image_transform"]
+
+    if normalized_mode == "background":
+        background_path = _current_assay_background_path()
+        preview_path = _copy_file_if_needed(background_path, _assay_preview_path("background"))
+        return {
+            "ok": True,
+            "message": "Assay background preview ready.",
+            "mode": "background",
+            "preview_path": str(preview_path),
+            "available_modes": ["background"],
+        }
+
+    raw_bgr = service._capture_raw_frame()
+    raw_preview_path = _write_preview_image("raw", raw_bgr)
+    transformed_bgr = apply_image_transform(raw_bgr, service.profile.transform)
+    transform_preview_path = _write_preview_image("transform", transformed_bgr)
+
+    if normalized_mode in {"raw", "transform"}:
+        selected_path = raw_preview_path if normalized_mode == "raw" else transform_preview_path
+        return {
+            "ok": True,
+            "message": f"Assay {normalized_mode} preview ready.",
+            "mode": normalized_mode,
+            "preview_path": str(selected_path),
+            "available_modes": ["raw", "transform"],
+        }
+
+    background_path = _current_assay_background_path()
+    background_bgr = cv2.imread(str(background_path), cv2.IMREAD_COLOR)
+    if background_bgr is None:
+        raise FileNotFoundError(f"Could not read assay background image: {background_path}")
+    if calibration_override is None:
+        calibration_path = Path(service.calibration_path).resolve()
+        if not calibration_path.exists():
+            raise FileNotFoundError(f"Assay calibration does not exist yet: {calibration_path}")
+        calibration = modules["load_assay_calibration"](calibration_path)
+    else:
+        calibration = _normalize_assay_calibration_payload(calibration_override)
+
+    preview_images, rows, info = modules["preview_assay_frame"](
+        background_bgr=background_bgr,
+        frame_bgr=transformed_bgr,
+        calibration=calibration,
+        min_area=int(service.profile.detector.min_area),
+        max_area=int(service.profile.detector.max_area),
+        min_threshold=float(service.profile.detector.min_threshold),
+        inner_margin_px=int(service.profile.detector.inner_margin_px),
+        no_align=not bool(service.profile.analysis.alignment_enabled),
+        max_flies_per_vial=int(service.profile.detector.max_flies_per_vial),
+        show_positions=bool(service.profile.analysis.show_positions),
+    )
+    overlay_bgr = modules["render_assay_calibration_overlay"](background_bgr, calibration)
+    _write_preview_image("background", background_bgr)
+    _write_preview_image("calibration", preview_images.get("calibration") or overlay_bgr)
+    if preview_images.get("aligned") is not None:
+        _write_preview_image("aligned", preview_images["aligned"])
+    if preview_images.get("annotated") is not None:
+        _write_preview_image("annotated", preview_images["annotated"])
+    if preview_images.get("mask") is not None:
+        _write_preview_image("mask", preview_images["mask"])
+
+    preview_map = {
+        "calibration": _assay_preview_path("calibration"),
+        "annotated": _assay_preview_path("annotated"),
+        "mask": _assay_preview_path("mask"),
+        "background": _assay_preview_path("background"),
+        "raw": _assay_preview_path("raw"),
+        "transform": _assay_preview_path("transform"),
+    }
+    if normalized_mode == "annotated" and not preview_map["annotated"].exists():
+        normalized_mode = "calibration"
+    if normalized_mode == "mask" and not preview_map["mask"].exists():
+        normalized_mode = "calibration"
+    selected_path = preview_map[normalized_mode]
+    if not selected_path.exists():
+        raise FileNotFoundError(f"Assay preview for mode '{normalized_mode}' is not available.")
+    return {
+        "ok": True,
+        "message": f"Assay {normalized_mode} preview ready.",
+        "mode": normalized_mode,
+        "preview_path": str(selected_path.resolve()),
+        "rows": rows,
+        "info": info,
+        "available_modes": [name for name, path in preview_map.items() if path.exists()],
+    }
+
+
+def capture_assay_preview_from_saved_settings(
+    *,
+    mode: str = "calibration",
+    calibration_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return _render_assay_preview(mode=mode, calibration_override=calibration_override)
+
+
+def run_integrated3_assay_from_active_profile() -> dict[str, Any]:
+    service = _get_remote_assay_service()
+    result = service.run_assay()
+    return {
+        "ok": True,
+        "message": "Integrated3 assay recording completed.",
+        **result,
+    }
+
+
+def test_assay_calibration_from_saved_settings(
+    *,
+    calibration_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = _render_assay_preview(mode="annotated", calibration_override=calibration_override)
+    payload["message"] = "Assay calibration test preview ready."
+    return payload
+
+
+def process_last_assay_from_saved_settings() -> dict[str, Any]:
+    service = _get_remote_assay_service()
+    result = service.process_last()
+    return {
+        "ok": True,
+        "message": "Processed latest assay run.",
+        **result,
+    }
+
+
+def process_selected_assay_run(run_dir: str) -> dict[str, Any]:
+    modules = _load_assay_support_modules()
+    service = _get_remote_assay_service()
+    result = modules["process_assay_run"](run_dir, profile_override=service.profile)
+    if result.get("run_dir"):
+        service.profile.last_run_dir = str(result["run_dir"])
+        service.save_profile()
+    return {
+        "ok": True,
+        "message": "Processed selected assay run.",
+        **result,
+    }
+
+
+def batch_process_assay_runs(folder: str) -> dict[str, Any]:
+    modules = _load_assay_support_modules()
+    service = _get_remote_assay_service()
+    results = modules["batch_process_folder"](folder, profile_override=service.profile)
+    return {
+        "ok": True,
+        "message": f"Batch processed {len(results)} assay runs.",
+        "results": results,
+    }
+
+
+def upload_last_assay_from_saved_settings() -> dict[str, Any]:
+    service = _get_remote_assay_service()
+    result = service.upload_last()
+    return {
+        "ok": True,
+        "message": "Uploaded latest assay run.",
+        **result,
+    }
+
+
+def get_latest_assay_run_manifest() -> dict[str, Any]:
+    modules = _load_assay_support_modules()
+    service = _get_remote_assay_service()
+    run_dir = service.last_run_dir()
+    if run_dir is None:
+        raise FileNotFoundError("No assay run is available yet.")
+    manifest_path = run_dir / "run_manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Assay run manifest is missing: {manifest_path}")
+    return {
+        "ok": True,
+        "run_dir": str(run_dir.resolve()),
+        "manifest_path": str(manifest_path.resolve()),
+        "manifest": modules["load_json"](manifest_path),
+    }
+
+
+def resolve_latest_assay_artifact_path(kind: str) -> Path:
+    modules = _load_assay_support_modules()
+    service = _get_remote_assay_service()
+    run_dir = service.last_run_dir()
+    if run_dir is None:
+        raise FileNotFoundError("No assay run is available yet.")
+    manifest_path = run_dir / "run_manifest.json"
+    manifest = modules["load_json"](manifest_path) if manifest_path.exists() else {}
+    latest_processing_path = run_dir / "processed" / "latest_processing.json"
+    latest_processing = modules["load_json"](latest_processing_path) if latest_processing_path.exists() else {}
+    kind_key = str(kind or "").strip().lower()
+
+    def _candidate(raw: str | Path | None) -> Path | None:
+        if raw is None:
+            return None
+        text = str(raw).strip()
+        if not text:
+            return None
+        path = Path(text).expanduser()
+        if not path.is_absolute():
+            path = (run_dir / path).resolve()
+        return path.resolve()
+
+    candidates: list[Path] = []
+    if kind_key == "raw_video":
+        for raw in (
+            manifest.get("raw_video_path"),
+            run_dir / "raw_video.mp4",
+            run_dir / "raw_video.avi",
+        ):
+            candidate = _candidate(raw)
+            if candidate is not None:
+                candidates.append(candidate)
+    elif kind_key == "annotated_video":
+        for raw in (
+            latest_processing.get("annotated_video_path"),
+            manifest.get("annotated_video_path"),
+            run_dir / "processed" / "annotated_video.mp4",
+        ):
+            candidate = _candidate(raw)
+            if candidate is not None:
+                candidates.append(candidate)
+    elif kind_key == "mask_video":
+        for raw in (
+            latest_processing.get("mask_video_path"),
+            manifest.get("mask_video_path"),
+            run_dir / "processed" / "mask_video.mp4",
+        ):
+            candidate = _candidate(raw)
+            if candidate is not None:
+                candidates.append(candidate)
+    elif kind_key == "per_vial_summary_csv":
+        for raw in (
+            latest_processing.get("per_vial_summary_csv"),
+            run_dir / "processed" / "per_vial_summary.csv",
+        ):
+            candidate = _candidate(raw)
+            if candidate is not None:
+                candidates.append(candidate)
+    elif kind_key == "per_fly_summary_csv":
+        for raw in (
+            latest_processing.get("per_fly_summary_csv"),
+            run_dir / "processed" / "per_fly_summary.csv",
+        ):
+            candidate = _candidate(raw)
+            if candidate is not None:
+                candidates.append(candidate)
+    elif kind_key == "report_pdf":
+        for raw in (
+            latest_processing.get("report_pdf"),
+            latest_processing.get("pdf_path"),
+            run_dir / "processed" / "report.pdf",
+        ):
+            candidate = _candidate(raw)
+            if candidate is not None:
+                candidates.append(candidate)
+    elif kind_key == "processing_json":
+        for raw in (
+            latest_processing.get("processing_session_json"),
+            latest_processing.get("processing_json"),
+            run_dir / "processed" / "processing_session.json",
+        ):
+            candidate = _candidate(raw)
+            if candidate is not None:
+                candidates.append(candidate)
+    else:
+        raise ValueError(f"Unsupported assay artifact kind: {kind}")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    raise FileNotFoundError(f"Latest assay artifact '{kind}' is not available yet.")
+
+
+def resolve_assay_preview_artifact_path(mode: str) -> Path:
+    preview_path = _assay_preview_path(mode)
+    if not preview_path.exists():
+        raise FileNotFoundError(f"Assay preview '{mode}' is not available yet.")
+    return preview_path.resolve()
+
+
+def resolve_assay_background_artifact_path(which: str) -> Path:
+    paths = _assay_background_paths()
+    key = "current_transformed_path" if str(which).strip().lower() == "current" else "previous_transformed_path"
+    value = str(paths.get(key, "") or "").strip()
+    if not value:
+        raise FileNotFoundError(f"Assay background '{which}' is not available yet.")
+    path = Path(value).resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Assay background '{which}' is not available yet.")
+    return path
 
 
 def _append_channel_artifact_trace(event: str, **fields: Any) -> None:
@@ -1330,17 +1926,40 @@ __all__ = [
     "SexingCameraSettings",
     "Fin6SetupStatus",
     "SETTINGS_PATH",
+    "activate_assay_profile",
+    "batch_process_assay_runs",
+    "capture_assay_background_from_saved_settings",
+    "capture_assay_preview_from_saved_settings",
     "capture_channel_background_from_saved_settings",
     "capture_channel_preview_from_saved_settings",
     "detect_channel_once_from_saved_settings",
+    "get_assay_profile_summary",
+    "get_assay_status",
+    "get_latest_assay_run_manifest",
     "get_setup_status",
+    "import_assay_background_from_saved_settings",
     "launch_fin6_gui",
     "list_camera_role_assignments",
+    "list_assay_profiles",
     "list_available_cameras",
     "normalize_settings_file",
+    "patch_assay_profile_fields",
+    "process_last_assay_from_saved_settings",
+    "process_selected_assay_run",
+    "rebuild_assay_background_transform_from_saved_settings",
+    "resolve_assay_background_artifact_path",
+    "resolve_assay_preview_artifact_path",
+    "resolve_latest_assay_artifact_path",
+    "restore_previous_assay_background_from_saved_settings",
+    "run_integrated3_assay_from_active_profile",
     "run_assay_from_saved_settings",
     "save_camera_role_assignments",
+    "save_assay_calibration_data",
     "save_channel_calibration_from_points",
+    "seed_assay_box_templates",
     "setup_status_to_dict",
+    "test_assay_calibration_from_saved_settings",
+    "load_assay_calibration_data",
     "update_channel_camera_selection",
+    "upload_last_assay_from_saved_settings",
 ]
