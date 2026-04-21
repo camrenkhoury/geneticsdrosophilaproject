@@ -2,8 +2,8 @@
   "name": "default",
   "schema_version": 1,
   "description": "",
-  "created_at": "2026-04-14T15:50:02",
-  "updated_at": "2026-04-14T15:50:08",
+  "created_at": "2026-04-20T20:31:21",
+  "updated_at": "2026-04-20T20:31:21",
   "channel_camera": {
     "backend": "opencv",
     "device": "auto:channel",
@@ -19,7 +19,7 @@
     "device": "auto:assay",
     "width": 1536,
     "height": 864,
-    "fps": 5.0,
+    "fps": 30.0,
     "camera_index": 0,
     "preferred_hint": "",
     "description": "Assay camera"
@@ -57,16 +57,16 @@
     "use_mask_blobs_as_flies": true
   },
   "motor": {
-    "enabled": true,
+    "enabled": false,
     "gpio_pin": 18,
-    "pulse_ms": 2000,
+    "pulse_ms": 250,
     "settle_delay_ms": 500,
     "active_high": true,
     "backend": "module",
     "module_name": "vibration"
   },
   "outputs": {
-    "output_root": "/home/team8/z.avi_assay_tests/assayfinal1/outputs/assay",
+    "output_root": "C:\\Users\\khour\\Desktop\\Drosophila Final Project\\geneticsdrosophilaproject\\Avi Detection GUI code\\assayfinal1\\outputs\\assay",
     "background_root": "backgrounds",
     "calibration_root": "calibrations",
     "upload_artifacts": "summaries",
@@ -76,7 +76,7 @@
   "box_upload": {
     "enabled": false,
     "parent_folder_id": "",
-    "tokens_file": "/home/team8/z.avi_assay_tests/assayfinal/box_tokens.json",
+    "tokens_file": "\\home\\team8\\z.avi_assay_tests\\assayfinal\\box_tokens.json",
     "config_file": "",
     "upload_after_processing": true,
     "upload_after_recording": false,
@@ -84,10 +84,10 @@
     "artifact_mode": "summaries",
     "folder_prefix": "fly_assay"
   },
-  "calibration_path": "/home/team8/z.avi_assay_tests/assayfinal1/calibrations/default_calibration.json",
-  "background_meta_path": "/home/team8/z.avi_assay_tests/assayfinal1/backgrounds/default/current_meta.json",
-  "current_background_path": "/home/team8/z.avi_assay_tests/assayfinal1/backgrounds/default/archive/20260414_154811_transformed.png",
+  "calibration_path": "C:\\Users\\khour\\Desktop\\Drosophila Final Project\\geneticsdrosophilaproject\\Avi Detection GUI code\\assayfinal1\\calibrations\\default_calibration.json",
+  "background_meta_path": "",
+  "current_background_path": "",
   "previous_background_path": "",
-  "last_run_dir": "/home/team8/z.avi_assay_tests/assayfinal1/outputs/assay/assay_20260414_154938",
+  "last_run_dir": "",
   "notes": ""
 }

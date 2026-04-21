@@ -63,35 +63,16 @@ _LEGACY_DEVICE_DEFAULTS: dict[str, set[str]] = {
 }
 
 _STITCH_OPERATOR_ASSAY_COMPONENTS: dict[str, Any] | None = None
-_STITCH_OPERATOR_LABEL = "Integrated3"
-_STITCH_OPERATOR_IMPLEMENTATION_ROOT = (REPO_ROOT / "CodeDirectory" / "Integrated3").resolve()
-_STITCH_OPERATOR_PACKAGE_NAME = "_avi_integrated3_stitch_operator"
-
-
-def _prepend_sys_path(path: Path) -> None:
-    text = str(path)
-    while text in sys.path:
-        sys.path.remove(text)
-    sys.path.insert(0, text)
 
 
 def _ensure_stitch_operator_import_paths() -> Path:
-    implementation_root = _STITCH_OPERATOR_IMPLEMENTATION_ROOT
+    implementation_root = (REPO_ROOT / "Avi Detection GUI code" / "Integrated1").resolve()
     if not implementation_root.exists():
-        raise RuntimeError(f"{_STITCH_OPERATOR_LABEL} directory is missing: {implementation_root}")
-
-    # Keep the shared repository CodeDirectory ahead of the embedded bundle so
-    # config/motion/vacuum/vibration resolve from the canonical project copy,
-    # while still leaving the Integrated3 fin6 bundle available for its unique
-    # assay workspace modules.
-    ordered_paths = [
-        REPO_ROOT,
-        REPO_ROOT / "CodeDirectory",
-        implementation_root,
-        implementation_root / "fin6",
-    ]
-    for path in reversed(ordered_paths):
-        _prepend_sys_path(path)
+        raise RuntimeError(f"Implementation 1 directory is missing: {implementation_root}")
+    for path in (implementation_root, implementation_root / "fin6"):
+        text = str(path)
+        if text not in sys.path:
+            sys.path.insert(0, text)
     return implementation_root
 
 
@@ -99,12 +80,12 @@ def _merge_stitch_operator_config_defaults(implementation_root: Path) -> None:
     config_path = implementation_root / "CodeDirectory" / "config.py"
     if not config_path.exists():
         return
-    module_name = "_avi_integrated3_config_defaults"
+    module_name = "_avi_impl1_config_defaults"
     module = sys.modules.get(module_name)
     if module is None:
         spec = importlib.util.spec_from_file_location(module_name, config_path)
         if spec is None or spec.loader is None:
-            raise RuntimeError(f"Could not load {_STITCH_OPERATOR_LABEL} config defaults from {config_path}")
+            raise RuntimeError(f"Could not load Implementation 1 config defaults from {config_path}")
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
         spec.loader.exec_module(module)
@@ -138,36 +119,6 @@ def _load_module_from_file(module_name: str, file_path: Path):
     return module
 
 
-def _install_stitch_operator_bootstrap_shim(package_name: str, implementation_root: Path) -> None:
-    module_name = f"{package_name}.bootstrap"
-    existing = sys.modules.get(module_name)
-    if existing is not None and getattr(existing, "PROJECT_ROOT", None) == implementation_root:
-        return
-
-    module = types.ModuleType(module_name)
-    module.__file__ = str(implementation_root / "stitch_operator" / "bootstrap.py")
-    module.__package__ = package_name
-
-    def project_root() -> Path:
-        return implementation_root
-
-    def ensure_repo_paths() -> Path:
-        ordered_paths = [
-            REPO_ROOT,
-            REPO_ROOT / "CodeDirectory",
-            implementation_root,
-            implementation_root / "fin6",
-        ]
-        for path in reversed(ordered_paths):
-            _prepend_sys_path(path)
-        return implementation_root
-
-    module.project_root = project_root  # type: ignore[attr-defined]
-    module.ensure_repo_paths = ensure_repo_paths  # type: ignore[attr-defined]
-    module.PROJECT_ROOT = ensure_repo_paths()  # type: ignore[attr-defined]
-    sys.modules[module_name] = module
-
-
 def _load_stitch_operator_assay_components() -> dict[str, Any]:
     global _STITCH_OPERATOR_ASSAY_COMPONENTS
     if _STITCH_OPERATOR_ASSAY_COMPONENTS is not None:
@@ -176,11 +127,11 @@ def _load_stitch_operator_assay_components() -> dict[str, Any]:
     implementation_root = _ensure_stitch_operator_import_paths()
     _merge_stitch_operator_config_defaults(implementation_root)
     package_root = implementation_root / "stitch_operator"
-    package_name = _STITCH_OPERATOR_PACKAGE_NAME
+    package_name = "_avi_impl1_stitch_operator"
     _ensure_dynamic_package(package_name, package_root)
     _ensure_dynamic_package(f"{package_name}.services", package_root / "services")
     try:
-        _install_stitch_operator_bootstrap_shim(package_name, implementation_root)
+        _load_module_from_file(f"{package_name}.bootstrap", package_root / "bootstrap.py")
         settings_mod = _load_module_from_file(f"{package_name}.settings", package_root / "settings.py")
         state_mod = _load_module_from_file(f"{package_name}.state", package_root / "state.py")
         assay_service_mod = _load_module_from_file(
@@ -190,7 +141,7 @@ def _load_stitch_operator_assay_components() -> dict[str, Any]:
         assay_embed_mod = _load_module_from_file(f"{package_name}.assay_embed", package_root / "assay_embed.py")
     except Exception as exc:
         raise RuntimeError(
-            f"Could not import {_STITCH_OPERATOR_LABEL} assay modules from {implementation_root}: {type(exc).__name__}: {exc}"
+            f"Could not import Implementation 1 assay modules from {implementation_root}: {type(exc).__name__}: {exc}"
         ) from exc
 
     _STITCH_OPERATOR_ASSAY_COMPONENTS = {
