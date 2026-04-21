@@ -454,6 +454,36 @@ def get_assay_processing_json(request: Request) -> FileResponse:
     return FileResponse(path, media_type="application/json", filename=path.name)
 
 
+@router.get("/artifacts/assay/run/latest/x_displacement_graph", dependencies=[Depends(require_api_key)])
+def get_assay_x_displacement_graph(request: Request) -> FileResponse:
+    context = request.app.state.backend_context
+    try:
+        path = context.machine_service.get_latest_assay_artifact_path("x_displacement_graph_png")
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, media_type="image/png", filename=path.name)
+
+
+@router.get("/artifacts/assay/run/latest/threshold_crossings_graph", dependencies=[Depends(require_api_key)])
+def get_assay_threshold_crossings_graph(request: Request) -> FileResponse:
+    context = request.app.state.backend_context
+    try:
+        path = context.machine_service.get_latest_assay_artifact_path("threshold_crossings_graph_png")
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, media_type="image/png", filename=path.name)
+
+
+@router.get("/artifacts/assay/run/latest/mean_speed_graph", dependencies=[Depends(require_api_key)])
+def get_assay_mean_speed_graph(request: Request) -> FileResponse:
+    context = request.app.state.backend_context
+    try:
+        path = context.machine_service.get_latest_assay_artifact_path("mean_speed_graph_png")
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, media_type="image/png", filename=path.name)
+
+
 @router.get("/channel_setup/cameras", dependencies=[Depends(require_api_key)])
 def get_channel_setup_cameras(request: Request) -> dict:
     context = request.app.state.backend_context

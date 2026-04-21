@@ -182,6 +182,7 @@ class AssayService:
             "detector_max_area": int(self.profile.detector.max_area),
             "auto_process_after_recording": bool(self.profile.analysis.auto_process_after_recording),
             "save_mask_video": bool(self.profile.analysis.save_mask_video),
+            "save_demo_graphs": bool(getattr(self.profile.outputs, "save_demo_graphs", True)),
             "save_preview_snapshots": bool(self.profile.outputs.save_preview_snapshots),
             "snapshot_interval_s": float(self.profile.outputs.snapshot_interval_s),
         }
@@ -201,6 +202,7 @@ class AssayService:
             "detector_min_area": int(self.profile.detector.min_area),
             "detector_max_area": int(self.profile.detector.max_area),
             "auto_process_after_recording": bool(self.profile.analysis.auto_process_after_recording),
+            "save_demo_graphs": bool(getattr(self.profile.outputs, "save_demo_graphs", True)),
             "box_enabled": bool(status["box_enabled"]),
             "box_artifact_mode": str(status["box_artifact_mode"]),
             "box_auto_upload_processing": bool(status["box_auto_upload_processing"]),
@@ -227,6 +229,8 @@ class AssayService:
             self.profile.analysis.auto_process_after_recording = bool(fields["auto_process_after_recording"])
         if "save_mask_video" in fields:
             self.profile.analysis.save_mask_video = bool(fields["save_mask_video"])
+        if "save_demo_graphs" in fields:
+            self.profile.outputs.save_demo_graphs = bool(fields["save_demo_graphs"])
         if "save_preview_snapshots" in fields:
             self.profile.outputs.save_preview_snapshots = bool(fields["save_preview_snapshots"])
         if "snapshot_interval_s" in fields:

@@ -1045,6 +1045,30 @@ def resolve_latest_assay_artifact_path(kind: str) -> Path:
             candidate = _candidate(raw)
             if candidate is not None:
                 candidates.append(candidate)
+    elif kind_key == "x_displacement_graph_png":
+        for raw in (
+            latest_processing.get("x_displacement_graph_png"),
+            run_dir / "processed" / "graphs" / "x_displacement_by_tube.png",
+        ):
+            candidate = _candidate(raw)
+            if candidate is not None:
+                candidates.append(candidate)
+    elif kind_key == "threshold_crossings_graph_png":
+        for raw in (
+            latest_processing.get("threshold_crossings_graph_png"),
+            run_dir / "processed" / "graphs" / "threshold_crossings_by_tube.png",
+        ):
+            candidate = _candidate(raw)
+            if candidate is not None:
+                candidates.append(candidate)
+    elif kind_key == "mean_speed_graph_png":
+        for raw in (
+            latest_processing.get("mean_speed_graph_png"),
+            run_dir / "processed" / "graphs" / "mean_speed_by_tube.png",
+        ):
+            candidate = _candidate(raw)
+            if candidate is not None:
+                candidates.append(candidate)
     else:
         raise ValueError(f"Unsupported assay artifact kind: {kind}")
 

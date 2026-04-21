@@ -2111,6 +2111,57 @@ def _render_pdf_table_pages(
             plt.close(fig)
 
 
+def _render_summary_bar_graph(
+    pdf: PdfPages,
+    title: str,
+    df: pd.DataFrame,
+    value_columns: Sequence[str],
+    *,
+    ylabel: str,
+    png_path: Optional[Path] = None,
+) -> Optional[str]:
+    if df.empty or "assay_tube_index" not in df.columns:
+        return None
+
+    value_col = next(
+        (
+            col
+            for col in value_columns
+            if col in df.columns and pd.to_numeric(df[col], errors="coerce").notna().any()
+        ),
+        None,
+    )
+    if value_col is None:
+        return None
+
+    plot_df = df[["assay_tube_index", value_col]].copy()
+    plot_df[value_col] = pd.to_numeric(plot_df[value_col], errors="coerce")
+    plot_df = plot_df.dropna(subset=[value_col]).sort_values("assay_tube_index")
+    if plot_df.empty:
+        return None
+
+    fig, ax = plt.subplots(figsize=(11.0, 6.2))
+    labels = [str(int(v)) if float(v).is_integer() else str(v) for v in plot_df["assay_tube_index"]]
+    ax.bar(labels, plot_df[value_col], color="#2563eb")
+    ax.set_title(title, fontsize=16, pad=14)
+    ax.set_xlabel("Assay tube")
+    ax.set_ylabel(ylabel)
+    ax.grid(axis="y", alpha=0.25)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    for idx, value in enumerate(plot_df[value_col]):
+        ax.text(idx, float(value), f"{float(value):0.2f}", ha="center", va="bottom", fontsize=9)
+    fig.tight_layout()
+    pdf.savefig(fig, bbox_inches="tight")
+    saved_path: Optional[str] = None
+    if png_path is not None:
+        ensure_dir(png_path.parent)
+        fig.savefig(png_path, dpi=160, bbox_inches="tight")
+        saved_path = str(png_path)
+    plt.close(fig)
+    return saved_path
+
+
 def _comparison_target_time_s(tracks_df: pd.DataFrame, session_meta: Dict[str, Any]) -> float:
     if not tracks_df.empty and "time_s" in tracks_df.columns:
         try:
@@ -2284,6 +2335,8 @@ def generate_graphs_and_pdf(
     vial_summary_df: pd.DataFrame,
     session_meta: Dict[str, Any],
     threshold_crossings_df: Optional[pd.DataFrame] = None,
+    *,
+    save_demo_graphs: bool = True,
 ) -> Dict[str, str]:
     out_dir = ensure_dir(output_dir)
 
@@ -2328,6 +2381,17 @@ def generate_graphs_and_pdf(
         _render_pdf_text_page(pdf, "Fruit fly assay report", cover_lines, fontsize=11)
 
         if not displacement_df.empty:
+            if save_demo_graphs:
+                saved = _render_summary_bar_graph(
+                    pdf,
+                    f"Demo graph: x displacement by tube (0-{float(target_time_s):0.1f}s)",
+                    displacement_df,
+                    ("mean_abs_dx_mm", "mean_abs_dx_px", "median_abs_dx_mm", "median_abs_dx_px"),
+                    ylabel="Mean absolute x displacement",
+                    png_path=out_dir / "graphs" / "x_displacement_by_tube.png",
+                )
+                if saved:
+                    paths["x_displacement_graph_png"] = saved
             _render_pdf_table_pages(
                 pdf,
                 f"0 s to {float(target_time_s):0.1f} s x-displacement summary",
@@ -2337,12 +2401,34 @@ def generate_graphs_and_pdf(
             )
 
         if not threshold_summary_df.empty:
+            if save_demo_graphs:
+                saved = _render_summary_bar_graph(
+                    pdf,
+                    "Demo graph: threshold crossings by tube",
+                    threshold_summary_df,
+                    ("number_of_unique_threshold_crossings", "fraction_crossing_by_10s", "number_of_flies_detected"),
+                    ylabel="Unique threshold crossings",
+                    png_path=out_dir / "graphs" / "threshold_crossings_by_tube.png",
+                )
+                if saved:
+                    paths["threshold_crossings_graph_png"] = saved
             _render_pdf_table_pages(pdf, "Threshold crossing summary", threshold_summary_df, max_rows=16, max_cols=5)
 
         if not threshold_events_df.empty:
             _render_pdf_table_pages(pdf, "Threshold crossing events", threshold_events_df, max_rows=16, max_cols=6)
 
         if not velocity_summary_df.empty:
+            if save_demo_graphs:
+                saved = _render_summary_bar_graph(
+                    pdf,
+                    "Demo graph: mean speed by tube",
+                    velocity_summary_df,
+                    ("mean_speed_mm_s", "mean_speed_px_s", "mean_vertical_velocity_mm_s", "mean_vertical_velocity_px_s"),
+                    ylabel="Mean speed",
+                    png_path=out_dir / "graphs" / "mean_speed_by_tube.png",
+                )
+                if saved:
+                    paths["mean_speed_graph_png"] = saved
             _render_pdf_table_pages(pdf, "Velocity summary", velocity_summary_df, max_rows=16, max_cols=6)
 
         if displacement_df.empty and threshold_summary_df.empty and threshold_events_df.empty and velocity_summary_df.empty:

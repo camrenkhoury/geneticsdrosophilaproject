@@ -748,7 +748,14 @@ def _collect_core_assay_artifacts(run_dir: Path) -> List[Path]:
 
     processing_dir = _resolve_latest_processing_dir(run_dir)
     if processing_dir is not None:
-        for candidate in (processing_dir / "annotated_video.mp4", processing_dir / "annotated_video.avi", processing_dir / "report.pdf"):
+        for candidate in (
+            processing_dir / "annotated_video.mp4",
+            processing_dir / "annotated_video.avi",
+            processing_dir / "report.pdf",
+            processing_dir / "graphs" / "x_displacement_by_tube.png",
+            processing_dir / "graphs" / "threshold_crossings_by_tube.png",
+            processing_dir / "graphs" / "mean_speed_by_tube.png",
+        ):
             if candidate.exists() and candidate.is_file():
                 selected.append(candidate)
 

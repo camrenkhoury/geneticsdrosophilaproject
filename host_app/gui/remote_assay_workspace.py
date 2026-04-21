@@ -94,6 +94,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.results_status_var = tk.StringVar(value="No assay run loaded.")
         self.auto_process_after_recording_var = tk.BooleanVar(value=False)
         self.save_mask_video_var = tk.BooleanVar(value=False)
+        self.save_demo_graphs_var = tk.BooleanVar(value=True)
         self.save_preview_snapshots_var = tk.BooleanVar(value=True)
         self.snapshot_interval_var = tk.StringVar(value="1.0")
         self.box_enabled_var = tk.BooleanVar(value=True)
@@ -367,13 +368,18 @@ class RemoteAssayWorkspace(ttk.Frame):
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=2)
         ttk.Checkbutton(
             frame,
+            text="Generate demo graphs (PDF pages + PNG artifacts)",
+            variable=self.save_demo_graphs_var,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=2)
+        ttk.Checkbutton(
+            frame,
             text="Save processed snapshots",
             variable=self.save_preview_snapshots_var,
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=2)
-        ttk.Label(frame, text="Snapshot interval s").grid(row=4, column=0, sticky="w", pady=2)
-        ttk.Entry(frame, textvariable=self.snapshot_interval_var, width=10).grid(row=4, column=1, sticky="ew", pady=2)
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=2)
+        ttk.Label(frame, text="Snapshot interval s").grid(row=5, column=0, sticky="w", pady=2)
+        ttk.Entry(frame, textvariable=self.snapshot_interval_var, width=10).grid(row=5, column=1, sticky="ew", pady=2)
         ttk.Button(frame, text="Save Processing Settings", command=self.save_debug_profile_settings).grid(
-            row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=6, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         return row + 1
 
@@ -382,7 +388,7 @@ class RemoteAssayWorkspace(ttk.Frame):
             parent,
             row,
             "Box Upload Settings",
-            "Default artifact mode is raw+annotated+pdf: raw video, processed video, and report PDF.",
+            "Default artifact mode is raw+annotated+pdf: raw video, processed video, report PDF, and generated demo graphs.",
         )
         ttk.Checkbutton(frame, text="Box enabled", variable=self.box_enabled_var).grid(
             row=1, column=0, columnspan=2, sticky="w", pady=2
@@ -430,7 +436,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         return row + 1
 
     def _build_artifact_card(self, parent: ttk.Frame, row: int) -> int:
-        frame = self._card(parent, row, "Artifacts", "Fetch the latest manifest, videos, CSVs, PDF, and processing JSON.")
+        frame = self._card(parent, row, "Artifacts", "Fetch the latest manifest, videos, CSVs, PDF, demo graphs, and processing JSON.")
         actions = ttk.Frame(frame)
         actions.grid(row=1, column=0, columnspan=2, sticky="ew")
         ttk.Button(actions, text="Manifest", command=self.load_manifest).pack(side="left")
@@ -445,6 +451,11 @@ class RemoteAssayWorkspace(ttk.Frame):
         third_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         ttk.Button(third_row, text="Report PDF", command=lambda: self.fetch_artifact("report_pdf")).pack(side="left")
         ttk.Button(third_row, text="Processing JSON", command=lambda: self.fetch_artifact("processing_json")).pack(side="left", padx=(6, 0))
+        fourth_row = ttk.Frame(frame)
+        fourth_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Button(fourth_row, text="Displacement Graph", command=lambda: self.fetch_artifact("x_displacement_graph_png")).pack(side="left")
+        ttk.Button(fourth_row, text="Threshold Graph", command=lambda: self.fetch_artifact("threshold_crossings_graph_png")).pack(side="left", padx=(6, 0))
+        ttk.Button(fourth_row, text="Speed Graph", command=lambda: self.fetch_artifact("mean_speed_graph_png")).pack(side="left", padx=(6, 0))
         return row + 1
 
     def _build_preview_panel(self, parent: ttk.Frame) -> None:
@@ -1368,6 +1379,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.last_run_var.set(str(payload.get("last_run_dir", "") or ""))
         self.auto_process_after_recording_var.set(bool(payload.get("auto_process_after_recording", False)))
         self.save_mask_video_var.set(bool(payload.get("save_mask_video", False)))
+        self.save_demo_graphs_var.set(bool(payload.get("save_demo_graphs", True)))
         self.save_preview_snapshots_var.set(bool(payload.get("save_preview_snapshots", True)))
         self.snapshot_interval_var.set(str(payload.get("snapshot_interval_s", "1.0") or "1.0"))
         self.box_enabled_var.set(bool(payload.get("box_enabled", True)))
@@ -1426,6 +1438,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         return {
             "auto_process_after_recording": bool(self.auto_process_after_recording_var.get()),
             "save_mask_video": bool(self.save_mask_video_var.get()),
+            "save_demo_graphs": bool(self.save_demo_graphs_var.get()),
             "save_preview_snapshots": bool(self.save_preview_snapshots_var.get()),
             "snapshot_interval_s": max(0.1, snapshot_interval_s),
             "box_enabled": bool(self.box_enabled_var.get()),
@@ -1733,6 +1746,10 @@ class RemoteAssayWorkspace(ttk.Frame):
                 self.results_status_var.set(f"Loaded {path.name} into results panel.")
                 self.results_visible = True
                 self._apply_panel_visibility()
+            elif artifact_kind.endswith("_graph_png"):
+                self._set_preview_from_bytes(path.read_bytes())
+                self.preview_info_var.set(f"Showing assay demo graph: {path.name}.")
+                self.results_status_var.set(f"Loaded {path.name} into preview.")
             else:
                 self._open_file(path)
                 self.results_status_var.set(f"Opened {path.name}.")
@@ -1762,6 +1779,15 @@ class RemoteAssayWorkspace(ttk.Frame):
         elif kind_key == "processing_json":
             data = controller.get_latest_assay_processing_json()
             suffix = ".json"
+        elif kind_key == "x_displacement_graph_png":
+            data = controller.get_latest_assay_x_displacement_graph()
+            suffix = ".png"
+        elif kind_key == "threshold_crossings_graph_png":
+            data = controller.get_latest_assay_threshold_crossings_graph()
+            suffix = ".png"
+        elif kind_key == "mean_speed_graph_png":
+            data = controller.get_latest_assay_mean_speed_graph()
+            suffix = ".png"
         else:
             raise ValueError(f"Unsupported artifact kind: {kind_key}")
         if not data:

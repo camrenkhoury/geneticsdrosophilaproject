@@ -132,6 +132,7 @@ class OutputSettings:
     background_root: str = "backgrounds"
     calibration_root: str = "calibrations"
     upload_artifacts: str = "summaries"
+    save_demo_graphs: bool = True
     save_preview_snapshots: bool = True
     snapshot_interval_s: float = 1.0
 
@@ -143,6 +144,7 @@ class OutputSettings:
             background_root=str(payload.get("background_root", "backgrounds")),
             calibration_root=str(payload.get("calibration_root", "calibrations")),
             upload_artifacts=str(payload.get("upload_artifacts", payload.get("box_upload_mode", "summaries"))),
+            save_demo_graphs=bool(payload.get("save_demo_graphs", True)),
             save_preview_snapshots=bool(payload.get("save_preview_snapshots", True)),
             snapshot_interval_s=float(payload.get("snapshot_interval_s", 1.0)),
         )

@@ -969,6 +969,7 @@ def _write_processing_outputs(
     threshold_crossings_df: pd.DataFrame,
     vial_velocity_timeseries_df: pd.DataFrame,
     processing_meta: Dict[str, Any],
+    save_demo_graphs: bool = True,
 ) -> Dict[str, str]:
     run_dir = context.run_dir
     processed_dir = context.processing_dir
@@ -1012,6 +1013,7 @@ def _write_processing_outputs(
         vial_summary_df=per_vial_summary_df,
         session_meta=processing_meta,
         threshold_crossings_df=threshold_crossings_df,
+        save_demo_graphs=save_demo_graphs,
     )
 
     return {
@@ -1308,6 +1310,7 @@ def process_assay_run(
         threshold_crossings_df=threshold_crossings_df,
         vial_velocity_timeseries_df=vial_velocity_timeseries_df,
         processing_meta=processing_meta,
+        save_demo_graphs=bool(getattr(profile.outputs, "save_demo_graphs", True)),
     )
     processing_meta.update(output_paths)
     if not snapshot_index_df.empty:
@@ -1326,6 +1329,10 @@ def process_assay_run(
         "processing_session_json": processing_meta["processing_json"],
         "annotated_video_path": processing_meta.get("annotated_video_path", ""),
         "mask_video_path": processing_meta.get("mask_video_path", ""),
+        "report_pdf": processing_meta.get("report_pdf", ""),
+        "x_displacement_graph_png": processing_meta.get("x_displacement_graph_png", ""),
+        "threshold_crossings_graph_png": processing_meta.get("threshold_crossings_graph_png", ""),
+        "mean_speed_graph_png": processing_meta.get("mean_speed_graph_png", ""),
         "tracking_mode": processing_meta.get("tracking_mode", tracking_mode),
     }
     save_json(context.run_dir / "processed" / "latest_processing.json", latest_processing)
@@ -1340,6 +1347,10 @@ def process_assay_run(
                 "processing_session_json": processing_meta["processing_json"],
                 "annotated_video_path": processing_meta.get("annotated_video_path", ""),
                 "mask_video_path": processing_meta.get("mask_video_path", ""),
+                "report_pdf": processing_meta.get("report_pdf", ""),
+                "x_displacement_graph_png": processing_meta.get("x_displacement_graph_png", ""),
+                "threshold_crossings_graph_png": processing_meta.get("threshold_crossings_graph_png", ""),
+                "mean_speed_graph_png": processing_meta.get("mean_speed_graph_png", ""),
                 "processing_history": history,
             }
         )
