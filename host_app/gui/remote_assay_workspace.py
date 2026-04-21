@@ -5,6 +5,7 @@ import os
 import subprocess
 import tempfile
 import threading
+import contextlib
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 import tkinter as tk
@@ -45,8 +46,13 @@ class RemoteAssayWorkspace(ttk.Frame):
         self._worker_count = 0
         self._last_status_payload: dict[str, Any] | None = None
         self._last_manifest_payload: dict[str, Any] | None = None
-        self.controls_visible = True
         self.results_visible = False
+        self.debug_window: tk.Toplevel | None = None
+        self.profile_combo = None
+        self.calibration_text = None
+        self._video_capture = None
+        self._video_after_id: str | None = None
+        self._video_paused = False
 
         self.connection_var = tk.StringVar(value="Disconnected")
         self.workspace_status_var = tk.StringVar(value="Open the assay workspace to begin.")
@@ -65,15 +71,15 @@ class RemoteAssayWorkspace(ttk.Frame):
 
     def _build_layout(self) -> None:
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(1, weight=1)
+        self.rowconfigure(3, weight=1)
 
         topbar = ttk.Frame(self)
         topbar.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        topbar.columnconfigure(2, weight=1)
+        topbar.columnconfigure(1, weight=1)
 
         ttk.Button(topbar, text="Exit Assay", command=self._request_exit).grid(row=0, column=0, sticky="w")
-        ttk.Button(topbar, text="Controls", command=self.toggle_controls).grid(row=0, column=1, sticky="w", padx=(6, 0))
-        ttk.Label(topbar, textvariable=self.workspace_status_var, foreground="#374151").grid(row=0, column=2, sticky="ew", padx=(10, 8))
+        ttk.Label(topbar, text="Assay Workspace", font=("Arial", 11, "bold")).grid(row=0, column=1, sticky="w", padx=(10, 0))
+        ttk.Button(topbar, text="Debug / Setup", command=self.open_debug_menu).grid(row=0, column=2, sticky="e", padx=(0, 6))
         ttk.Button(topbar, text="Results", command=self.toggle_results).grid(row=0, column=3, sticky="e", padx=(0, 6))
 
         self.connection_label = tk.Label(
@@ -88,34 +94,61 @@ class RemoteAssayWorkspace(ttk.Frame):
         )
         self.connection_label.grid(row=0, column=4, sticky="e")
 
+        self.status_label = tk.Label(
+            self,
+            textvariable=self.workspace_status_var,
+            bg="#F3F4F6",
+            fg="#111827",
+            anchor="w",
+            justify="left",
+            padx=6,
+            pady=3,
+        )
+        self.status_label.grid(row=1, column=0, sticky="ew", pady=(0, 4))
+        self.status_label.bind(
+            "<Configure>",
+            lambda event: self.status_label.configure(wraplength=max(300, event.width - 12)),
+        )
+
+        self._build_action_bar(self)
+
         self.body = ttk.Frame(self)
-        self.body.grid(row=1, column=0, sticky="nsew")
-        self.body.columnconfigure(0, weight=0, minsize=270)
-        self.body.columnconfigure(1, weight=1)
-        self.body.columnconfigure(2, weight=0, minsize=300)
+        self.body.grid(row=3, column=0, sticky="nsew")
+        self.body.columnconfigure(0, weight=1)
+        self.body.columnconfigure(1, weight=0, minsize=300)
         self.body.rowconfigure(0, weight=1)
 
-        self.left_panel = ttk.Frame(self.body, width=270)
-        self.left_panel.grid(row=0, column=0, sticky="nsw", padx=(0, 6))
-        self.left_panel.grid_propagate(False)
-        self.left_panel.columnconfigure(0, weight=1)
-        self.left_panel.rowconfigure(0, weight=1)
-
         center_panel = ttk.Frame(self.body)
-        center_panel.grid(row=0, column=1, sticky="nsew")
+        center_panel.grid(row=0, column=0, sticky="nsew")
         center_panel.columnconfigure(0, weight=1)
         center_panel.rowconfigure(1, weight=1)
 
         self.right_panel = ttk.Frame(self.body, width=300)
-        self.right_panel.grid(row=0, column=2, sticky="nse", padx=(6, 0))
+        self.right_panel.grid(row=0, column=1, sticky="nse", padx=(6, 0))
         self.right_panel.grid_propagate(False)
         self.right_panel.columnconfigure(0, weight=1)
         self.right_panel.rowconfigure(1, weight=1)
 
-        self._build_scrollable_controls(self.left_panel)
         self._build_preview_panel(center_panel)
         self._build_results_panel(self.right_panel)
         self._apply_panel_visibility()
+
+    def _build_action_bar(self, parent: ttk.Frame) -> None:
+        action_bar = ttk.Frame(parent)
+        action_bar.grid(row=2, column=0, sticky="ew", pady=(0, 4))
+        for column in range(10):
+            action_bar.columnconfigure(column, weight=1)
+
+        ttk.Button(action_bar, text="Capture Image", command=self.capture_preview).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ttk.Button(action_bar, text="Run Assay Recording", command=self.run_assay).grid(row=0, column=1, sticky="ew", padx=4)
+        ttk.Button(action_bar, text="Process Assay", command=self.process_last).grid(row=0, column=2, sticky="ew", padx=4)
+        ttk.Button(action_bar, text="Export to Box", command=self.upload_last).grid(row=0, column=3, sticky="ew", padx=4)
+        ttk.Button(action_bar, text="Play Raw", command=lambda: self.play_video_artifact("raw_video")).grid(row=0, column=4, sticky="ew", padx=4)
+        ttk.Button(action_bar, text="Play Processed", command=lambda: self.play_video_artifact("annotated_video")).grid(row=0, column=5, sticky="ew", padx=4)
+        ttk.Button(action_bar, text="Play Mask", command=lambda: self.play_video_artifact("mask_video")).grid(row=0, column=6, sticky="ew", padx=4)
+        ttk.Button(action_bar, text="Pause", command=self.pause_playback).grid(row=0, column=7, sticky="ew", padx=4)
+        ttk.Button(action_bar, text="Stop", command=self.stop_playback).grid(row=0, column=8, sticky="ew", padx=4)
+        ttk.Button(action_bar, text="Report / CSV", command=self.toggle_results).grid(row=0, column=9, sticky="ew", padx=(4, 0))
 
     def _build_scrollable_controls(self, parent: ttk.Frame) -> None:
         canvas = tk.Canvas(parent, highlightthickness=0, bd=0, background="#f3f4f6")
@@ -306,29 +339,44 @@ class RemoteAssayWorkspace(ttk.Frame):
                 parent=self.winfo_toplevel(),
             )
             return
+        self.stop_playback()
         self.on_back()
 
-    def toggle_controls(self) -> None:
-        self.controls_visible = not self.controls_visible
-        self._apply_panel_visibility()
+    def open_debug_menu(self) -> None:
+        if self.debug_window is not None and self.debug_window.winfo_exists():
+            self.debug_window.lift()
+            return
+        self.debug_window = tk.Toplevel(self.winfo_toplevel())
+        self.debug_window.title("Assay Debug / Setup")
+        self.debug_window.geometry("460x760")
+        self.debug_window.minsize(420, 520)
+        self.debug_window.columnconfigure(0, weight=1)
+        self.debug_window.rowconfigure(0, weight=1)
+        self.debug_window.protocol("WM_DELETE_WINDOW", self._close_debug_menu)
+
+        shell = ttk.Frame(self.debug_window, padding=8)
+        shell.grid(row=0, column=0, sticky="nsew")
+        shell.columnconfigure(0, weight=1)
+        shell.rowconfigure(0, weight=1)
+        self._build_scrollable_controls(shell)
+        self.refresh_workspace()
+
+    def _close_debug_menu(self) -> None:
+        if self.debug_window is not None and self.debug_window.winfo_exists():
+            self.debug_window.destroy()
+        self.debug_window = None
 
     def toggle_results(self) -> None:
         self.results_visible = not self.results_visible
         self._apply_panel_visibility()
 
     def _apply_panel_visibility(self) -> None:
-        if self.controls_visible:
-            self.body.columnconfigure(0, weight=0, minsize=270)
-            self.left_panel.grid()
-        else:
-            self.left_panel.grid_remove()
-            self.body.columnconfigure(0, weight=0, minsize=0)
         if self.results_visible:
-            self.body.columnconfigure(2, weight=0, minsize=300)
+            self.body.columnconfigure(1, weight=0, minsize=300)
             self.right_panel.grid()
         else:
             self.right_panel.grid_remove()
-            self.body.columnconfigure(2, weight=0, minsize=0)
+            self.body.columnconfigure(1, weight=0, minsize=0)
 
     def update_connection_state(self, *, connected: bool, message: str, remote_busy: bool, assay_available: bool) -> None:
         self.connected = bool(connected)
@@ -347,8 +395,9 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.connection_label.configure(bg=color)
 
     def _append_log(self, message: str) -> None:
-        self.workspace_log.insert(tk.END, message + "\n")
-        self.workspace_log.see(tk.END)
+        if getattr(self, "workspace_log", None) is not None and self.workspace_log.winfo_exists():
+            self.workspace_log.insert(tk.END, message + "\n")
+            self.workspace_log.see(tk.END)
         self.log_callback(message)
 
     def _set_workspace_status(self, text: str) -> None:
@@ -430,8 +479,9 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.previous_background_var.set(str(payload.get("background_previous", "") or ""))
         self.calibration_path_var.set(str(payload.get("calibration_path", "") or ""))
         self.last_run_var.set(str(payload.get("last_run_dir", "") or ""))
-        self.results_text.delete("1.0", tk.END)
-        self.results_text.insert(tk.END, json.dumps(payload, indent=2, sort_keys=True))
+        if getattr(self, "results_text", None) is not None and self.results_text.winfo_exists():
+            self.results_text.delete("1.0", tk.END)
+            self.results_text.insert(tk.END, json.dumps(payload, indent=2, sort_keys=True))
 
     def _apply_summary_payload(self, payload: dict[str, Any]) -> None:
         if payload:
@@ -439,7 +489,8 @@ class RemoteAssayWorkspace(ttk.Frame):
 
     def _apply_profiles_payload(self, payload: dict[str, Any]) -> None:
         profiles = list(payload.get("profiles", []) or [])
-        self.profile_combo.configure(values=profiles)
+        if self.profile_combo is not None and self.profile_combo.winfo_exists():
+            self.profile_combo.configure(values=profiles)
         active = str(payload.get("active_profile", "") or "")
         self.profile_combo_var.set(active or (profiles[0] if profiles else ""))
 
@@ -449,8 +500,9 @@ class RemoteAssayWorkspace(ttk.Frame):
         if run_dir:
             self.last_run_var.set(run_dir)
         manifest = payload.get("manifest", {}) or {}
-        self.results_text.delete("1.0", tk.END)
-        self.results_text.insert(tk.END, json.dumps(manifest, indent=2, sort_keys=True))
+        if getattr(self, "results_text", None) is not None and self.results_text.winfo_exists():
+            self.results_text.delete("1.0", tk.END)
+            self.results_text.insert(tk.END, json.dumps(manifest, indent=2, sort_keys=True))
         self.results_status_var.set(f"Latest assay run: {Path(run_dir).name}" if run_dir else "No assay run loaded.")
 
     def activate_selected_profile(self) -> None:
@@ -538,6 +590,8 @@ class RemoteAssayWorkspace(ttk.Frame):
 
     def load_calibration(self) -> None:
         def on_success(payload: dict[str, Any]) -> None:
+            if self.calibration_text is None or not self.calibration_text.winfo_exists():
+                self.open_debug_menu()
             calibration = payload.get("calibration", {})
             self.calibration_text.delete("1.0", tk.END)
             self.calibration_text.insert(tk.END, json.dumps(calibration, indent=2, sort_keys=True))
@@ -548,6 +602,8 @@ class RemoteAssayWorkspace(ttk.Frame):
         self._run_async("Loading assay calibration", lambda: self._require_controller().get_assay_calibration(), on_success)
 
     def _current_calibration_payload(self) -> dict[str, Any]:
+        if self.calibration_text is None or not self.calibration_text.winfo_exists():
+            raise ValueError("Open Debug / Setup before editing assay calibration JSON.")
         raw_text = self.calibration_text.get("1.0", tk.END).strip()
         if not raw_text:
             raise ValueError("Calibration editor is empty.")
@@ -625,12 +681,13 @@ class RemoteAssayWorkspace(ttk.Frame):
         self._run_async(
             f"Batch processing assay folder {Path(folder).name}",
             lambda: self._require_controller().batch_process_assay(folder),
-            lambda payload: self.results_text.insert(tk.END, "\n\n" + json.dumps(payload, indent=2, sort_keys=True)),
+            lambda payload: self._append_results_payload(payload),
         )
 
     def _on_processing_complete(self, payload: dict[str, Any]) -> None:
-        self.results_text.delete("1.0", tk.END)
-        self.results_text.insert(tk.END, json.dumps(payload, indent=2, sort_keys=True))
+        if getattr(self, "results_text", None) is not None and self.results_text.winfo_exists():
+            self.results_text.delete("1.0", tk.END)
+            self.results_text.insert(tk.END, json.dumps(payload, indent=2, sort_keys=True))
         self.results_status_var.set("Assay processing complete.")
         self.load_manifest()
 
@@ -638,15 +695,21 @@ class RemoteAssayWorkspace(ttk.Frame):
         self._run_async(
             "Uploading latest assay run",
             lambda: self._require_controller().upload_last_assay(),
-            lambda payload: self.results_text.insert(tk.END, "\n\n" + json.dumps(payload, indent=2, sort_keys=True)),
+            lambda payload: self._append_results_payload(payload),
         )
 
     def write_box_templates(self) -> None:
         self._run_async(
             "Writing assay Box templates",
             lambda: self._require_controller().seed_assay_box_templates(overwrite=True),
-            lambda payload: self.results_text.insert(tk.END, "\n\n" + json.dumps(payload, indent=2, sort_keys=True)),
+            lambda payload: self._append_results_payload(payload),
         )
+
+    def _append_results_payload(self, payload: dict[str, Any]) -> None:
+        if getattr(self, "results_text", None) is not None and self.results_text.winfo_exists():
+            self.results_text.insert(tk.END, "\n\n" + json.dumps(payload, indent=2, sort_keys=True))
+        self.results_visible = True
+        self._apply_panel_visibility()
 
     def load_manifest(self) -> None:
         self._run_async("Loading latest assay manifest", lambda: self._require_controller().get_latest_assay_manifest(), self._apply_manifest_payload)
@@ -655,47 +718,124 @@ class RemoteAssayWorkspace(ttk.Frame):
         kind_key = str(kind).strip().lower()
 
         def worker() -> tuple[Path, str]:
-            controller = self._require_controller()
-            if kind_key == "annotated_video":
-                data = controller.get_latest_assay_annotated_video()
-                suffix = ".mp4"
-            elif kind_key == "raw_video":
-                data = controller.get_latest_assay_raw_video()
-                suffix = ".mp4"
-            elif kind_key == "mask_video":
-                data = controller.get_latest_assay_mask_video()
-                suffix = ".mp4"
-            elif kind_key == "per_vial_summary_csv":
-                data = controller.get_latest_assay_per_vial_summary_csv()
-                suffix = ".csv"
-            elif kind_key == "per_fly_summary_csv":
-                data = controller.get_latest_assay_per_fly_summary_csv()
-                suffix = ".csv"
-            elif kind_key == "report_pdf":
-                data = controller.get_latest_assay_report_pdf()
-                suffix = ".pdf"
-            elif kind_key == "processing_json":
-                data = controller.get_latest_assay_processing_json()
-                suffix = ".json"
-            else:
-                raise ValueError(f"Unsupported artifact kind: {kind}")
-            if not data:
-                raise RuntimeError(f"No assay artifact is available for {kind_key}.")
-            target = self.cache_dir / f"latest_{kind_key}{suffix}"
-            target.write_bytes(data)
-            return target, kind_key
+            return self._download_artifact(kind_key)
 
         def on_success(result: tuple[Path, str]) -> None:
             path, artifact_kind = result
             if artifact_kind.endswith("json") or artifact_kind.endswith("csv"):
-                self.results_text.delete("1.0", tk.END)
-                self.results_text.insert(tk.END, path.read_text(encoding="utf-8", errors="replace"))
+                if getattr(self, "results_text", None) is not None and self.results_text.winfo_exists():
+                    self.results_text.delete("1.0", tk.END)
+                    self.results_text.insert(tk.END, path.read_text(encoding="utf-8", errors="replace"))
                 self.results_status_var.set(f"Loaded {path.name} into results panel.")
+                self.results_visible = True
+                self._apply_panel_visibility()
             else:
                 self._open_file(path)
                 self.results_status_var.set(f"Opened {path.name}.")
 
         self._run_async(f"Fetching assay artifact {kind_key}", worker, on_success)
+
+    def _download_artifact(self, kind_key: str) -> tuple[Path, str]:
+        controller = self._require_controller()
+        if kind_key == "annotated_video":
+            data = controller.get_latest_assay_annotated_video()
+            suffix = ".mp4"
+        elif kind_key == "raw_video":
+            data = controller.get_latest_assay_raw_video()
+            suffix = ".mp4"
+        elif kind_key == "mask_video":
+            data = controller.get_latest_assay_mask_video()
+            suffix = ".mp4"
+        elif kind_key == "per_vial_summary_csv":
+            data = controller.get_latest_assay_per_vial_summary_csv()
+            suffix = ".csv"
+        elif kind_key == "per_fly_summary_csv":
+            data = controller.get_latest_assay_per_fly_summary_csv()
+            suffix = ".csv"
+        elif kind_key == "report_pdf":
+            data = controller.get_latest_assay_report_pdf()
+            suffix = ".pdf"
+        elif kind_key == "processing_json":
+            data = controller.get_latest_assay_processing_json()
+            suffix = ".json"
+        else:
+            raise ValueError(f"Unsupported artifact kind: {kind_key}")
+        if not data:
+            raise RuntimeError(f"No assay artifact is available for {kind_key}.")
+        target = self.cache_dir / f"latest_{kind_key}{suffix}"
+        target.write_bytes(data)
+        return target, kind_key
+
+    def play_video_artifact(self, kind: str) -> None:
+        kind_key = str(kind or "").strip().lower()
+
+        def worker() -> tuple[Path, str]:
+            return self._download_artifact(kind_key)
+
+        def on_success(result: tuple[Path, str]) -> None:
+            path, artifact_kind = result
+            self._start_video_playback(path, artifact_kind)
+
+        label = {
+            "raw_video": "raw assay video",
+            "annotated_video": "processed assay video",
+            "mask_video": "mask assay video",
+        }.get(kind_key, kind_key)
+        self._run_async(f"Loading {label}", worker, on_success)
+
+    def _start_video_playback(self, path: Path, label: str) -> None:
+        self.stop_playback()
+        try:
+            import cv2
+        except ImportError as exc:
+            raise RuntimeError("OpenCV is required to play assay videos in the workspace.") from exc
+        capture = cv2.VideoCapture(str(path))
+        if not capture.isOpened():
+            raise RuntimeError(f"Could not open assay video: {path}")
+        self._video_capture = capture
+        self._video_paused = False
+        self.preview_info_var.set(f"Playing {label}.")
+        self._show_next_video_frame()
+
+    def pause_playback(self) -> None:
+        if self._video_capture is None:
+            return
+        self._video_paused = not self._video_paused
+        self.preview_info_var.set("Video paused." if self._video_paused else "Video playing.")
+        if not self._video_paused:
+            self._show_next_video_frame()
+
+    def stop_playback(self) -> None:
+        if self._video_after_id is not None:
+            with contextlib.suppress(Exception):
+                self.after_cancel(self._video_after_id)
+            self._video_after_id = None
+        if self._video_capture is not None:
+            with contextlib.suppress(Exception):
+                self._video_capture.release()
+            self._video_capture = None
+        self._video_paused = False
+
+    def _show_next_video_frame(self) -> None:
+        if self._video_capture is None or self._video_paused:
+            return
+        ok, frame_bgr = self._video_capture.read()
+        if not ok:
+            self.stop_playback()
+            self.preview_info_var.set("Video playback complete.")
+            return
+        try:
+            import cv2
+            from PIL import Image
+        except ImportError as exc:
+            self.stop_playback()
+            raise RuntimeError("OpenCV and Pillow are required to play assay videos.") from exc
+        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        self._preview_source_image = Image.fromarray(frame_rgb)
+        self._refresh_preview_image()
+        fps = float(self._video_capture.get(cv2.CAP_PROP_FPS) or 30.0)
+        delay_ms = max(15, int(1000.0 / max(1.0, fps)))
+        self._video_after_id = self.after(delay_ms, self._show_next_video_frame)
 
     def _set_preview_from_bytes(self, image_bytes: bytes) -> None:
         try:
