@@ -48,6 +48,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         self._last_manifest_payload: dict[str, Any] | None = None
         self.results_visible = False
         self.debug_window: tk.Toplevel | None = None
+        self.calibration_window: tk.Toplevel | None = None
         self._setup_prompt_shown = False
         self.profile_combo = None
         self.calibration_text = None
@@ -67,6 +68,12 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.preview_mode_var = tk.StringVar(value="calibration")
         self.preview_info_var = tk.StringVar(value="No assay preview loaded.")
         self.results_status_var = tk.StringVar(value="No assay run loaded.")
+        self.workflow_guidance_var = tk.StringVar(
+            value=(
+                "Workflow: 1) Calibration / Config: capture or import a clean background, load or edit calibration, "
+                "then save and test. 2) Run assay recording. 3) Process assay. 4) Export to Box."
+            )
+        )
 
         self._build_layout()
 
@@ -80,8 +87,11 @@ class RemoteAssayWorkspace(ttk.Frame):
 
         ttk.Button(topbar, text="Exit Assay", command=self._request_exit).grid(row=0, column=0, sticky="w")
         ttk.Label(topbar, text="Assay Workspace", font=("Arial", 11, "bold")).grid(row=0, column=1, sticky="w", padx=(10, 0))
-        ttk.Button(topbar, text="Debug / Setup", command=self.open_debug_menu).grid(row=0, column=2, sticky="e", padx=(0, 6))
-        ttk.Button(topbar, text="Results", command=self.toggle_results).grid(row=0, column=3, sticky="e", padx=(0, 6))
+        ttk.Button(topbar, text="Calibration / Config", command=self.open_calibration_window).grid(
+            row=0, column=2, sticky="e", padx=(0, 6)
+        )
+        ttk.Button(topbar, text="Debug", command=self.open_debug_menu).grid(row=0, column=3, sticky="e", padx=(0, 6))
+        ttk.Button(topbar, text="Results", command=self.toggle_results).grid(row=0, column=4, sticky="e", padx=(0, 6))
 
         self.connection_label = tk.Label(
             topbar,
@@ -93,7 +103,7 @@ class RemoteAssayWorkspace(ttk.Frame):
             relief="ridge",
             anchor="center",
         )
-        self.connection_label.grid(row=0, column=4, sticky="e")
+        self.connection_label.grid(row=0, column=5, sticky="e")
 
         self.status_label = tk.Label(
             self,
@@ -138,30 +148,44 @@ class RemoteAssayWorkspace(ttk.Frame):
         action_bar.grid(row=3, column=0, sticky="ew", pady=(6, 0))
         style = ttk.Style(self)
         style.configure("AssayAction.TButton", padding=(8, 7))
-        for column in range(5):
+        for column in range(6):
             action_bar.columnconfigure(column, weight=1)
 
-        actions = (
+        workflow_actions = (
+            ("1) Calibration / Config", self.open_calibration_window),
+            ("2) Run Assay Recording", self.run_assay),
+            ("3) Process Assay", self.process_last),
+            ("4) Export to Box", self.upload_last),
             ("Capture Image", self.capture_preview),
-            ("Run Assay Recording", self.run_assay),
-            ("Process Assay", self.process_last),
-            ("Export to Box", self.upload_last),
-            ("Report / CSV", self.toggle_results),
+        )
+        optional_actions = (
             ("Play Raw", lambda: self.play_video_artifact("raw_video")),
             ("Play Processed", lambda: self.play_video_artifact("annotated_video")),
             ("Play Mask", lambda: self.play_video_artifact("mask_video")),
             ("Pause", self.pause_playback),
             ("Stop", self.stop_playback),
+            ("Report / CSV", self.toggle_results),
         )
-        for index, (label, command) in enumerate(actions):
-            row, column = divmod(index, 5)
-            padx = (0, 4) if column == 0 else ((4, 0) if column == 4 else 4)
+        for index, (label, command) in enumerate(workflow_actions):
+            column_count = len(workflow_actions)
+            padx = (0, 4) if index == 0 else ((4, 0) if index == column_count - 1 else 4)
             ttk.Button(action_bar, text=label, command=command, style="AssayAction.TButton").grid(
-                row=row,
+                row=0,
+                column=index,
+                sticky="ew",
+                padx=padx,
+                pady=(0, 4),
+            )
+        for index, (label, command) in enumerate(optional_actions):
+            column_count = len(optional_actions)
+            column = index
+            padx = (0, 4) if column == 0 else ((4, 0) if column == column_count - 1 else 4)
+            ttk.Button(action_bar, text=label, command=command, style="AssayAction.TButton").grid(
+                row=1,
                 column=column,
                 sticky="ew",
                 padx=padx,
-                pady=(0, 4) if row == 0 else (4, 0),
+                pady=(4, 0),
             )
 
     def _build_scrollable_controls(self, parent: ttk.Frame) -> None:
@@ -185,9 +209,6 @@ class RemoteAssayWorkspace(ttk.Frame):
 
         row = 0
         row = self._build_profile_card(body, row)
-        row = self._build_preview_card(body, row)
-        row = self._build_background_card(body, row)
-        row = self._build_calibration_card(body, row)
         row = self._build_recording_card(body, row)
         row = self._build_processing_card(body, row)
         row = self._build_upload_card(body, row)
@@ -204,7 +225,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         return frame
 
     def _build_profile_card(self, parent: ttk.Frame, row: int) -> int:
-        frame = self._card(parent, row, "Profile", "Active Integrated3 assay profile on the Pi.")
+        frame = self._card(parent, row, "Profile / Debug", "Active Integrated3 assay profile on the Pi.")
         ttk.Label(frame, text="Active").grid(row=1, column=0, sticky="w", pady=2)
         ttk.Label(frame, textvariable=self.active_profile_var).grid(row=1, column=1, sticky="w", pady=2)
         ttk.Label(frame, text="Profile path").grid(row=2, column=0, sticky="nw", pady=2)
@@ -216,8 +237,6 @@ class RemoteAssayWorkspace(ttk.Frame):
         button_row.grid(row=4, column=0, columnspan=2, sticky="ew")
         ttk.Button(button_row, text="Refresh", command=self.refresh_workspace).pack(side="left")
         ttk.Button(button_row, text="Activate", command=self.activate_selected_profile).pack(side="left", padx=(6, 0))
-        if self.open_setup_callback is not None:
-            ttk.Button(button_row, text="Open Pi Setup", command=self.open_setup_callback).pack(side="left", padx=(6, 0))
         return row + 1
 
     def _build_preview_card(self, parent: ttk.Frame, row: int) -> int:
@@ -307,6 +326,9 @@ class RemoteAssayWorkspace(ttk.Frame):
         header.columnconfigure(0, weight=1)
         ttk.Label(header, text="Preview / Work Area", font=("Arial", 11, "bold")).grid(row=0, column=0, sticky="w")
         ttk.Label(header, textvariable=self.preview_info_var, foreground="#4b5563").grid(row=1, column=0, sticky="w")
+        ttk.Label(header, textvariable=self.workflow_guidance_var, foreground="#374151", wraplength=1100, justify="left").grid(
+            row=2, column=0, sticky="ew", pady=(3, 0)
+        )
 
         preview_frame = ttk.Frame(parent, relief="sunken")
         preview_frame.grid(row=1, column=0, sticky="nsew")
@@ -352,18 +374,16 @@ class RemoteAssayWorkspace(ttk.Frame):
     def enter_setup_flow(self) -> None:
         self.preview_mode_var.set("calibration")
         self.preview_info_var.set("Assay setup required before running assays.")
-        self._set_workspace_status("Assay Setup is not complete. Opening setup controls.")
-        self.open_debug_menu()
+        self._set_workspace_status("Assay Setup is not complete. Opening calibration/config controls.")
         if not self._setup_prompt_shown:
             self._setup_prompt_shown = True
             messagebox.showinfo(
                 "Assay Setup Required",
-                "No saved assay setup was found. Press OK to open Assay Setup.\n\n"
+                "No saved assay setup was found. Press OK to open Calibration / Config.\n\n"
                 "Complete the assay background and calibration before running the assay.",
                 parent=self.winfo_toplevel(),
             )
-            if self.open_setup_callback is not None:
-                self.open_setup_callback()
+        self.open_calibration_window()
 
     def _request_exit(self) -> None:
         if self.can_exit_callback is not None and not self.can_exit_callback():
@@ -376,12 +396,97 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.stop_playback()
         self.on_back()
 
+    def _focus_toplevel(self, window: tk.Toplevel) -> None:
+        try:
+            window.update_idletasks()
+            window.deiconify()
+            window.lift()
+            window.focus_force()
+            window.attributes("-topmost", True)
+            window.after(350, lambda: window.attributes("-topmost", False))
+        except tk.TclError:
+            pass
+
+    def open_calibration_window(self) -> None:
+        if self.calibration_window is not None and self.calibration_window.winfo_exists():
+            self._focus_toplevel(self.calibration_window)
+            return
+
+        self.calibration_window = tk.Toplevel(self.winfo_toplevel())
+        self.calibration_window.title("Assay Calibration / Config")
+        self.calibration_window.geometry("760x780")
+        self.calibration_window.minsize(620, 560)
+        self.calibration_window.columnconfigure(0, weight=1)
+        self.calibration_window.rowconfigure(1, weight=1)
+        self.calibration_window.protocol("WM_DELETE_WINDOW", self._close_calibration_window)
+
+        guidance = ttk.Label(
+            self.calibration_window,
+            text=(
+                "Assay setup workflow: 1) capture or import a clean assay background, "
+                "2) load/edit or create calibration regions, 3) save calibration, "
+                "4) test calibration before running the assay."
+            ),
+            wraplength=720,
+            justify="left",
+            foreground="#374151",
+            padding=(10, 8),
+        )
+        guidance.grid(row=0, column=0, sticky="ew")
+
+        shell = ttk.Frame(self.calibration_window, padding=8)
+        shell.grid(row=1, column=0, sticky="nsew")
+        shell.columnconfigure(0, weight=1)
+        shell.rowconfigure(0, weight=1)
+        self._build_calibration_window_controls(shell)
+        self._focus_toplevel(self.calibration_window)
+        self.refresh_workspace()
+
+    def _build_calibration_window_controls(self, parent: ttk.Frame) -> None:
+        canvas = tk.Canvas(parent, highlightthickness=0, bd=0, background="#f3f4f6")
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        body = ttk.Frame(canvas, padding=2)
+        window_id = canvas.create_window((0, 0), window=body, anchor="nw")
+        body.bind("<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window_id, width=event.width))
+
+        row = 0
+        setup_frame = self._card(
+            body,
+            row,
+            "Setup Entry",
+            "Open the current Pi-side setup GUI when first-time calibration needs the full Integrated3 tools.",
+        )
+        if self.open_setup_callback is not None:
+            ttk.Button(setup_frame, text="Open Pi Setup", command=self.open_setup_callback).grid(
+                row=1, column=0, columnspan=2, sticky="ew"
+            )
+        else:
+            ttk.Label(setup_frame, text="Pi setup launch is unavailable in this mode.").grid(
+                row=1, column=0, columnspan=2, sticky="w"
+            )
+        row += 1
+        row = self._build_background_card(body, row)
+        row = self._build_preview_card(body, row)
+        row = self._build_calibration_card(body, row)
+        body.rowconfigure(row, weight=1)
+
+    def _close_calibration_window(self) -> None:
+        if self.calibration_window is not None and self.calibration_window.winfo_exists():
+            self.calibration_window.destroy()
+        self.calibration_window = None
+        self.calibration_text = None
+
     def open_debug_menu(self) -> None:
         if self.debug_window is not None and self.debug_window.winfo_exists():
-            self.debug_window.lift()
+            self._focus_toplevel(self.debug_window)
             return
         self.debug_window = tk.Toplevel(self.winfo_toplevel())
-        self.debug_window.title("Assay Debug / Setup")
+        self.debug_window.title("Assay Debug")
         self.debug_window.geometry("460x760")
         self.debug_window.minsize(420, 520)
         self.debug_window.columnconfigure(0, weight=1)
@@ -393,6 +498,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         shell.columnconfigure(0, weight=1)
         shell.rowconfigure(0, weight=1)
         self._build_scrollable_controls(shell)
+        self._focus_toplevel(self.debug_window)
         self.refresh_workspace()
 
     def _close_debug_menu(self) -> None:
@@ -625,7 +731,7 @@ class RemoteAssayWorkspace(ttk.Frame):
     def load_calibration(self) -> None:
         def on_success(payload: dict[str, Any]) -> None:
             if self.calibration_text is None or not self.calibration_text.winfo_exists():
-                self.open_debug_menu()
+                self.open_calibration_window()
             calibration = payload.get("calibration", {})
             self.calibration_text.delete("1.0", tk.END)
             self.calibration_text.insert(tk.END, json.dumps(calibration, indent=2, sort_keys=True))
@@ -637,7 +743,7 @@ class RemoteAssayWorkspace(ttk.Frame):
 
     def _current_calibration_payload(self) -> dict[str, Any]:
         if self.calibration_text is None or not self.calibration_text.winfo_exists():
-            raise ValueError("Open Debug / Setup before editing assay calibration JSON.")
+            raise ValueError("Open Calibration / Config before editing assay calibration JSON.")
         raw_text = self.calibration_text.get("1.0", tk.END).strip()
         if not raw_text:
             raise ValueError("Calibration editor is empty.")
