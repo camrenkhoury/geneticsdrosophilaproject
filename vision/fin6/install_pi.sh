@@ -10,6 +10,7 @@ sudo apt install -y \
     python3-tk \
     python3-pandas \
     python3-scipy \
+    python3-skimage \
     python3-matplotlib \
     ffmpeg
 

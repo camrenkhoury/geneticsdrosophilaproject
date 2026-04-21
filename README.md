@@ -408,6 +408,7 @@ It excludes unrelated one-off scripts and notebooks outside the main Drosophila 
 - **opencv-python**
 - **numpy**
 - **ultralytics**
+- **scikit-image**
 
 ### **GUI / Client**
 
@@ -421,6 +422,7 @@ Used by the `vision/fin6/` tooling and analysis flows:
 
 - **pandas**
 - **scipy**
+- **scikit-image**
 - **matplotlib**
 
 ### **Notes**
