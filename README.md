@@ -409,6 +409,7 @@ It excludes unrelated one-off scripts and notebooks outside the main Drosophila 
 - **numpy**
 - **ultralytics**
 - **scikit-image**
+- **scikit-learn**
 
 ### **GUI / Client**
 
@@ -423,6 +424,7 @@ Used by the `vision/fin6/` tooling and analysis flows:
 - **pandas**
 - **scipy**
 - **scikit-image**
+- **scikit-learn**
 - **matplotlib**
 
 ### **Notes**

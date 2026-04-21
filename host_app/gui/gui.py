@@ -4684,13 +4684,6 @@ class DrosophilaGUI:
                 line += f" {normalized_detail}"
             self.debug_trace_text.insert(tk.END, line + "\n")
             self.debug_trace_text.see(tk.END)
-            try:
-                line_count = int(float(self.debug_trace_text.index("end-1c").split(".")[0]))
-            except Exception:
-                line_count = 0
-            if line_count > 250:
-                self.debug_trace_text.delete("1.0", "51.0")
-
         if echo_to_log:
             self.log_message(f"[DEBUG] {display_text}")
         try:

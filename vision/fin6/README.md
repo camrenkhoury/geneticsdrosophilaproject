@@ -75,6 +75,7 @@ sudo apt install -y \
     python3-pandas \
     python3-scipy \
     python3-skimage \
+    python3-sklearn \
     python3-matplotlib \
     ffmpeg
 ```
