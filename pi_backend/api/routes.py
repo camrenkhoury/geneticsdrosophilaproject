@@ -140,7 +140,7 @@ def post_fin6_assay_run(request: Request) -> CommandResponse:
     return context.submit_machine_task(
         "integrated3_assay",
         context.machine_service.run_integrated3_assay,
-        precheck=context.machine_service.validate_assay_command,
+        precheck=context.machine_service.validate_integrated3_assay_command,
     )
 
 

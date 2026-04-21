@@ -323,6 +323,33 @@ class MachineService:
             "Open Assay Setup from the control panel, capture the saved assay background, run assay calibration, and save the setup before running the assay."
         )
 
+    def validate_integrated3_assay_command(self) -> str | None:
+        try:
+            self._ensure_assay_ready()
+        except SubsystemUnavailableError as exc:
+            return str(exc)
+        try:
+            fin6_bridge = self._load_fin6_bridge()
+            status = fin6_bridge.get_assay_status()
+        except Exception as exc:
+            return f"Integrated3 assay setup status is unavailable: {exc}"
+
+        background_ready = bool(status.get("background_ready", False))
+        calibration_ready = bool(status.get("calibration_ready", False))
+        if background_ready and calibration_ready:
+            return None
+
+        missing: list[str] = []
+        if not background_ready:
+            missing.append("assay background")
+        if not calibration_ready:
+            missing.append("assay calibration")
+        joined = " and ".join(missing) if missing else "assay setup"
+        return (
+            "Integrated3 Assay Setup is missing.\n"
+            f"Complete the {joined} in Calibration / Config, then run the assay again."
+        )
+
     def _load_fin6_bridge(self):
         if self._fin6_bridge is not None:
             return self._fin6_bridge
@@ -722,6 +749,9 @@ class MachineService:
     def run_integrated3_assay(self) -> dict[str, Any]:
         self._ensure_assay_ready()
         fin6_bridge = self._load_fin6_bridge()
+        setup_error = self.validate_integrated3_assay_command()
+        if setup_error is not None:
+            raise RuntimeError(setup_error)
         self._trace("integrated3_assay_enter")
         self.runtime_state.begin_task("assay", TaskState.ASSAY_RUNNING, "Running Integrated3 assay workflow.")
         self.runtime_state.set_orchestrator_state(OrchestratorState.TASK_STARTING, "Starting Integrated3 assay task.")
