@@ -44,7 +44,7 @@ The system is designed to automate the pipeline from mixed fly input to classifi
 
 **Repository Ownership**
 
-Primary GitHub Contributor/Owner: Camren J. Khoury
+Primary GitHub Contributor/Owner: **Camren J. Khoury**
 
 **Contributions**
 
