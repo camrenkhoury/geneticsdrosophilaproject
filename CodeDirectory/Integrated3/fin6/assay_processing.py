@@ -1330,9 +1330,10 @@ def process_assay_run(
         "annotated_video_path": processing_meta.get("annotated_video_path", ""),
         "mask_video_path": processing_meta.get("mask_video_path", ""),
         "report_pdf": processing_meta.get("report_pdf", ""),
-        "x_displacement_graph_png": processing_meta.get("x_displacement_graph_png", ""),
-        "threshold_crossings_graph_png": processing_meta.get("threshold_crossings_graph_png", ""),
-        "mean_speed_graph_png": processing_meta.get("mean_speed_graph_png", ""),
+        "tube_overlay_graph_png": processing_meta.get("tube_overlay_graph_png", ""),
+        "individual_fly_graph_png": processing_meta.get("individual_fly_graph_png", ""),
+        "per_fly_max_height_graph_png": processing_meta.get("per_fly_max_height_graph_png", ""),
+        "velocity_plot_png": processing_meta.get("velocity_plot_png", ""),
         "tracking_mode": processing_meta.get("tracking_mode", tracking_mode),
     }
     save_json(context.run_dir / "processed" / "latest_processing.json", latest_processing)
@@ -1348,9 +1349,10 @@ def process_assay_run(
                 "annotated_video_path": processing_meta.get("annotated_video_path", ""),
                 "mask_video_path": processing_meta.get("mask_video_path", ""),
                 "report_pdf": processing_meta.get("report_pdf", ""),
-                "x_displacement_graph_png": processing_meta.get("x_displacement_graph_png", ""),
-                "threshold_crossings_graph_png": processing_meta.get("threshold_crossings_graph_png", ""),
-                "mean_speed_graph_png": processing_meta.get("mean_speed_graph_png", ""),
+                "tube_overlay_graph_png": processing_meta.get("tube_overlay_graph_png", ""),
+                "individual_fly_graph_png": processing_meta.get("individual_fly_graph_png", ""),
+                "per_fly_max_height_graph_png": processing_meta.get("per_fly_max_height_graph_png", ""),
+                "velocity_plot_png": processing_meta.get("velocity_plot_png", ""),
                 "processing_history": history,
             }
         )

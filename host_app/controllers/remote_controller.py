@@ -46,9 +46,10 @@ class RemoteController(BaseController):
         "/artifacts/assay/run/latest/per_fly_summary_csv": "Pi-side assay per-fly summary CSV",
         "/artifacts/assay/run/latest/report_pdf": "Pi-side assay report PDF",
         "/artifacts/assay/run/latest/processing_json": "Pi-side assay processing JSON",
-        "/artifacts/assay/run/latest/x_displacement_graph": "Pi-side assay x-displacement graph",
-        "/artifacts/assay/run/latest/threshold_crossings_graph": "Pi-side assay threshold-crossings graph",
-        "/artifacts/assay/run/latest/mean_speed_graph": "Pi-side assay mean-speed graph",
+        "/artifacts/assay/run/latest/tube_overlay_graph": "Pi-side assay tube overlay graph",
+        "/artifacts/assay/run/latest/individual_fly_graph": "Pi-side assay individual-fly graph",
+        "/artifacts/assay/run/latest/per_fly_max_height_graph": "Pi-side assay per-fly max-height graph",
+        "/artifacts/assay/run/latest/velocity_plot": "Pi-side assay velocity plot",
         "/detect_channel": "Pi-side channel detection",
         "/channel_setup/cameras": "Pi-side channel camera discovery",
         "/channel_setup/select_camera": "Pi-side channel camera selection",
@@ -348,14 +349,17 @@ class RemoteController(BaseController):
     def get_latest_assay_processing_json(self) -> bytes | None:
         return self._request_bytes("GET", "/artifacts/assay/run/latest/processing_json", timeout_s=20.0)
 
-    def get_latest_assay_x_displacement_graph(self) -> bytes | None:
-        return self._request_bytes("GET", "/artifacts/assay/run/latest/x_displacement_graph", timeout_s=20.0)
+    def get_latest_assay_tube_overlay_graph(self) -> bytes | None:
+        return self._request_bytes("GET", "/artifacts/assay/run/latest/tube_overlay_graph", timeout_s=20.0)
 
-    def get_latest_assay_threshold_crossings_graph(self) -> bytes | None:
-        return self._request_bytes("GET", "/artifacts/assay/run/latest/threshold_crossings_graph", timeout_s=20.0)
+    def get_latest_assay_individual_fly_graph(self) -> bytes | None:
+        return self._request_bytes("GET", "/artifacts/assay/run/latest/individual_fly_graph", timeout_s=20.0)
 
-    def get_latest_assay_mean_speed_graph(self) -> bytes | None:
-        return self._request_bytes("GET", "/artifacts/assay/run/latest/mean_speed_graph", timeout_s=20.0)
+    def get_latest_assay_per_fly_max_height_graph(self) -> bytes | None:
+        return self._request_bytes("GET", "/artifacts/assay/run/latest/per_fly_max_height_graph", timeout_s=20.0)
+
+    def get_latest_assay_velocity_plot(self) -> bytes | None:
+        return self._request_bytes("GET", "/artifacts/assay/run/latest/velocity_plot", timeout_s=20.0)
 
     def _command_request(
         self,

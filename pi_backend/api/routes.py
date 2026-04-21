@@ -454,31 +454,41 @@ def get_assay_processing_json(request: Request) -> FileResponse:
     return FileResponse(path, media_type="application/json", filename=path.name)
 
 
-@router.get("/artifacts/assay/run/latest/x_displacement_graph", dependencies=[Depends(require_api_key)])
-def get_assay_x_displacement_graph(request: Request) -> FileResponse:
+@router.get("/artifacts/assay/run/latest/tube_overlay_graph", dependencies=[Depends(require_api_key)])
+def get_assay_tube_overlay_graph(request: Request) -> FileResponse:
     context = request.app.state.backend_context
     try:
-        path = context.machine_service.get_latest_assay_artifact_path("x_displacement_graph_png")
+        path = context.machine_service.get_latest_assay_artifact_path("tube_overlay_graph_png")
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return FileResponse(path, media_type="image/png", filename=path.name)
 
 
-@router.get("/artifacts/assay/run/latest/threshold_crossings_graph", dependencies=[Depends(require_api_key)])
-def get_assay_threshold_crossings_graph(request: Request) -> FileResponse:
+@router.get("/artifacts/assay/run/latest/individual_fly_graph", dependencies=[Depends(require_api_key)])
+def get_assay_individual_fly_graph(request: Request) -> FileResponse:
     context = request.app.state.backend_context
     try:
-        path = context.machine_service.get_latest_assay_artifact_path("threshold_crossings_graph_png")
+        path = context.machine_service.get_latest_assay_artifact_path("individual_fly_graph_png")
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return FileResponse(path, media_type="image/png", filename=path.name)
 
 
-@router.get("/artifacts/assay/run/latest/mean_speed_graph", dependencies=[Depends(require_api_key)])
-def get_assay_mean_speed_graph(request: Request) -> FileResponse:
+@router.get("/artifacts/assay/run/latest/per_fly_max_height_graph", dependencies=[Depends(require_api_key)])
+def get_assay_per_fly_max_height_graph(request: Request) -> FileResponse:
     context = request.app.state.backend_context
     try:
-        path = context.machine_service.get_latest_assay_artifact_path("mean_speed_graph_png")
+        path = context.machine_service.get_latest_assay_artifact_path("per_fly_max_height_graph_png")
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, media_type="image/png", filename=path.name)
+
+
+@router.get("/artifacts/assay/run/latest/velocity_plot", dependencies=[Depends(require_api_key)])
+def get_assay_velocity_plot(request: Request) -> FileResponse:
+    context = request.app.state.backend_context
+    try:
+        path = context.machine_service.get_latest_assay_artifact_path("velocity_plot_png")
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return FileResponse(path, media_type="image/png", filename=path.name)

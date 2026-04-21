@@ -983,6 +983,9 @@ def resolve_latest_assay_artifact_path(kind: str) -> Path:
             path = (run_dir / path).resolve()
         return path.resolve()
 
+    latest_processing_dir = _candidate(latest_processing.get("processing_dir"))
+    latest_graphs_dir = latest_processing_dir / "graphs" if latest_processing_dir is not None else run_dir / "processed" / "graphs"
+
     candidates: list[Path] = []
     if kind_key == "raw_video":
         for raw in (
@@ -1045,26 +1048,36 @@ def resolve_latest_assay_artifact_path(kind: str) -> Path:
             candidate = _candidate(raw)
             if candidate is not None:
                 candidates.append(candidate)
-    elif kind_key == "x_displacement_graph_png":
+    elif kind_key == "tube_overlay_graph_png":
         for raw in (
-            latest_processing.get("x_displacement_graph_png"),
-            run_dir / "processed" / "graphs" / "x_displacement_by_tube.png",
+            latest_processing.get("tube_overlay_graph_png"),
+            latest_graphs_dir / "tube_1_overlay.png",
         ):
             candidate = _candidate(raw)
             if candidate is not None:
                 candidates.append(candidate)
-    elif kind_key == "threshold_crossings_graph_png":
+    elif kind_key == "individual_fly_graph_png":
         for raw in (
-            latest_processing.get("threshold_crossings_graph_png"),
-            run_dir / "processed" / "graphs" / "threshold_crossings_by_tube.png",
+            latest_processing.get("individual_fly_graph_png"),
         ):
             candidate = _candidate(raw)
             if candidate is not None:
                 candidates.append(candidate)
-    elif kind_key == "mean_speed_graph_png":
+        graphs_dir = latest_graphs_dir
+        if graphs_dir.exists():
+            candidates.extend(sorted(graphs_dir.glob("tube_*_fly_*.png")))
+    elif kind_key == "per_fly_max_height_graph_png":
         for raw in (
-            latest_processing.get("mean_speed_graph_png"),
-            run_dir / "processed" / "graphs" / "mean_speed_by_tube.png",
+            latest_processing.get("per_fly_max_height_graph_png"),
+            latest_graphs_dir / "per_fly_max_height.png",
+        ):
+            candidate = _candidate(raw)
+            if candidate is not None:
+                candidates.append(candidate)
+    elif kind_key == "velocity_plot_png":
+        for raw in (
+            latest_processing.get("velocity_plot_png"),
+            latest_graphs_dir / "velocity_plot.png",
         ):
             candidate = _candidate(raw)
             if candidate is not None:

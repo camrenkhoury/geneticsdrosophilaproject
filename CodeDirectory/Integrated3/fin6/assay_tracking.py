@@ -2111,55 +2111,191 @@ def _render_pdf_table_pages(
             plt.close(fig)
 
 
-def _render_summary_bar_graph(
+def _distance_series_column(df: pd.DataFrame) -> Tuple[Optional[str], str]:
+    if "distance_from_base_mm" in df.columns and pd.to_numeric(df["distance_from_base_mm"], errors="coerce").notna().any():
+        return "distance_from_base_mm", "Distance from baseline (mm)"
+    if "height_mm" in df.columns and pd.to_numeric(df["height_mm"], errors="coerce").notna().any():
+        return "height_mm", "Distance from baseline (mm)"
+    if "distance_from_base_px" in df.columns and pd.to_numeric(df["distance_from_base_px"], errors="coerce").notna().any():
+        return "distance_from_base_px", "Distance from baseline (px)"
+    if "height_px" in df.columns and pd.to_numeric(df["height_px"], errors="coerce").notna().any():
+        return "height_px", "Distance from baseline (px)"
+    return None, "Distance from baseline"
+
+
+def _render_prior_style_assay_graphs(
     pdf: PdfPages,
-    title: str,
-    df: pd.DataFrame,
-    value_columns: Sequence[str],
-    *,
-    ylabel: str,
-    png_path: Optional[Path] = None,
-) -> Optional[str]:
-    if df.empty or "assay_tube_index" not in df.columns:
-        return None
+    graphs_dir: Path,
+    tracks_df: pd.DataFrame,
+    fly_summary_df: pd.DataFrame,
+) -> Dict[str, str]:
+    paths: Dict[str, str] = {}
+    if tracks_df.empty or "assay_tube_index" not in tracks_df.columns or "time_s" not in tracks_df.columns:
+        return paths
 
-    value_col = next(
-        (
-            col
-            for col in value_columns
-            if col in df.columns and pd.to_numeric(df[col], errors="coerce").notna().any()
-        ),
-        None,
+    working = tracks_df.copy()
+    fly_summary = fly_summary_df.copy()
+    if "display_id" not in fly_summary.columns and "internal_track_id" in fly_summary.columns:
+        fly_summary["display_id"] = fly_summary["internal_track_id"]
+    if "detected" in working.columns:
+        detected = working[working["detected"].fillna(True).astype(bool)].copy()
+        if not detected.empty:
+            working = detected
+    if working.empty:
+        return paths
+
+    graph_dir = ensure_dir(graphs_dir)
+    track_id_col = "display_id" if "display_id" in working.columns else "internal_track_id"
+    summary_track_id_col = track_id_col if track_id_col in fly_summary.columns else (
+        "internal_track_id" if "internal_track_id" in fly_summary.columns else track_id_col
     )
-    if value_col is None:
-        return None
+    if track_id_col not in working.columns:
+        return paths
 
-    plot_df = df[["assay_tube_index", value_col]].copy()
-    plot_df[value_col] = pd.to_numeric(plot_df[value_col], errors="coerce")
-    plot_df = plot_df.dropna(subset=[value_col]).sort_values("assay_tube_index")
-    if plot_df.empty:
-        return None
+    overview_rows: List[pd.DataFrame] = []
+    for assay_tube_index, grp in working.groupby("assay_tube_index", sort=True):
+        unit_col, ylabel = _distance_series_column(grp)
+        if unit_col is None:
+            continue
 
-    fig, ax = plt.subplots(figsize=(11.0, 6.2))
-    labels = [str(int(v)) if float(v).is_integer() else str(v) for v in plot_df["assay_tube_index"]]
-    ax.bar(labels, plot_df[value_col], color="#2563eb")
-    ax.set_title(title, fontsize=16, pad=14)
-    ax.set_xlabel("Assay tube")
-    ax.set_ylabel(ylabel)
-    ax.grid(axis="y", alpha=0.25)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    for idx, value in enumerate(plot_df[value_col]):
-        ax.text(idx, float(value), f"{float(value):0.2f}", ha="center", va="bottom", fontsize=9)
-    fig.tight_layout()
-    pdf.savefig(fig, bbox_inches="tight")
-    saved_path: Optional[str] = None
-    if png_path is not None:
-        ensure_dir(png_path.parent)
-        fig.savefig(png_path, dpi=160, bbox_inches="tight")
-        saved_path = str(png_path)
-    plt.close(fig)
-    return saved_path
+        fig = plt.figure(figsize=(11.0, 8.5))
+        ax = fig.add_subplot(111)
+        ax.set_title(f"Tube {int(assay_tube_index)}: fly distance from baseline vs time")
+        plotted = False
+        for display_id, g in grp.groupby(track_id_col, sort=True):
+            sort_cols = [col for col in ("frame_index", "time_s") if col in g.columns]
+            g = g.sort_values(sort_cols or ["time_s"]).copy()
+            series = pd.to_numeric(g[unit_col], errors="coerce").interpolate(limit_direction="both")
+            if series.notna().sum() < 2:
+                continue
+            ax.plot(g["time_s"], series, label=f"fly ({int(assay_tube_index)},{int(display_id)})", linewidth=1.7)
+            plotted = True
+        if plotted:
+            ax.set_xlabel("Time (s)")
+            ax.set_ylabel(ylabel)
+            ax.grid(alpha=0.22)
+            ax.legend(loc="best", fontsize=8)
+            tube_path = graph_dir / f"tube_{int(assay_tube_index)}_overlay.png"
+            fig.savefig(tube_path, dpi=160, bbox_inches="tight")
+            pdf.savefig(fig, bbox_inches="tight")
+            paths.setdefault("tube_overlay_graph_png", str(tube_path))
+            paths[f"tube_{int(assay_tube_index)}_overlay_png"] = str(tube_path)
+            overview_rows.append(grp)
+        plt.close(fig)
+
+    for _, row in fly_summary.iterrows():
+        if "assay_tube_index" not in row or summary_track_id_col not in row:
+            continue
+        try:
+            assay_tube_index = int(row["assay_tube_index"])
+            display_id = int(row[summary_track_id_col])
+        except Exception:
+            continue
+        g = working[
+            (working["assay_tube_index"] == assay_tube_index)
+            & (working[track_id_col] == display_id)
+        ].copy()
+        if g.empty:
+            continue
+        unit_col, ylabel = _distance_series_column(g)
+        if unit_col is None:
+            continue
+        sort_cols = [col for col in ("frame_index", "time_s") if col in g.columns]
+        g = g.sort_values(sort_cols or ["time_s"])
+        series = pd.to_numeric(g[unit_col], errors="coerce").interpolate(limit_direction="both")
+        if series.notna().sum() < 2:
+            continue
+
+        label = str(row.get("label") or f"fly ({assay_tube_index},{display_id})")
+        fig = plt.figure(figsize=(10.0, 4.8))
+        ax = fig.add_subplot(111)
+        ax.set_title(label)
+        ax.plot(g["time_s"], series, linewidth=1.8)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel(ylabel)
+        ax.grid(alpha=0.22)
+
+        start_s = row.get("best_linear_start_s")
+        end_s = row.get("best_linear_end_s")
+        if pd.notna(start_s) and pd.notna(end_s):
+            mask = (g["time_s"] >= float(start_s)) & (g["time_s"] <= float(end_s))
+            if bool(mask.any()):
+                ax.plot(g.loc[mask, "time_s"], series.loc[mask], linewidth=3.0)
+        crossing_s = row.get("first_crossing_time_s")
+        if pd.notna(crossing_s):
+            ax.axvline(float(crossing_s), color="#dc2626", linestyle="--", linewidth=1.5, label="threshold crossing")
+            ax.legend(loc="best", fontsize=8)
+
+        fly_path = graph_dir / f"tube_{assay_tube_index}_fly_{display_id}.png"
+        fig.savefig(fly_path, dpi=160, bbox_inches="tight")
+        pdf.savefig(fig, bbox_inches="tight")
+        paths.setdefault("individual_fly_graph_png", str(fly_path))
+        paths[f"tube_{assay_tube_index}_fly_{display_id}_png"] = str(fly_path)
+        plt.close(fig)
+
+    if not working.empty:
+        unit_col, ylabel = _distance_series_column(working)
+        if unit_col is not None:
+            fig = plt.figure(figsize=(11.0, 6.2))
+            ax = fig.add_subplot(111)
+            ax.set_title("Mean fly height over time by tube")
+            plotted = False
+            for assay_tube_index, grp in working.groupby("assay_tube_index", sort=True):
+                curve = (
+                    grp.assign(_plot_value=pd.to_numeric(grp[unit_col], errors="coerce"))
+                    .dropna(subset=["_plot_value"])
+                    .groupby("time_s", as_index=False)["_plot_value"]
+                    .mean()
+                    .sort_values("time_s")
+                )
+                if len(curve) < 2:
+                    continue
+                ax.plot(curve["time_s"], curve["_plot_value"], label=f"Tube {int(assay_tube_index)}", linewidth=2.0)
+                plotted = True
+            if plotted:
+                ax.set_xlabel("Time (s)")
+                ax.set_ylabel(ylabel)
+                ax.grid(alpha=0.22)
+                ax.legend(loc="best", fontsize=8)
+                velocity_path = graph_dir / "velocity_plot.png"
+                fig.savefig(velocity_path, dpi=160, bbox_inches="tight")
+                pdf.savefig(fig, bbox_inches="tight")
+                paths["velocity_plot_png"] = str(velocity_path)
+            plt.close(fig)
+
+    if not fly_summary.empty:
+        value_col = next(
+            (
+                col
+                for col in ("max_height_mm", "max_distance_mm", "max_height_px", "max_distance_px")
+                if col in fly_summary.columns and pd.to_numeric(fly_summary[col], errors="coerce").notna().any()
+            ),
+            None,
+        )
+        if value_col is not None:
+            summary = fly_summary.copy()
+            summary[value_col] = pd.to_numeric(summary[value_col], errors="coerce").fillna(0.0)
+            labels = (
+                summary["label"].astype(str).tolist()
+                if "label" in summary.columns
+                else [f"fly {i + 1}" for i in range(len(summary))]
+            )
+            ylabel = "Max height (mm)" if value_col.endswith("_mm") else "Max height (px)"
+            fig = plt.figure(figsize=(11.0, 5.5))
+            ax = fig.add_subplot(111)
+            ax.set_title("Per-fly maximum height")
+            ax.bar(range(len(summary)), summary[value_col], color="#2563eb")
+            ax.set_xticks(range(len(labels)))
+            ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+            ax.set_ylabel(ylabel)
+            ax.grid(axis="y", alpha=0.22)
+            summary_bar = graph_dir / "per_fly_max_height.png"
+            fig.savefig(summary_bar, dpi=160, bbox_inches="tight")
+            pdf.savefig(fig, bbox_inches="tight")
+            paths["per_fly_max_height_graph_png"] = str(summary_bar)
+            plt.close(fig)
+
+    return paths
 
 
 def _comparison_target_time_s(tracks_df: pd.DataFrame, session_meta: Dict[str, Any]) -> float:
@@ -2380,18 +2516,10 @@ def generate_graphs_and_pdf(
         ]
         _render_pdf_text_page(pdf, "Fruit fly assay report", cover_lines, fontsize=11)
 
+        if save_demo_graphs:
+            paths.update(_render_prior_style_assay_graphs(pdf, out_dir / "graphs", tracks_df, fly_summary_df))
+
         if not displacement_df.empty:
-            if save_demo_graphs:
-                saved = _render_summary_bar_graph(
-                    pdf,
-                    f"Demo graph: x displacement by tube (0-{float(target_time_s):0.1f}s)",
-                    displacement_df,
-                    ("mean_abs_dx_mm", "mean_abs_dx_px", "median_abs_dx_mm", "median_abs_dx_px"),
-                    ylabel="Mean absolute x displacement",
-                    png_path=out_dir / "graphs" / "x_displacement_by_tube.png",
-                )
-                if saved:
-                    paths["x_displacement_graph_png"] = saved
             _render_pdf_table_pages(
                 pdf,
                 f"0 s to {float(target_time_s):0.1f} s x-displacement summary",
@@ -2401,34 +2529,12 @@ def generate_graphs_and_pdf(
             )
 
         if not threshold_summary_df.empty:
-            if save_demo_graphs:
-                saved = _render_summary_bar_graph(
-                    pdf,
-                    "Demo graph: threshold crossings by tube",
-                    threshold_summary_df,
-                    ("number_of_unique_threshold_crossings", "fraction_crossing_by_10s", "number_of_flies_detected"),
-                    ylabel="Unique threshold crossings",
-                    png_path=out_dir / "graphs" / "threshold_crossings_by_tube.png",
-                )
-                if saved:
-                    paths["threshold_crossings_graph_png"] = saved
             _render_pdf_table_pages(pdf, "Threshold crossing summary", threshold_summary_df, max_rows=16, max_cols=5)
 
         if not threshold_events_df.empty:
             _render_pdf_table_pages(pdf, "Threshold crossing events", threshold_events_df, max_rows=16, max_cols=6)
 
         if not velocity_summary_df.empty:
-            if save_demo_graphs:
-                saved = _render_summary_bar_graph(
-                    pdf,
-                    "Demo graph: mean speed by tube",
-                    velocity_summary_df,
-                    ("mean_speed_mm_s", "mean_speed_px_s", "mean_vertical_velocity_mm_s", "mean_vertical_velocity_px_s"),
-                    ylabel="Mean speed",
-                    png_path=out_dir / "graphs" / "mean_speed_by_tube.png",
-                )
-                if saved:
-                    paths["mean_speed_graph_png"] = saved
             _render_pdf_table_pages(pdf, "Velocity summary", velocity_summary_df, max_rows=16, max_cols=6)
 
         if displacement_df.empty and threshold_summary_df.empty and threshold_events_df.empty and velocity_summary_df.empty:

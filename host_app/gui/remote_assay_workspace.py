@@ -453,9 +453,10 @@ class RemoteAssayWorkspace(ttk.Frame):
         ttk.Button(third_row, text="Processing JSON", command=lambda: self.fetch_artifact("processing_json")).pack(side="left", padx=(6, 0))
         fourth_row = ttk.Frame(frame)
         fourth_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        ttk.Button(fourth_row, text="Displacement Graph", command=lambda: self.fetch_artifact("x_displacement_graph_png")).pack(side="left")
-        ttk.Button(fourth_row, text="Threshold Graph", command=lambda: self.fetch_artifact("threshold_crossings_graph_png")).pack(side="left", padx=(6, 0))
-        ttk.Button(fourth_row, text="Speed Graph", command=lambda: self.fetch_artifact("mean_speed_graph_png")).pack(side="left", padx=(6, 0))
+        ttk.Button(fourth_row, text="Tube Overlay", command=lambda: self.fetch_artifact("tube_overlay_graph_png")).pack(side="left")
+        ttk.Button(fourth_row, text="Fly Graph", command=lambda: self.fetch_artifact("individual_fly_graph_png")).pack(side="left", padx=(6, 0))
+        ttk.Button(fourth_row, text="Max Height", command=lambda: self.fetch_artifact("per_fly_max_height_graph_png")).pack(side="left", padx=(6, 0))
+        ttk.Button(fourth_row, text="Velocity Plot", command=lambda: self.fetch_artifact("velocity_plot_png")).pack(side="left", padx=(6, 0))
         return row + 1
 
     def _build_preview_panel(self, parent: ttk.Frame) -> None:
@@ -1746,7 +1747,7 @@ class RemoteAssayWorkspace(ttk.Frame):
                 self.results_status_var.set(f"Loaded {path.name} into results panel.")
                 self.results_visible = True
                 self._apply_panel_visibility()
-            elif artifact_kind.endswith("_graph_png"):
+            elif artifact_kind.endswith("_graph_png") or artifact_kind.endswith("_plot_png"):
                 self._set_preview_from_bytes(path.read_bytes())
                 self.preview_info_var.set(f"Showing assay demo graph: {path.name}.")
                 self.results_status_var.set(f"Loaded {path.name} into preview.")
@@ -1779,14 +1780,17 @@ class RemoteAssayWorkspace(ttk.Frame):
         elif kind_key == "processing_json":
             data = controller.get_latest_assay_processing_json()
             suffix = ".json"
-        elif kind_key == "x_displacement_graph_png":
-            data = controller.get_latest_assay_x_displacement_graph()
+        elif kind_key == "tube_overlay_graph_png":
+            data = controller.get_latest_assay_tube_overlay_graph()
             suffix = ".png"
-        elif kind_key == "threshold_crossings_graph_png":
-            data = controller.get_latest_assay_threshold_crossings_graph()
+        elif kind_key == "individual_fly_graph_png":
+            data = controller.get_latest_assay_individual_fly_graph()
             suffix = ".png"
-        elif kind_key == "mean_speed_graph_png":
-            data = controller.get_latest_assay_mean_speed_graph()
+        elif kind_key == "per_fly_max_height_graph_png":
+            data = controller.get_latest_assay_per_fly_max_height_graph()
+            suffix = ".png"
+        elif kind_key == "velocity_plot_png":
+            data = controller.get_latest_assay_velocity_plot()
             suffix = ".png"
         else:
             raise ValueError(f"Unsupported artifact kind: {kind_key}")

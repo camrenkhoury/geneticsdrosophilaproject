@@ -752,12 +752,12 @@ def _collect_core_assay_artifacts(run_dir: Path) -> List[Path]:
             processing_dir / "annotated_video.mp4",
             processing_dir / "annotated_video.avi",
             processing_dir / "report.pdf",
-            processing_dir / "graphs" / "x_displacement_by_tube.png",
-            processing_dir / "graphs" / "threshold_crossings_by_tube.png",
-            processing_dir / "graphs" / "mean_speed_by_tube.png",
         ):
             if candidate.exists() and candidate.is_file():
                 selected.append(candidate)
+        graphs_dir = processing_dir / "graphs"
+        if graphs_dir.exists():
+            selected.extend(path for path in graphs_dir.glob("*.png") if path.is_file())
 
     deduped: Dict[str, Path] = {}
     for item in selected:
