@@ -5964,7 +5964,7 @@ class DrosophilaGUI:
         )
         self.remote_assay_workspace.enter_workspace(setup_required=setup_required)
         if setup_required:
-            message = f"{action_label}: opened assay setup mode because saved assay setup is incomplete."
+            message = f"{action_label}: opened assay workspace and checking saved assay setup state."
         else:
             message = f"{action_label}: opened the full-page remote assay workspace."
         self.log_message(message)

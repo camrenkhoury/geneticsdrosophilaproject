@@ -27,7 +27,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         log_callback: Callable[[str], None],
         open_setup_callback: Callable[[], None] | None = None,
     ) -> None:
-        super().__init__(master, padding=6)
+        super().__init__(master, padding=(3, 1, 6, 6))
         self.get_controller = get_controller
         self.on_back = on_back
         self.can_exit_callback = can_exit_callback
@@ -51,6 +51,8 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.debug_window: tk.Toplevel | None = None
         self.calibration_window: tk.Toplevel | None = None
         self._setup_prompt_shown = False
+        self._pending_setup_required_check = False
+        self._setup_required_check_generation = 0
         self.profile_combo = None
         self.calibration_text = None
         self.workflow_buttons: dict[str, ttk.Button] = {}
@@ -104,10 +106,12 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.rowconfigure(2, weight=1)
 
         topbar = ttk.Frame(self)
-        topbar.grid(row=0, column=0, sticky="ew", pady=(0, 2))
+        topbar.grid(row=0, column=0, sticky="ew", pady=(0, 1))
         topbar.columnconfigure(0, weight=1)
 
-        ttk.Label(topbar, text="Assay Workspace", font=("Arial", 11, "bold")).grid(row=0, column=0, rowspan=2, sticky="w")
+        ttk.Label(topbar, text="Assay Workspace", font=("Arial", 16, "bold")).grid(
+            row=0, column=0, rowspan=2, sticky="nw", pady=(0, 0)
+        )
         ttk.Button(topbar, text="Debug", command=self.open_debug_menu).grid(row=0, column=1, sticky="e", padx=(0, 6))
         ttk.Button(topbar, text="Results", command=self.toggle_results).grid(row=0, column=2, sticky="e", padx=(0, 6))
 
@@ -409,13 +413,39 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.preview_info_var.set("Opening Pi-side assay camera preview...")
         if not setup_required:
             self._setup_prompt_shown = False
+        self._pending_setup_required_check = bool(setup_required)
+        self._setup_required_check_generation += 1
+        setup_check_generation = self._setup_required_check_generation
         self.refresh_workspace()
         if setup_required:
-            self.after(250, self.enter_setup_flow)
+            self.after(350, lambda: self._maybe_enter_setup_flow_after_refresh(setup_check_generation, 0))
         elif self.connected:
             self.after(500, self.capture_preview)
 
+    def _maybe_enter_setup_flow_after_refresh(self, generation: int, attempt: int) -> None:
+        if generation != self._setup_required_check_generation or not self._pending_setup_required_check:
+            return
+        if self._assay_setup_ready():
+            self._pending_setup_required_check = False
+            self._setup_prompt_shown = False
+            self.preview_mode_var.set("raw")
+            self.preview_info_var.set("Saved assay setup found. Using existing assay calibration.")
+            self._set_workspace_status(
+                "Saved assay setup found. Using the existing background and calibration. "
+                "Open Calibration / Config only if you want to change it."
+            )
+            self._append_log("Saved assay setup found. Reusing saved assay calibration without reopening setup.")
+            if self.connected:
+                self.after(250, self.capture_preview)
+            return
+        if self._worker_count > 0 and attempt < 15:
+            self.after(250, lambda: self._maybe_enter_setup_flow_after_refresh(generation, attempt + 1))
+            return
+        self._pending_setup_required_check = False
+        self.enter_setup_flow()
+
     def enter_setup_flow(self) -> None:
+        self._pending_setup_required_check = False
         self.preview_mode_var.set("calibration")
         self.preview_info_var.set("Assay setup required before running assays.")
         self._set_workspace_status("Assay Setup is not complete. Opening calibration/config controls.")
