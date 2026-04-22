@@ -2184,7 +2184,7 @@ class DrosophilaGUI:
 
         state_text = self._summarize_remote_state(status)
         latest_message = str(status.get("latest_message", "Remote status updated."))
-        if self._should_apply_remote_status_banner(state_text):
+        if self._should_apply_remote_status_banner(state_text, status):
             self.set_status(state_text, latest_message)
         self.position_var.set(f"{float(status.get('current_position_mm', 0.0)):.2f} mm")
         self.mode_var.set("Remote Mode (Degraded)" if self.remote_backend_degraded else "Remote Mode")
@@ -2231,7 +2231,23 @@ class DrosophilaGUI:
         self._append_remote_logs(recent_logs)
         self._update_control_interactivity()
 
-    def _should_apply_remote_status_banner(self, state_text: str) -> bool:
+    def _assay_workspace_visible(self) -> bool:
+        if self.assay_page_frame is None:
+            return False
+        try:
+            return bool(self.assay_page_frame.winfo_ismapped())
+        except tk.TclError:
+            return False
+
+    def _should_apply_remote_status_banner(self, state_text: str, status: dict | None = None) -> bool:
+        status = status or {}
+        task_state = str(status.get("task_state") or state_text or "").upper()
+        current_task = str(status.get("current_task") or "").strip().lower()
+        worker_alive = bool(self.worker_thread and self.worker_thread.is_alive() and self.current_task_name)
+
+        if task_state == "ASSAY_COMPLETE" and current_task in {"", "assay", "integrated3_assay"}:
+            return worker_alive or self._assay_workspace_visible()
+
         if not (self.worker_thread and self.worker_thread.is_alive() and self.current_task_name):
             return True
 
