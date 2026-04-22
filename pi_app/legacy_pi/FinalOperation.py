@@ -163,9 +163,7 @@ def _normalize_chamber_count(count: Any) -> int:
         normalized = int(count or 0)
     except Exception:
         return 0
-    if normalized <= 1:
-        return max(0, normalized)
-    return max(0, (normalized + 1) // 2)
+    return max(0, normalized)
 
 
 def _normalize_classification_result(classification_result: dict[str, Any] | None) -> dict[str, Any]:

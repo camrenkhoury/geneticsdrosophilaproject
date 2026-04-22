@@ -2753,9 +2753,7 @@ class DrosophilaGUI:
             normalized = int(count)
         except Exception:
             return None
-        if normalized <= 1:
-            return max(0, normalized)
-        return max(0, (normalized + 1) // 2)
+        return max(0, normalized)
 
     def _normalize_classification_result(self, result: dict | None) -> dict:
         normalized = dict(result or {})
