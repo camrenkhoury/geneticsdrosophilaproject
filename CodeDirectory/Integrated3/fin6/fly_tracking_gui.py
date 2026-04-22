@@ -168,7 +168,7 @@ class App(tk.Tk):
         # motor
         self.motor_enabled_var = tk.BooleanVar(value=False)
         self.motor_pin_var = tk.StringVar(value="18")
-        self.motor_pulse_ms_var = tk.StringVar(value="400")
+        self.motor_pulse_ms_var = tk.StringVar(value="5000")
         self.motor_settle_ms_var = tk.StringVar(value="150")
         self.motor_active_high_var = tk.BooleanVar(value=True)
 
@@ -947,7 +947,7 @@ class App(tk.Tk):
         profile.detector.threshold_hysteresis_px = self._float_var(self.detector_threshold_hysteresis_var, 1.5)
         profile.motor.enabled = bool(self.motor_enabled_var.get())
         profile.motor.gpio_pin = self._int_var(self.motor_pin_var, 18)
-        profile.motor.pulse_ms = self._int_var(self.motor_pulse_ms_var, 400)
+        profile.motor.pulse_ms = self._int_var(self.motor_pulse_ms_var, 5000)
         profile.motor.settle_delay_ms = self._int_var(self.motor_settle_ms_var, 150)
         profile.motor.active_high = bool(self.motor_active_high_var.get())
         profile.motor.backend = "module"
