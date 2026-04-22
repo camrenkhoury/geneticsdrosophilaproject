@@ -32,6 +32,10 @@ from shared_utils import newest_child_dir  # noqa: E402
 from transform_utils import apply_image_transform  # noqa: E402
 
 
+DEFAULT_ASSAY_MOTOR_PULSE_MS = 6000
+LEGACY_ASSAY_MOTOR_PULSE_MS = {250, 400, 4000, 5000}
+
+
 class AssayService:
     def __init__(self, settings: OperatorSettings):
         self.settings = settings
@@ -66,6 +70,10 @@ class AssayService:
             self.profile.calibration_path = str((self.project_root / "calibrations" / f"{slug}_calibration.json").resolve())
         if not self.profile.outputs.output_root:
             self.profile.outputs.output_root = str((self.project_root / "outputs" / "assay").resolve())
+        pulse_ms = int(getattr(self.profile.motor, "pulse_ms", 0) or 0)
+        pulse_user_configured = bool(getattr(self.profile.motor, "pulse_user_configured", False))
+        if pulse_ms <= 0 or (not pulse_user_configured and pulse_ms in LEGACY_ASSAY_MOTOR_PULSE_MS):
+            self.profile.motor.pulse_ms = DEFAULT_ASSAY_MOTOR_PULSE_MS
         self.save_profile()
 
     def _junk_physical_indices(self) -> List[int]:
