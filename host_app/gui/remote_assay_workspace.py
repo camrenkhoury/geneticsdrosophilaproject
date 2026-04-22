@@ -97,6 +97,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.save_demo_graphs_var = tk.BooleanVar(value=True)
         self.save_preview_snapshots_var = tk.BooleanVar(value=True)
         self.snapshot_interval_var = tk.StringVar(value="1.0")
+        self.motor_pulse_seconds_var = tk.StringVar(value="6.0")
         self.box_enabled_var = tk.BooleanVar(value=True)
         self.box_upload_after_processing_var = tk.BooleanVar(value=True)
         self.box_upload_after_recording_var = tk.BooleanVar(value=False)
@@ -271,6 +272,7 @@ class RemoteAssayWorkspace(ttk.Frame):
         row = self._build_processing_card(body, row)
         row = self._build_upload_card(body, row)
         row = self._build_artifact_card(body, row)
+        row = self._build_motor_timing_card(body, row)
         body.rowconfigure(row, weight=1)
 
     def _card(self, parent: ttk.Frame, row: int, title: str, subtitle: str) -> ttk.LabelFrame:
@@ -456,6 +458,27 @@ class RemoteAssayWorkspace(ttk.Frame):
         ttk.Button(fourth_row, text="Fly Graph", command=lambda: self.fetch_artifact("individual_fly_graph_png")).pack(side="left", padx=(6, 0))
         ttk.Button(fourth_row, text="Max Height", command=lambda: self.fetch_artifact("per_fly_max_height_graph_png")).pack(side="left", padx=(6, 0))
         ttk.Button(fourth_row, text="Velocity Plot", command=lambda: self.fetch_artifact("velocity_plot_png")).pack(side="left", padx=(6, 0))
+        return row + 1
+
+    def _build_motor_timing_card(self, parent: ttk.Frame, row: int) -> int:
+        frame = self._card(
+            parent,
+            row,
+            "Assay Motor Timing",
+            "Vibration duration for dropping flies into the assay vials. Enter seconds; the profile stores milliseconds.",
+        )
+        ttk.Label(frame, text="Vibration seconds").grid(row=1, column=0, sticky="w", pady=2)
+        ttk.Entry(frame, textvariable=self.motor_pulse_seconds_var, width=10).grid(row=1, column=1, sticky="ew", pady=2)
+        ttk.Button(frame, text="Save Motor Timing", command=self.save_debug_profile_settings).grid(
+            row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+        )
+        ttk.Label(
+            frame,
+            text="Default is 6.0 s. This is sent to Integrated3 as 6000 ms.",
+            foreground="#4b5563",
+            wraplength=220,
+            justify="left",
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(5, 0))
         return row + 1
 
     def _build_preview_panel(self, parent: ttk.Frame) -> None:
@@ -1382,6 +1405,12 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.save_demo_graphs_var.set(bool(payload.get("save_demo_graphs", True)))
         self.save_preview_snapshots_var.set(bool(payload.get("save_preview_snapshots", True)))
         self.snapshot_interval_var.set(str(payload.get("snapshot_interval_s", "1.0") or "1.0"))
+        motor_pulse_ms = payload.get("motor_pulse_ms")
+        if motor_pulse_ms not in (None, ""):
+            try:
+                self.motor_pulse_seconds_var.set(f"{float(motor_pulse_ms) / 1000.0:g}")
+            except (TypeError, ValueError):
+                self.motor_pulse_seconds_var.set("6")
         self.box_enabled_var.set(bool(payload.get("box_enabled", True)))
         self.box_upload_after_processing_var.set(bool(payload.get("box_auto_upload_processing", True)))
         self.box_upload_after_recording_var.set(bool(payload.get("box_auto_upload_recording", False)))
@@ -1435,12 +1464,19 @@ class RemoteAssayWorkspace(ttk.Frame):
             snapshot_interval_s = float(self.snapshot_interval_var.get() or 1.0)
         except (TypeError, ValueError):
             snapshot_interval_s = 1.0
+        try:
+            motor_pulse_seconds = float(self.motor_pulse_seconds_var.get() or 6.0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Assay motor vibration seconds must be a number.") from exc
+        if motor_pulse_seconds <= 0:
+            raise ValueError("Assay motor vibration seconds must be greater than zero.")
         return {
             "auto_process_after_recording": bool(self.auto_process_after_recording_var.get()),
             "save_mask_video": bool(self.save_mask_video_var.get()),
             "save_demo_graphs": bool(self.save_demo_graphs_var.get()),
             "save_preview_snapshots": bool(self.save_preview_snapshots_var.get()),
             "snapshot_interval_s": max(0.1, snapshot_interval_s),
+            "motor_pulse_ms": int(round(motor_pulse_seconds * 1000.0)),
             "box_enabled": bool(self.box_enabled_var.get()),
             "box_upload_after_processing": bool(self.box_upload_after_processing_var.get()),
             "box_upload_after_recording": bool(self.box_upload_after_recording_var.get()),
@@ -1462,7 +1498,11 @@ class RemoteAssayWorkspace(ttk.Frame):
         self.save_debug_profile_settings()
 
     def save_debug_profile_settings(self) -> None:
-        fields = self._debug_profile_fields()
+        try:
+            fields = self._debug_profile_fields()
+        except ValueError as exc:
+            messagebox.showerror("Assay debug settings", str(exc))
+            return
         self._run_async(
             "Saving assay debug processing/upload settings",
             lambda: self._require_controller().patch_assay_profile_fields(**fields),

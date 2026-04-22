@@ -180,6 +180,9 @@ class AssayService:
             "detector_min_threshold": float(self.profile.detector.min_threshold),
             "detector_min_area": int(self.profile.detector.min_area),
             "detector_max_area": int(self.profile.detector.max_area),
+            "motor_pulse_ms": int(self.profile.motor.pulse_ms),
+            "motor_pulse_user_configured": bool(getattr(self.profile.motor, "pulse_user_configured", False)),
+            "motor_settle_delay_ms": int(self.profile.motor.settle_delay_ms),
             "auto_process_after_recording": bool(self.profile.analysis.auto_process_after_recording),
             "save_mask_video": bool(self.profile.analysis.save_mask_video),
             "save_demo_graphs": bool(getattr(self.profile.outputs, "save_demo_graphs", True)),
@@ -201,6 +204,9 @@ class AssayService:
             "detector_min_threshold": float(self.profile.detector.min_threshold),
             "detector_min_area": int(self.profile.detector.min_area),
             "detector_max_area": int(self.profile.detector.max_area),
+            "motor_pulse_ms": int(self.profile.motor.pulse_ms),
+            "motor_pulse_user_configured": bool(getattr(self.profile.motor, "pulse_user_configured", False)),
+            "motor_settle_delay_ms": int(self.profile.motor.settle_delay_ms),
             "auto_process_after_recording": bool(self.profile.analysis.auto_process_after_recording),
             "save_demo_graphs": bool(getattr(self.profile.outputs, "save_demo_graphs", True)),
             "box_enabled": bool(status["box_enabled"]),
@@ -225,6 +231,11 @@ class AssayService:
             self.profile.detector.min_area = int(float(fields["detector_min_area"]))
         if "detector_max_area" in fields:
             self.profile.detector.max_area = int(float(fields["detector_max_area"]))
+        if "motor_pulse_ms" in fields:
+            self.profile.motor.pulse_ms = max(1, int(round(float(fields["motor_pulse_ms"]))))
+            self.profile.motor.pulse_user_configured = True
+        if "motor_settle_delay_ms" in fields:
+            self.profile.motor.settle_delay_ms = max(0, int(round(float(fields["motor_settle_delay_ms"]))))
         if "auto_process_after_recording" in fields:
             self.profile.analysis.auto_process_after_recording = bool(fields["auto_process_after_recording"])
         if "save_mask_video" in fields:

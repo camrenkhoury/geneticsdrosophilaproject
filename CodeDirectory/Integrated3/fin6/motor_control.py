@@ -33,7 +33,8 @@ class MotorError(RuntimeError):
 class MotorSettings:
     enabled: bool = False
     gpio_pin: int = 18
-    pulse_ms: int = 5000
+    pulse_ms: int = 6000
+    pulse_user_configured: bool = False
     settle_delay_ms: int = 500
     active_high: bool = True
     backend: str = "auto"
@@ -45,7 +46,8 @@ class MotorSettings:
         return cls(
             enabled=bool(payload.get("enabled", False)),
             gpio_pin=int(payload.get("gpio_pin", 18)),
-            pulse_ms=int(payload.get("pulse_ms", payload.get("pulse_duration_ms", 5000))),
+            pulse_ms=int(payload.get("pulse_ms", payload.get("pulse_duration_ms", 6000))),
+            pulse_user_configured=bool(payload.get("pulse_user_configured", False)),
             settle_delay_ms=int(payload.get("settle_delay_ms", payload.get("settle_ms", 500))),
             active_high=bool(payload.get("active_high", True)),
             backend=str(payload.get("backend", "auto") or "auto"),

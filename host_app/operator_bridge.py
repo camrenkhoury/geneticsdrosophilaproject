@@ -754,6 +754,7 @@ def _prepare_integrated3_recording_profile(service: Any, logger: Callable[[str],
     motor_backend = str(getattr(motor, "backend", "") or "").strip().lower()
     motor_module = str(getattr(motor, "module_name", "") or "").strip()
     pulse_ms = int(getattr(motor, "pulse_ms", 0) or 0)
+    pulse_user_configured = bool(getattr(motor, "pulse_user_configured", False))
     settle_delay_ms = int(getattr(motor, "settle_delay_ms", 0) or 0)
 
     if not motor_enabled:
@@ -767,8 +768,8 @@ def _prepare_integrated3_recording_profile(service: Any, logger: Callable[[str],
     if motor_module != "vibration":
         motor.module_name = "vibration"
         changed = True
-    if pulse_ms <= 0 or pulse_ms in {250, 400, 4000}:
-        motor.pulse_ms = 5000
+    if pulse_ms <= 0 or (not pulse_user_configured and pulse_ms in {250, 400, 4000, 5000}):
+        motor.pulse_ms = 6000
         changed = True
     if settle_delay_ms <= 0 or settle_delay_ms == 500:
         motor.settle_delay_ms = 150
